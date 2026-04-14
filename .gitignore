@@ -1,0 +1,14 @@
+/_build/
+/cover/
+/deps/
+/doc/
+/dist/
+/tmp/
+**/_build/
+**/cover/
+**/deps/
+**/doc/
+erl_crash.dump
+*.ez
+mezzanine-*.tar
+**/.elixir_ls/

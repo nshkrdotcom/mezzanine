@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">Mezzanine logo</title>
+  <desc id="desc">A layered hexagonal structure with stacked terraces and a suspended central span representing a reusable upper business layer.</desc>
+  <defs>
+    <linearGradient id="mzShell" x1="32" y1="24" x2="168" y2="176" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7AE6D2"/>
+      <stop offset="0.52" stop-color="#55A9FF"/>
+      <stop offset="1" stop-color="#B983FF"/>
+    </linearGradient>
+    <linearGradient id="mzTrace" x1="54" y1="46" x2="146" y2="154" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#E9FFF8"/>
+      <stop offset="1" stop-color="#DCD7FF"/>
+    </linearGradient>
+    <radialGradient id="mzAura" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(100 100) rotate(90) scale(74)">
+      <stop offset="0" stop-color="#8BCBFF" stop-opacity="0.7"/>
+      <stop offset="1" stop-color="#8BCBFF" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="mzShadow" x="14" y="12" width="172" height="178" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="11" stdDeviation="11" flood-color="#0B1220" flood-opacity="0.24"/>
+    </filter>
+    <filter id="mzBloom" x="38" y="38" width="124" height="124" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="4.2" result="blur"/>
+      <feBlend in="SourceGraphic" in2="blur" mode="screen"/>
+    </filter>
+  </defs>
+
+  <g filter="url(#mzShadow)">
+    <path d="M100 20L158.89 54V122L100 156L41.11 122V54L100 20Z" fill="url(#mzAura)"/>
+    <path d="M100 24L155.42 56V120L100 152L44.58 120V56L100 24Z" fill="#0D1621" fill-opacity="0.95" stroke="url(#mzShell)" stroke-width="4.6" stroke-linejoin="round"/>
+    <path d="M100 42L140.13 65V111L100 134L59.87 111V65L100 42Z" fill="#111B29" stroke="url(#mzTrace)" stroke-width="3.2" stroke-linejoin="round"/>
+    <path d="M100 56L126 71V101L100 116L74 101V71L100 56Z" fill="#101927" stroke="#E6FFF8" stroke-opacity="0.72" stroke-width="2.2" stroke-linejoin="round"/>
+  </g>
+
+  <g filter="url(#mzBloom)" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M65 73H135" stroke="url(#mzShell)" stroke-opacity="0.5" stroke-width="1.5"/>
+    <path d="M60 88H140" stroke="url(#mzShell)" stroke-opacity="0.45" stroke-width="1.5"/>
+    <path d="M67 103H133" stroke="url(#mzShell)" stroke-opacity="0.5" stroke-width="1.5"/>
+    <path d="M73 118H127" stroke="url(#mzTrace)" stroke-opacity="0.58" stroke-width="1.5"/>
+    <path d="M59.87 65L140.13 65" stroke="#E9FFF8" stroke-opacity="0.48" stroke-width="1.35"/>
+    <path d="M59.87 111L140.13 111" stroke="#E9FFF8" stroke-opacity="0.48" stroke-width="1.35"/>
+    <path d="M74 71L88 58H112L126 71" stroke="#7AE6D2" stroke-opacity="0.78" stroke-width="1.8"/>
+    <path d="M78 103L91 92H109L122 103" stroke="#DCD7FF" stroke-opacity="0.82" stroke-width="1.8"/>
+    <path d="M88 58V91" stroke="#E9FFF8" stroke-opacity="0.66" stroke-width="1.4"/>
+    <path d="M112 58V91" stroke="#E9FFF8" stroke-opacity="0.66" stroke-width="1.4"/>
+    <path d="M91 92V116" stroke="#DCD7FF" stroke-opacity="0.72" stroke-width="1.4"/>
+    <path d="M109 92V116" stroke="#DCD7FF" stroke-opacity="0.72" stroke-width="1.4"/>
+    <rect x="89.5" y="79.5" width="21" height="17" rx="4.2" fill="#162436" stroke="#E9FFF8" stroke-width="1.9"/>
+    <circle cx="100" cy="88" r="3.7" fill="#7AE6D2"/>
+    <circle cx="74" cy="71" r="2.8" fill="#0D1621" stroke="#7AE6D2" stroke-width="1.15"/>
+    <circle cx="126" cy="71" r="2.8" fill="#0D1621" stroke="#7AE6D2" stroke-width="1.15"/>
+    <circle cx="78" cy="103" r="2.8" fill="#0D1621" stroke="#DCD7FF" stroke-width="1.15"/>
+    <circle cx="122" cy="103" r="2.8" fill="#0D1621" stroke="#DCD7FF" stroke-width="1.15"/>
+  </g>
+</svg>
