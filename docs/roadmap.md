@@ -7,3 +7,21 @@ The repo is expected to grow into the neutral reusable home for:
 - policy-rich operator logic
 - reusable state models for distributed AI operations
 - product-neutral orchestration machinery above `app_kit`
+
+Current coexistence scaffold:
+
+- neutral packages exist for the v3 rebuild
+- legacy `ops_*`, `surfaces/*`, and `bridges/app_kit_bridge` remain
+  `[DEPRECATED-PENDING-MIGRATION]`
+- lower bridges remain buildable while the neutral engines come online
+
+Current gates:
+
+- `NO_NEW_PRODUCT_DEP_ON_OLD_MEZZANINE`
+- `MEZZANINE_NEUTRAL_CORE_CUTOVER`
+
+Next slices:
+
+- implement the neutral pack model and compiler
+- implement the neutral durable engines on the new package graph
+- replace the legacy northbound bridge path from `app_kit`

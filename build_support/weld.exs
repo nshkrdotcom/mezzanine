@@ -5,6 +5,19 @@ defmodule Mezzanine.Build.WeldContract do
 
   @artifact_docs [
     "README.md",
+    "core/mezzanine_core/README.md",
+    "core/pack_model/README.md",
+    "core/pack_compiler/README.md",
+    "core/config_registry/README.md",
+    "core/object_engine/README.md",
+    "core/execution_engine/README.md",
+    "core/runtime_scheduler/README.md",
+    "core/decision_engine/README.md",
+    "core/evidence_engine/README.md",
+    "core/projection_engine/README.md",
+    "core/operator_engine/README.md",
+    "core/audit_engine/README.md",
+    "core/archival_engine/README.md",
     "docs/overview.md",
     "docs/layout.md",
     "docs/publication.md",
@@ -31,13 +44,27 @@ defmodule Mezzanine.Build.WeldContract do
 
   def artifact do
     [
-      roots: ["core/mezzanine_core"],
+      roots: [
+        "core/mezzanine_core",
+        "core/pack_model",
+        "core/pack_compiler",
+        "core/config_registry",
+        "core/object_engine",
+        "core/execution_engine",
+        "core/runtime_scheduler",
+        "core/decision_engine",
+        "core/evidence_engine",
+        "core/projection_engine",
+        "core/operator_engine",
+        "core/audit_engine",
+        "core/archival_engine"
+      ],
       package: [
         name: "mezzanine_core",
         otp_app: :mezzanine_core,
         version: "0.1.0",
-        description:
-          "Projected reusable business-semantics core package from the Mezzanine workspace"
+        docs_main: "MezzanineCore",
+        description: "Projected reusable neutral core packages from the Mezzanine workspace"
       ],
       output: [
         docs: @artifact_docs,

@@ -39,7 +39,7 @@ defmodule Mezzanine.Workspace.MixProject do
         ci: :test,
         "monorepo.test": :test,
         "monorepo.credo": :test,
-        "monorepo.dialyzer": :test,
+        "monorepo.dialyzer": :dev,
         "monorepo.docs": :dev
       ]
     ]
@@ -126,7 +126,7 @@ defmodule Mezzanine.Workspace.MixProject do
         compile: [args: ["compile", "--warnings-as-errors"]],
         test: [args: ["test"], mix_env: "test", color: true],
         credo: [args: ["credo"]],
-        dialyzer: [args: ["dialyzer"], mix_env: "test"],
+        dialyzer: [args: ["dialyzer"], mix_env: "dev"],
         docs: [args: ["docs"]]
       ]
     ]

@@ -38,7 +38,7 @@ defmodule MezzanineCore.MixProject do
 
   defp docs do
     [
-      main: "readme",
+      main: "MezzanineCore",
       extras: ["README.md"]
     ]
   end

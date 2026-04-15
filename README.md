@@ -27,7 +27,26 @@ down into lower infrastructure layers like `app_kit`, `citadel`, or
 ```text
 mezzanine/
   build_support/       # workspace and Weld manifests
-  core/mezzanine_core  # initial reusable core package
+  core/mezzanine_core  # projected artifact shell over the neutral rebuild
+  core/pack_model      # neutral pack definitions and shared structs
+  core/pack_compiler   # neutral pack compilation and validation
+  core/config_registry # deployment/install registry seam
+  core/object_engine   # subject/object lifecycle engine scaffold
+  core/execution_engine
+  core/runtime_scheduler
+  core/decision_engine
+  core/evidence_engine
+  core/projection_engine
+  core/operator_engine
+  core/audit_engine
+  core/archival_engine
+  core/ops_*           # [DEPRECATED-PENDING-MIGRATION] legacy ontology packages
+  bridges/app_kit_bridge
+                       # [DEPRECATED-PENDING-MIGRATION] frozen legacy northbound bridge
+  bridges/citadel_bridge
+  bridges/integration_bridge
+  bridges/execution_plane_bridge
+  surfaces/*           # [DEPRECATED-PENDING-MIGRATION] frozen legacy northbound surfaces
   docs/                # repo-level architecture and publication docs
 ```
 
@@ -41,7 +60,37 @@ mezzanine/
 
 ## Status
 
-Initial tooling-root workspace scaffold with Blitz and Weld ready from day one.
+The repo is in the bounded coexistence phase from the v3 packet.
+
+The active buildout in this repo is the neutral core scaffold:
+
+- `core/pack_model`
+- `core/pack_compiler`
+- `core/config_registry`
+- `core/object_engine`
+- `core/execution_engine`
+- `core/runtime_scheduler`
+- `core/decision_engine`
+- `core/evidence_engine`
+- `core/projection_engine`
+- `core/operator_engine`
+- `core/audit_engine`
+- `core/archival_engine`
+
+The legacy `ops_*` packages, `bridges/app_kit_bridge`, and `surfaces/*`
+packages remain buildable only as migration scaffolding and are
+`[DEPRECATED-PENDING-MIGRATION]`.
+
+Named coexistence gates:
+
+- `NO_NEW_PRODUCT_DEP_ON_OLD_MEZZANINE`
+- `MEZZANINE_NEUTRAL_CORE_CUTOVER`
+
+During this phase:
+
+- no new product or `app_kit` dependency may target the deprecated ontology
+- the legacy northbound surfaces stay frozen
+- the neutral packages are the only place new reusable substrate work may land
 
 ## Development
 
