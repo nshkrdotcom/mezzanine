@@ -1,8 +1,10 @@
 defmodule MezzaninePackCompilerTest do
   use ExUnit.Case
-  doctest MezzaninePackCompiler
 
-  test "greets the world" do
-    assert MezzaninePackCompiler.hello() == :world
+  alias Mezzanine.Pack.CompiledPack
+
+  test "compile delegates to the neutral pack compiler" do
+    assert {:ok, %CompiledPack{pack_slug: "expense_approval"}} =
+             MezzaninePackCompiler.compile(Mezzanine.TestPacks.ExpenseApprovalPack)
   end
 end

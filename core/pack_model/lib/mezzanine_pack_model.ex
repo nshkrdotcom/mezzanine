@@ -1,18 +1,5 @@
 defmodule MezzaninePackModel do
   @moduledoc """
-  Documentation for `MezzaninePackModel`.
+  Typed neutral pack-model structs shared by the compiler and runtime engines.
   """
-
-  @doc """
-  Hello world.
-
-  ## Examples
-
-      iex> MezzaninePackModel.hello()
-      :world
-
-  """
-  def hello do
-    :world
-  end
 end

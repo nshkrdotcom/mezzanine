@@ -1,18 +1,8 @@
 defmodule MezzaninePackCompiler do
   @moduledoc """
-  Documentation for `MezzaninePackCompiler`.
+  Convenience entrypoint for the neutral Mezzanine pack compiler package.
   """
 
-  @doc """
-  Hello world.
-
-  ## Examples
-
-      iex> MezzaninePackCompiler.hello()
-      :world
-
-  """
-  def hello do
-    :world
-  end
+  defdelegate compile(pack_or_manifest), to: Mezzanine.Pack.Compiler
+  defdelegate diagnostics(pack_or_manifest), to: Mezzanine.Pack.Compiler
 end

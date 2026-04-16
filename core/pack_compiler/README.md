@@ -1,8 +1,12 @@
 # MezzaninePackCompiler
 
-Neutral pack compilation and validation scaffold for the Mezzanine rebuild.
+Pure validator, normalizer, compiler, and lifecycle evaluator for the neutral
+Mezzanine pack runtime.
 
-This package will turn declarative pack definitions into the typed runtime
-structures consumed by the new engine layer.
+This package now owns:
 
-Status: Phase `2.1` scaffold only.
+- `Mezzanine.Pack.Compiler`
+- structured validation diagnostics
+- canonical identifier normalization
+- `CompiledPack` O(1) index construction
+- pure lifecycle transition evaluation against `SubjectSnapshot`
