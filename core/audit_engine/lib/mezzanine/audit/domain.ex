@@ -1,4 +1,4 @@
-defmodule Mezzanine.Audit do
+defmodule Mezzanine.AuditDomain do
   @moduledoc """
   Durable audit-ledger domain for the neutral Mezzanine substrate.
   """

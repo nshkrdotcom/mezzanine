@@ -5,10 +5,14 @@ defmodule Mezzanine.Objects.Application do
 
   @impl true
   def start(_type, _args) do
-    children = [
-      Mezzanine.Objects.Repo
-    ]
+    Supervisor.start_link(children(), strategy: :one_for_one, name: Mezzanine.Objects.Supervisor)
+  end
 
-    Supervisor.start_link(children, strategy: :one_for_one, name: Mezzanine.Objects.Supervisor)
+  defp children do
+    if Application.get_env(:mezzanine_object_engine, :start_runtime_children?, true) do
+      [Mezzanine.Objects.Repo]
+    else
+      []
+    end
   end
 end

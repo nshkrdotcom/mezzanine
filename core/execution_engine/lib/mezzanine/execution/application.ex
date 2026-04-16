@@ -5,10 +5,14 @@ defmodule Mezzanine.Execution.Application do
 
   @impl true
   def start(_type, _args) do
-    children = [
-      Mezzanine.Execution.Repo
-    ]
+    Supervisor.start_link(children(), strategy: :one_for_one, name: Mezzanine.Execution.Supervisor)
+  end
 
-    Supervisor.start_link(children, strategy: :one_for_one, name: Mezzanine.Execution.Supervisor)
+  defp children do
+    if Application.get_env(:mezzanine_execution_engine, :start_runtime_children?, true) do
+      [Mezzanine.Execution.Repo]
+    else
+      []
+    end
   end
 end

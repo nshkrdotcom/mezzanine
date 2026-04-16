@@ -166,7 +166,10 @@ defmodule Mezzanine.AppKitBridge.OperatorQueryService do
        %{
          trace_id: timeline.trace_id,
          installation_id: timeline.installation_id,
-         join_keys: timeline.join_keys,
+         join_keys: trace_join_keys(attrs, timeline, execution_id),
+         metadata: %{
+           indexed_join_keys: Enum.map(timeline.join_keys, &Atom.to_string/1)
+         },
          steps: Enum.map(timeline.steps, &normalize_unified_step/1)
        }}
     end
@@ -601,6 +604,26 @@ defmodule Mezzanine.AppKitBridge.OperatorQueryService do
       diagnostic?: step.diagnostic?,
       payload: normalize_value(step.payload)
     }
+  end
+
+  defp trace_join_keys(attrs, timeline, execution_id) do
+    attrs
+    |> Map.new()
+    |> Map.take([:subject_id, "subject_id", :causation_id, "causation_id"])
+    |> Enum.reduce(
+      %{
+        "trace_id" => timeline.trace_id,
+        "installation_id" => timeline.installation_id,
+        "execution_id" => execution_id
+      },
+      fn
+        {:subject_id, value}, acc when is_binary(value) -> Map.put(acc, "subject_id", value)
+        {"subject_id", value}, acc when is_binary(value) -> Map.put(acc, "subject_id", value)
+        {:causation_id, value}, acc when is_binary(value) -> Map.put(acc, "causation_id", value)
+        {"causation_id", value}, acc when is_binary(value) -> Map.put(acc, "causation_id", value)
+        {_key, _value}, acc -> acc
+      end
+    )
   end
 
   defp subject_ref(subject_id), do: %{id: subject_id, subject_kind: "work_object"}

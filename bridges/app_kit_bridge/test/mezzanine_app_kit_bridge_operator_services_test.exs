@@ -204,6 +204,14 @@ defmodule Mezzanine.AppKitBridge.OperatorServicesTest do
 
     assert trace.trace_id == trace_id
     assert trace.installation_id == tenant_id
+
+    assert trace.join_keys == %{
+             "trace_id" => trace_id,
+             "installation_id" => tenant_id,
+             "execution_id" => execution.id
+           }
+
+    assert trace.metadata.indexed_join_keys == ["trace_id", "causation_id"]
     assert Enum.any?(trace.steps, &(&1.source == :audit_fact))
     assert Enum.any?(trace.steps, &(&1.source == :execution_record))
     assert Enum.any?(trace.steps, &(&1.source == :decision_record))

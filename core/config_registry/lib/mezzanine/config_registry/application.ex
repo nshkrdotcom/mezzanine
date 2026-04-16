@@ -4,14 +4,20 @@ defmodule Mezzanine.ConfigRegistry.Application do
 
   @impl true
   def start(_type, _args) do
-    children = [
-      Mezzanine.ConfigRegistry.Repo,
-      Mezzanine.Pack.Registry
-    ]
-
-    Supervisor.start_link(children,
+    Supervisor.start_link(children(),
       strategy: :one_for_one,
       name: Mezzanine.ConfigRegistry.Supervisor
     )
+  end
+
+  defp children do
+    if Application.get_env(:mezzanine_config_registry, :start_runtime_children?, true) do
+      [
+        Mezzanine.ConfigRegistry.Repo,
+        Mezzanine.Pack.Registry
+      ]
+    else
+      []
+    end
   end
 end

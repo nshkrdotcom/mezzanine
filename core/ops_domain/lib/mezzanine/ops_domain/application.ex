@@ -4,10 +4,14 @@ defmodule Mezzanine.OpsDomain.Application do
 
   @impl true
   def start(_type, _args) do
-    children = [
-      Mezzanine.OpsDomain.Repo
-    ]
+    Supervisor.start_link(children(), strategy: :one_for_one, name: Mezzanine.OpsDomain.Supervisor)
+  end
 
-    Supervisor.start_link(children, strategy: :one_for_one, name: Mezzanine.OpsDomain.Supervisor)
+  defp children do
+    if Application.get_env(:mezzanine_ops_domain, :start_runtime_children?, true) do
+      [Mezzanine.OpsDomain.Repo]
+    else
+      []
+    end
   end
 end
