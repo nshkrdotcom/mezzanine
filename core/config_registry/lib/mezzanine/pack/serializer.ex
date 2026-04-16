@@ -264,7 +264,7 @@ defmodule Mezzanine.Pack.Serializer do
       "default_filters" => serialize_map(spec.default_filters),
       "sort" =>
         Enum.map(spec.sort, fn {field, dir} ->
-          %{"field" => Atom.to_string(field), "dir" => Atom.to_string(dir)}
+          %{"field" => serialize_identifier(field), "dir" => Atom.to_string(dir)}
         end),
       "included_fields" => serialize_included_fields(spec.included_fields)
     }
@@ -278,7 +278,8 @@ defmodule Mezzanine.Pack.Serializer do
       default_filters: deserialize_map(payload["default_filters"] || %{}),
       sort:
         Enum.map(payload["sort"] || [], fn entry ->
-          {String.to_existing_atom(entry["field"]), deserialize_atom(entry["dir"], [:asc, :desc])}
+          {deserialize_projection_field(entry["field"]),
+           deserialize_atom(entry["dir"], [:asc, :desc])}
         end),
       included_fields: deserialize_included_fields(payload["included_fields"])
     }
@@ -510,6 +511,7 @@ defmodule Mezzanine.Pack.Serializer do
 
   defp serialize_value(value) when is_map(value), do: serialize_map(value)
   defp serialize_value(value) when is_list(value), do: Enum.map(value, &serialize_value/1)
+  defp serialize_value(value) when is_boolean(value), do: value
   defp serialize_value(value) when is_atom(value), do: Atom.to_string(value)
   defp serialize_value(value), do: value
 
@@ -531,13 +533,16 @@ defmodule Mezzanine.Pack.Serializer do
   defp serialize_included_fields(:all), do: "all"
 
   defp serialize_included_fields(fields) when is_list(fields),
-    do: Enum.map(fields, &Atom.to_string/1)
+    do: Enum.map(fields, &serialize_identifier/1)
 
   defp deserialize_included_fields("all"), do: :all
 
   defp deserialize_included_fields(fields) when is_list(fields) do
-    Enum.map(fields, &String.to_existing_atom/1)
+    Enum.map(fields, &deserialize_projection_field/1)
   end
+
+  defp deserialize_projection_field(field) when is_binary(field), do: field
+  defp deserialize_projection_field(field) when is_atom(field), do: Atom.to_string(field)
 
   defp deserialize_atom(value, allowed_atoms) when is_binary(value) do
     atom = String.to_existing_atom(value)
@@ -581,7 +586,13 @@ defmodule Mezzanine.Pack.Serializer do
       nil -> nil
       cleanup -> deserialize_atom(cleanup, [:on_completion, :on_terminal, :never])
     end)
+    |> Map.update(:reuse, nil, &deserialize_boolean_like/1)
   end
+
+  defp deserialize_boolean_like(value) when is_boolean(value), do: value
+  defp deserialize_boolean_like("true"), do: true
+  defp deserialize_boolean_like("false"), do: false
+  defp deserialize_boolean_like(value), do: value
 
   defp build_manifest(payload) do
     %Manifest{

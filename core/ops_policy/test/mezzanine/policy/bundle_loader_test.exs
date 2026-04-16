@@ -113,15 +113,27 @@ defmodule Mezzanine.Policy.BundleLoaderTest do
             "strategy" => "affinity",
             "target_selector" => %{},
             "runtime_preferences" => %{},
-            "workspace_policy" => %{},
+            "workspace_policy" => %{"reuse" => "true"},
             "metadata" => %{}
           },
-          "capability_grants" => []
+          "capability_grants" => [
+            %{
+              "capability_id" => "linear.issue.read",
+              "mode" => "allow",
+              "constraints" => %{}
+            }
+          ]
         }
       })
 
+    assert TypedConfig.run_profile(persisted_bundle).runtime_class == :session
+    assert TypedConfig.approval_posture(persisted_bundle).mode == :manual
     assert TypedConfig.approval_posture(persisted_bundle).escalation_required == false
+    assert TypedConfig.retry_profile(persisted_bundle).strategy == :exponential
     assert TypedConfig.review_rules(persisted_bundle).required == false
+    assert TypedConfig.placement_profile(persisted_bundle).strategy == :affinity
+    assert TypedConfig.placement_profile(persisted_bundle).workspace_policy["reuse"] == true
+    assert Enum.map(TypedConfig.capability_grants(persisted_bundle), & &1.mode) == [:allow]
   end
 
   test "rejects malformed grant declarations during compile" do

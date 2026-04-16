@@ -286,9 +286,9 @@ defmodule Mezzanine.Pack.ProjectionSpec do
           name: pack_identifier(),
           description: String.t() | nil,
           subject_kinds: [pack_identifier()],
-          default_filters: %{optional(atom()) => filter_value() | [filter_value()]},
-          sort: [{atom(), sort_dir()}],
-          included_fields: [atom()] | :all
+          default_filters: %{optional(pack_identifier()) => filter_value() | [filter_value()]},
+          sort: [{pack_identifier(), sort_dir()}],
+          included_fields: [pack_identifier()] | :all
         }
 
   defstruct [

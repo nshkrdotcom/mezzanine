@@ -11,6 +11,7 @@ defmodule MezzanineConfigRegistryTest do
     LifecycleSpec,
     Manifest,
     ProjectionSpec,
+    Serializer,
     SubjectKindSpec
   }
 
@@ -117,6 +118,40 @@ defmodule MezzanineConfigRegistryTest do
              PackRegistration.activate(distinct_registration)
   end
 
+  test "serializer reload keeps projection field identifiers neutral and preserves booleans" do
+    projection_field = "field__never_preexisting_20260416"
+
+    payload =
+      fixture_pack()
+      |> Serializer.serialize_compiled()
+      |> put_in(
+        ["manifest", "execution_recipe_specs", Access.at(0), "workspace_policy", "reuse"],
+        "true"
+      )
+      |> put_in(
+        ["manifest", "projection_specs", Access.at(0), "default_filters"],
+        %{projection_field => true}
+      )
+      |> put_in(
+        ["manifest", "projection_specs", Access.at(0), "sort"],
+        [%{"field" => projection_field, "dir" => "asc"}]
+      )
+      |> put_in(
+        ["manifest", "projection_specs", Access.at(0), "included_fields"],
+        [projection_field]
+      )
+
+    assert {:ok, %CompiledPack{} = compiled} = Serializer.deserialize_compiled(payload)
+
+    [projection] = compiled.manifest.projection_specs
+    [recipe] = compiled.manifest.execution_recipe_specs
+
+    assert projection.default_filters == %{projection_field => true}
+    assert projection.sort == [{projection_field, :asc}]
+    assert projection.included_fields == [projection_field]
+    assert recipe.workspace_policy[:reuse] == true
+  end
+
   defp register_fixture_pack! do
     fixture_pack()
     |> MezzanineConfigRegistry.register_pack!()
@@ -155,7 +190,8 @@ defmodule MezzanineConfigRegistryTest do
         %ExecutionRecipeSpec{
           recipe_ref: recipe_ref,
           runtime_class: :session,
-          placement_ref: :local_runner
+          placement_ref: :local_runner,
+          workspace_policy: %{strategy: :per_subject, reuse: true, cleanup: :on_terminal}
         }
       ],
       projection_specs: [
