@@ -67,10 +67,13 @@ defmodule Mezzanine.Execution.DispatcherTest do
   end
 
   test "dispatch_next reschedules retryable failures without re-resolving bindings or reclaiming immediately" do
-    retry_now = ~U[2026-04-16 05:00:00.000000Z]
-
     assert {:ok, subject} = ingest_subject("linear:ticket:dispatcher-retry")
     assert {:ok, execution} = dispatch_execution(subject, "trace-dispatcher-retry", "retry")
+
+    retry_now =
+      DateTime.utc_now()
+      |> DateTime.truncate(:second)
+      |> DateTime.add(5, :second)
 
     assert {:ok, %{classification: :retryable_failure, execution: retried_execution}} =
              Dispatcher.dispatch_next(
@@ -86,11 +89,15 @@ defmodule Mezzanine.Execution.DispatcherTest do
     assert retried_execution.dispatch_attempt_count == 1
     assert retried_execution.compiled_pack_revision == 7
     assert retried_execution.binding_snapshot == @dispatch_snapshot
-    assert retried_execution.next_dispatch_at == ~U[2026-04-16 05:00:30.000000Z]
+
+    assert DateTime.compare(
+             retried_execution.next_dispatch_at,
+             DateTime.add(retry_now, 30, :second)
+           ) == :eq
 
     assert {:ok, outbox} = DispatchOutboxEntry.by_execution_id(execution.id)
     assert outbox.status == :pending_retry
-    assert outbox.available_at == ~U[2026-04-16 05:00:30.000000Z]
+    assert DateTime.compare(outbox.available_at, DateTime.add(retry_now, 30, :second)) == :eq
     assert outbox.compiled_pack_revision == 7
     assert outbox.binding_snapshot == @dispatch_snapshot
 
