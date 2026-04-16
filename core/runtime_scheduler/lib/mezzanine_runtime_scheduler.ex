@@ -1,18 +1,19 @@
 defmodule MezzanineRuntimeScheduler do
   @moduledoc """
-  Documentation for `MezzanineRuntimeScheduler`.
+  Runtime-scheduler facade for installation-scoped retry timing and restart
+  recovery.
   """
 
-  @doc """
-  Hello world.
+  alias Mezzanine.RuntimeScheduler.ReconcileOnStart
 
-  ## Examples
+  @spec components() :: [module()]
+  def components do
+    [ReconcileOnStart]
+  end
 
-      iex> MezzanineRuntimeScheduler.hello()
-      :world
-
-  """
-  def hello do
-    :world
+  @spec reconcile_on_start(String.t(), DateTime.t(), keyword()) ::
+          {:ok, ReconcileOnStart.summary()} | {:error, term()}
+  def reconcile_on_start(installation_id, now \\ DateTime.utc_now(), opts \\ []) do
+    ReconcileOnStart.reconcile(installation_id, now, opts)
   end
 end

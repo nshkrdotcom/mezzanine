@@ -1,8 +1,7 @@
 defmodule MezzanineRuntimeSchedulerTest do
   use ExUnit.Case
-  doctest MezzanineRuntimeScheduler
 
-  test "greets the world" do
-    assert MezzanineRuntimeScheduler.hello() == :world
+  test "exposes the reconcile-on-start component" do
+    assert Mezzanine.RuntimeScheduler.ReconcileOnStart in MezzanineRuntimeScheduler.components()
   end
 end

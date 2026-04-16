@@ -42,6 +42,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
     define(:dispatch, action: :dispatch)
     define(:record_accepted, action: :record_accepted)
     define(:record_retryable_failure, action: :record_retryable_failure)
+    define(:record_restart_recovery, action: :record_restart_recovery)
     define(:record_terminal_rejection, action: :record_terminal_rejection)
     define(:record_semantic_failure, action: :record_semantic_failure)
     define(:active_for_subject, action: :active_for_subject, args: [:subject_id])
@@ -227,6 +228,53 @@ defmodule Mezzanine.Execution.ExecutionRecord do
                    %{
                      classification: "terminal_rejection",
                      terminal_rejection_reason: execution.terminal_rejection_reason
+                   }
+                 ) do
+            {:ok, execution}
+          end
+        end)
+      )
+    end
+
+    update :record_restart_recovery do
+      accept([])
+      require_atomic?(false)
+
+      argument(:next_dispatch_at, :utc_datetime_usec, allow_nil?: false)
+      argument(:last_dispatch_error_payload, :map, allow_nil?: false)
+      argument(:trace_id, :string, allow_nil?: false)
+      argument(:causation_id, :string, allow_nil?: false)
+      argument(:actor_ref, :map, allow_nil?: false)
+
+      change(optimistic_lock(:row_version))
+      change(set_attribute(:dispatch_state, :dispatching_retry))
+      change(increment(:dispatch_attempt_count))
+      change(set_attribute(:next_dispatch_at, arg(:next_dispatch_at)))
+      change(set_attribute(:last_dispatch_error_kind, "restart_recovery"))
+      change(set_attribute(:last_dispatch_error_payload, arg(:last_dispatch_error_payload)))
+      change(set_attribute(:trace_id, arg(:trace_id)))
+      change(set_attribute(:causation_id, arg(:causation_id)))
+      change(set_attribute(:failure_kind, nil))
+      change(set_attribute(:terminal_rejection_reason, nil))
+
+      change(
+        after_action(fn changeset, execution, _context ->
+          with {:ok, outbox} <- DispatchOutboxEntry.by_execution_id(execution.id),
+               :ok <- ensure_dispatching_outbox(outbox),
+               {:ok, _outbox} <-
+                 DispatchOutboxEntry.mark_pending_retry(outbox, %{
+                   available_at: execution.next_dispatch_at,
+                   last_error_kind: execution.last_dispatch_error_kind,
+                   last_error_payload: execution.last_dispatch_error_payload
+                 }),
+               {:ok, _fact} <-
+                 record_audit_fact(
+                   execution,
+                   Ash.Changeset.get_argument(changeset, :actor_ref),
+                   :execution_recovered,
+                   %{
+                     classification: "restart_recovery",
+                     recovered_from: "dispatching"
                    }
                  ) do
             {:ok, execution}
@@ -425,4 +473,9 @@ defmodule Mezzanine.Execution.ExecutionRecord do
       occurred_at: DateTime.utc_now()
     })
   end
+
+  defp ensure_dispatching_outbox(%DispatchOutboxEntry{status: :dispatching}), do: :ok
+
+  defp ensure_dispatching_outbox(%DispatchOutboxEntry{status: status}),
+    do: {:error, {:unexpected_outbox_status, status}}
 end
