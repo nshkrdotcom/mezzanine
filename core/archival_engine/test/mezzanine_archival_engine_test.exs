@@ -1,8 +1,12 @@
 defmodule MezzanineArchivalEngineTest do
   use ExUnit.Case
-  doctest MezzanineArchivalEngine
 
-  test "greets the world" do
-    assert MezzanineArchivalEngine.hello() == :world
+  test "lists the frozen archival contract modules" do
+    assert [
+             Mezzanine.Archival.CountdownPolicy,
+             Mezzanine.Archival.Graph,
+             Mezzanine.Archival.Manifest,
+             Mezzanine.Archival.OffloadPlan
+           ] == MezzanineArchivalEngine.contract_modules()
   end
 end

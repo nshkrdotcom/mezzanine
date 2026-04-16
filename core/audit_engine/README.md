@@ -1,8 +1,17 @@
 # MezzanineAuditEngine
 
-Neutral audit ledger and timeline engine scaffold for the Mezzanine rebuild.
+Neutral audit ledger and timeline engine for the Mezzanine rebuild.
 
-This package will own audit facts, lineage-aware timelines, and durable audit
-assembly on the new neutral core.
+This package now freezes the Phase `2.3` operational contract for:
 
-Status: Phase `2.1` scaffold only.
+- indexed `trace_id` and `causation_id` join keys
+- substrate-owned execution lineage vs lower-owned internal identifiers
+- truth-precedence and freshness classes for enriched operator views
+- pure unified-trace assembly for the operator-facing “3 AM query”
+
+Primary modules:
+
+- `Mezzanine.Audit.TraceContract`
+- `Mezzanine.Audit.ExecutionLineage`
+- `Mezzanine.Audit.Freshness`
+- `Mezzanine.Audit.UnifiedTrace`

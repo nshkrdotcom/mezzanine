@@ -1,6 +1,8 @@
 defmodule MezzanineCore.MixProject do
   use Mix.Project
 
+  @source_url "https://github.com/nshkrdotcom/mezzanine"
+
   def project do
     [
       app: :mezzanine_core,
@@ -8,9 +10,13 @@ defmodule MezzanineCore.MixProject do
       elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
+      aliases: aliases(),
+      dialyzer: [plt_add_deps: :apps_tree],
       docs: docs(),
       description: "Reusable business-semantics substrate for Mezzanine",
-      name: "Mezzanine Core"
+      name: "Mezzanine Core",
+      source_url: @source_url,
+      homepage_url: @source_url
     ]
   end
 
@@ -21,9 +27,18 @@ defmodule MezzanineCore.MixProject do
   end
 
   def cli do
+    [preferred_envs: [ci: :test]]
+  end
+
+  defp aliases do
     [
-      preferred_envs: [
-        ci: :test
+      ci: [
+        "format --check-formatted",
+        "compile --warnings-as-errors",
+        "cmd env MIX_ENV=test mix test",
+        "credo --strict",
+        "cmd env MIX_ENV=dev mix dialyzer",
+        "cmd env MIX_ENV=dev mix docs --warnings-as-errors"
       ]
     ]
   end
@@ -38,7 +53,7 @@ defmodule MezzanineCore.MixProject do
 
   defp docs do
     [
-      main: "MezzanineCore",
+      main: "readme",
       extras: ["README.md"]
     ]
   end

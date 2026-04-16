@@ -1,18 +1,15 @@
 defmodule MezzanineAuditEngine do
   @moduledoc """
-  Documentation for `MezzanineAuditEngine`.
+  Neutral audit-ledger contract entrypoint for the Mezzanine rebuild.
   """
 
-  @doc """
-  Hello world.
-
-  ## Examples
-
-      iex> MezzanineAuditEngine.hello()
-      :world
-
-  """
-  def hello do
-    :world
+  @spec contract_modules() :: [module()]
+  def contract_modules do
+    [
+      Mezzanine.Audit.TraceContract,
+      Mezzanine.Audit.ExecutionLineage,
+      Mezzanine.Audit.Freshness,
+      Mezzanine.Audit.UnifiedTrace
+    ]
   end
 end

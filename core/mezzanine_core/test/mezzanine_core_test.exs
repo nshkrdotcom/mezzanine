@@ -12,4 +12,11 @@ defmodule MezzanineCoreTest do
     assert :workflow in MezzanineCore.configuration_axes()
     assert :tenancy in MezzanineCore.configuration_axes()
   end
+
+  test "exposes the frozen boundary generation posture" do
+    assert [
+             Mezzanine.Boundary.GenerationManifest,
+             Mezzanine.Boundary.GenerationSpec
+           ] == MezzanineCore.contract_modules()
+  end
 end

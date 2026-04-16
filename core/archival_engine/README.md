@@ -1,8 +1,17 @@
 # MezzanineArchivalEngine
 
-Neutral archival engine scaffold for the Mezzanine rebuild.
+Neutral archival engine for the Mezzanine rebuild.
 
-This package will own archival manifests, countdown policies, and hot-to-cold
-transition mechanics for terminal records on the new neutral core.
+This package now freezes the Phase `2.3` archival contract for:
 
-Status: Phase `2.1` scaffold only.
+- terminal graph eligibility
+- archival countdown policy
+- manifest-before-delete discipline
+- hot-to-cold offload planning for terminal subject graphs
+
+Primary modules:
+
+- `Mezzanine.Archival.CountdownPolicy`
+- `Mezzanine.Archival.Graph`
+- `Mezzanine.Archival.Manifest`
+- `Mezzanine.Archival.OffloadPlan`

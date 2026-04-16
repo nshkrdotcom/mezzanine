@@ -22,4 +22,15 @@ defmodule MezzanineCore do
   def configuration_axes do
     [:operating_model, :authority, :workflow, :compliance, :tenancy]
   end
+
+  @doc """
+  Lists the contract modules that freeze generator-assisted boundary posture.
+  """
+  @spec contract_modules() :: [module()]
+  def contract_modules do
+    [
+      Mezzanine.Boundary.GenerationManifest,
+      Mezzanine.Boundary.GenerationSpec
+    ]
+  end
 end

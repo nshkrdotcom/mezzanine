@@ -1,18 +1,15 @@
 defmodule MezzanineArchivalEngine do
   @moduledoc """
-  Documentation for `MezzanineArchivalEngine`.
+  Neutral archival-contract entrypoint for the Mezzanine rebuild.
   """
 
-  @doc """
-  Hello world.
-
-  ## Examples
-
-      iex> MezzanineArchivalEngine.hello()
-      :world
-
-  """
-  def hello do
-    :world
+  @spec contract_modules() :: [module()]
+  def contract_modules do
+    [
+      Mezzanine.Archival.CountdownPolicy,
+      Mezzanine.Archival.Graph,
+      Mezzanine.Archival.Manifest,
+      Mezzanine.Archival.OffloadPlan
+    ]
   end
 end
