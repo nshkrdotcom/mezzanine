@@ -27,13 +27,6 @@ config :mezzanine_config_registry,
   ash_domains: [Mezzanine.ConfigRegistry],
   generators: [timestamp_type: :utc_datetime]
 
-if Code.ensure_loaded?(Mix.Project) and Mix.Project.config()[:app] == :mezzanine_core do
-  # The projected `mezzanine_core` artifact compiles this domain under a single
-  # umbrella otp app, so mirror the Ash domain registration there as well.
-  config :mezzanine_core,
-    ash_domains: [Mezzanine.ConfigRegistry]
-end
-
 config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",
   metadata: [:request_id]
