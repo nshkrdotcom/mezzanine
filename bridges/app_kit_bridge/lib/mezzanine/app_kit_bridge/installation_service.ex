@@ -9,6 +9,7 @@ defmodule Mezzanine.AppKitBridge.InstallationService do
 
   require Ash.Query
 
+  alias Mezzanine.AppKitBridge.AdapterSupport
   alias Mezzanine.ConfigRegistry.{Installation, PackRegistration}
 
   @deployment_keys [
@@ -48,25 +49,32 @@ defmodule Mezzanine.AppKitBridge.InstallationService do
         %Installation{} = installation ->
           reuse_or_update_installation(installation, pack_registration, binding_config)
       end
+    else
+      {:error, reason} -> {:error, normalize_error(reason)}
     end
   end
 
   @spec get_installation(Ecto.UUID.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def get_installation(installation_id, _opts \\ []) when is_binary(installation_id) do
-    with {:ok, installation} <- fetch_installation(installation_id) do
-      installation_detail(installation)
+    case fetch_installation(installation_id) do
+      {:ok, installation} -> installation_detail(installation)
+      {:error, reason} -> {:error, normalize_error(reason)}
     end
   end
 
   @spec list_installations(String.t(), map(), keyword()) :: {:ok, [map()]} | {:error, term()}
   def list_installations(tenant_id, filters \\ %{}, _opts \\ [])
       when is_binary(tenant_id) and is_map(filters) do
-    with {:ok, installations} <- list_tenant_installations(tenant_id) do
-      {:ok,
-       installations
-       |> Enum.filter(&matches_filters?(&1, filters))
-       |> Enum.map(&installation_detail!/1)
-       |> Enum.sort_by(&{&1.environment, &1.installation_ref.id})}
+    case list_tenant_installations(tenant_id) do
+      {:ok, installations} ->
+        {:ok,
+         installations
+         |> Enum.filter(&matches_filters?(&1, filters))
+         |> Enum.map(&installation_detail!/1)
+         |> Enum.sort_by(&{&1.environment, &1.installation_ref.id})}
+
+      {:error, reason} ->
+        {:error, normalize_error(reason)}
     end
   end
 
@@ -78,6 +86,8 @@ defmodule Mezzanine.AppKitBridge.InstallationService do
            MezzanineConfigRegistry.update_bindings(installation, binding_config),
          {:ok, detail} <- installation_detail(updated_installation) do
       {:ok, action_result(detail, :update_bindings, "Bindings updated")}
+    else
+      {:error, reason} -> {:error, normalize_error(reason)}
     end
   end
 
@@ -88,6 +98,8 @@ defmodule Mezzanine.AppKitBridge.InstallationService do
            MezzanineConfigRegistry.suspend_installation(installation),
          {:ok, detail} <- installation_detail(suspended_installation) do
       {:ok, action_result(detail, :suspend_installation, "Installation suspended")}
+    else
+      {:error, reason} -> {:error, normalize_error(reason)}
     end
   end
 
@@ -97,6 +109,8 @@ defmodule Mezzanine.AppKitBridge.InstallationService do
          {:ok, active_installation} <- ensure_active(installation),
          {:ok, detail} <- installation_detail(active_installation) do
       {:ok, action_result(detail, :reactivate_installation, "Installation active")}
+    else
+      {:error, reason} -> {:error, normalize_error(reason)}
     end
   end
 
@@ -305,21 +319,12 @@ defmodule Mezzanine.AppKitBridge.InstallationService do
     end
   end
 
-  defp fetch_string(attrs, opts, key) do
-    case Keyword.get(opts, key) || map_value(attrs, key) do
-      value when is_binary(value) and value != "" -> {:ok, value}
-      _ -> {:error, {:missing_required_field, key}}
-    end
-  end
+  defp fetch_string(attrs, opts, key), do: AdapterSupport.fetch_string(attrs, opts, key)
 
-  defp optional_string(attrs, opts, key, default) do
-    case Keyword.get(opts, key) || map_value(attrs, key) do
-      value when is_binary(value) and value != "" -> value
-      _ -> default
-    end
-  end
+  defp optional_string(attrs, opts, key, default),
+    do: AdapterSupport.optional_string(attrs, opts, key, default)
 
-  defp map_value(attrs, key), do: Map.get(attrs, key) || Map.get(attrs, Atom.to_string(key))
+  defp map_value(attrs, key), do: AdapterSupport.map_value(attrs, key)
 
   defp normalize_status(status) when status in [:inactive, :active, :suspended, :degraded],
     do: status
@@ -333,4 +338,6 @@ defmodule Mezzanine.AppKitBridge.InstallationService do
       _ -> status
     end
   end
+
+  defp normalize_error(reason), do: AdapterSupport.normalize_error(reason)
 end

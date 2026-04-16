@@ -4,6 +4,7 @@ defmodule Mezzanine.AppKitBridge.OperatorActionService do
   """
 
   alias AppKit.Core.RunRef
+  alias Mezzanine.AppKitBridge.AdapterSupport
   alias Mezzanine.AppKitBridge.ReviewActionService
   alias Mezzanine.Control.Commands
 
@@ -22,6 +23,8 @@ defmodule Mezzanine.AppKitBridge.OperatorActionService do
          message: action_message(action),
          metadata: normalize_value(bridge_result)
        }}
+    else
+      {:error, reason} -> {:error, normalize_error(reason)}
     end
   end
 
@@ -99,19 +102,7 @@ defmodule Mezzanine.AppKitBridge.OperatorActionService do
   defp action_message(:replan), do: "Replan requested"
   defp action_message(:grant_override), do: "Grant override applied"
 
-  defp actor_ref(attrs, opts) do
-    Keyword.get(opts, :actor_ref) || Map.get(attrs, :actor_ref) || Map.get(attrs, "actor_ref") ||
-      Map.get(attrs, :id) || Map.get(attrs, "id") || "operator"
-  end
-
-  defp normalize_value(%DateTime{} = value), do: value
-  defp normalize_value(%NaiveDateTime{} = value), do: value
-  defp normalize_value(%_{} = value), do: value |> Map.from_struct() |> normalize_value()
-
-  defp normalize_value(value) when is_map(value) do
-    Map.new(value, fn {key, nested_value} -> {key, normalize_value(nested_value)} end)
-  end
-
-  defp normalize_value(value) when is_list(value), do: Enum.map(value, &normalize_value/1)
-  defp normalize_value(value), do: value
+  defp actor_ref(attrs, opts), do: AdapterSupport.actor_ref(attrs, opts)
+  defp normalize_value(value), do: AdapterSupport.normalize_value(value)
+  defp normalize_error(reason), do: AdapterSupport.normalize_error(reason)
 end

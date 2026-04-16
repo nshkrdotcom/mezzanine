@@ -8,6 +8,7 @@ defmodule Mezzanine.AppKitBridge.ReviewQueryService do
 
   require Ash.Query
 
+  alias Mezzanine.AppKitBridge.AdapterSupport
   alias Mezzanine.Assurance
   alias Mezzanine.Audit
   alias Mezzanine.Evidence.EvidenceItem
@@ -42,6 +43,8 @@ defmodule Mezzanine.AppKitBridge.ReviewQueryService do
         |> Enum.sort_by(&{&1.required_by || DateTime.utc_now(), &1.decision_ref.id})
 
       {:ok, summaries}
+    else
+      {:error, reason} -> {:error, normalize_error(reason)}
     end
   end
 
@@ -83,6 +86,8 @@ defmodule Mezzanine.AppKitBridge.ReviewQueryService do
            escalations: normalize_value(assurance_detail.escalations)
          }
        }}
+    else
+      {:error, reason} -> {:error, normalize_error(reason)}
     end
   end
 
@@ -178,19 +183,8 @@ defmodule Mezzanine.AppKitBridge.ReviewQueryService do
     }
   end
 
-  defp actor(tenant_id), do: %{tenant_id: tenant_id}
-
-  defp normalize_state(value) when is_atom(value), do: Atom.to_string(value)
-  defp normalize_state(value), do: value
-
-  defp normalize_value(%DateTime{} = value), do: value
-  defp normalize_value(%NaiveDateTime{} = value), do: value
-  defp normalize_value(%_{} = value), do: value |> Map.from_struct() |> normalize_value()
-
-  defp normalize_value(value) when is_map(value) do
-    Map.new(value, fn {key, nested_value} -> {key, normalize_value(nested_value)} end)
-  end
-
-  defp normalize_value(value) when is_list(value), do: Enum.map(value, &normalize_value/1)
-  defp normalize_value(value), do: value
+  defp actor(tenant_id), do: AdapterSupport.actor(tenant_id)
+  defp normalize_state(value), do: AdapterSupport.normalize_state(value)
+  defp normalize_value(value), do: AdapterSupport.normalize_value(value)
+  defp normalize_error(reason), do: AdapterSupport.normalize_error(reason)
 end

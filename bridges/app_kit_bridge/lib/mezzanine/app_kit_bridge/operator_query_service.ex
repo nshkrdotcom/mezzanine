@@ -10,6 +10,7 @@ defmodule Mezzanine.AppKitBridge.OperatorQueryService do
 
   alias AppKit.Core.RunRef
   alias Ecto.Adapters.SQL
+  alias Mezzanine.AppKitBridge.AdapterSupport
   alias Mezzanine.AppKitBridge.ReviewQueryService
   alias Mezzanine.AppKitBridge.WorkQueryService
   alias Mezzanine.Audit.ExecutionLineage
@@ -640,18 +641,9 @@ defmodule Mezzanine.AppKitBridge.OperatorQueryService do
     end
   end
 
-  defp fetch_string(attrs, opts, key) do
-    case Map.get(attrs, key) || Map.get(attrs, Atom.to_string(key)) || Keyword.get(opts, key) do
-      value when is_binary(value) and value != "" -> {:ok, value}
-      _ -> {:error, {:missing_required_field, key}}
-    end
-  end
-
-  defp actor(tenant_id), do: %{tenant_id: tenant_id}
-
-  defp normalize_state(nil), do: nil
-  defp normalize_state(value) when is_atom(value), do: Atom.to_string(value)
-  defp normalize_state(value), do: value
+  defp fetch_string(attrs, opts, key), do: AdapterSupport.fetch_string(attrs, opts, key)
+  defp actor(tenant_id), do: AdapterSupport.actor(tenant_id)
+  defp normalize_state(value), do: AdapterSupport.normalize_state(value)
 
   defp coerce_datetime(%DateTime{} = value), do: value
   defp coerce_datetime(%NaiveDateTime{} = value), do: DateTime.from_naive!(value, "Etc/UTC")
@@ -671,22 +663,11 @@ defmodule Mezzanine.AppKitBridge.OperatorQueryService do
 
   defp coerce_datetime(_value), do: nil
 
-  defp normalize_value(%DateTime{} = value), do: value
-  defp normalize_value(%NaiveDateTime{} = value), do: value
-  defp normalize_value(%_{} = value), do: value |> Map.from_struct() |> normalize_value()
-
-  defp normalize_value(value) when is_map(value) do
-    Map.new(value, fn {key, nested_value} -> {key, normalize_value(nested_value)} end)
-  end
-
-  defp normalize_value(value) when is_list(value), do: Enum.map(value, &normalize_value/1)
-  defp normalize_value(value), do: value
+  defp normalize_value(value), do: AdapterSupport.normalize_value(value)
 
   defp severity_rank(:critical), do: 3
   defp severity_rank(:warning), do: 2
   defp severity_rank(:info), do: 1
 
-  defp normalize_error(:not_found), do: :bridge_not_found
-  defp normalize_error(reason) when is_atom(reason), do: reason
-  defp normalize_error(_reason), do: :bridge_failed
+  defp normalize_error(reason), do: AdapterSupport.normalize_error(reason)
 end

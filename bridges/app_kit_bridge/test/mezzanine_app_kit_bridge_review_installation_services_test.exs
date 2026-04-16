@@ -41,6 +41,8 @@ defmodule Mezzanine.AppKitBridge.ReviewInstallationServicesTest do
 
     assert {:ok, listings} = ReviewQueryService.list_pending_reviews(tenant_id, program.id)
     assert Enum.any?(listings, &(&1.decision_ref.id == review_unit.id))
+    assert {:ok, bridge_listings} = AppKitBridge.list_pending_reviews(tenant_id, program.id)
+    assert Enum.any?(bridge_listings, &(&1.decision_ref.id == review_unit.id))
 
     assert {:ok, detail} = ReviewQueryService.get_review_detail(tenant_id, review_unit.id)
     assert detail.decision_ref.id == review_unit.id
@@ -103,6 +105,8 @@ defmodule Mezzanine.AppKitBridge.ReviewInstallationServicesTest do
     assert {:ok, detail} = InstallationService.get_installation(installation_id)
     assert detail.installation_ref.id == installation_id
     assert detail.environment == "prod"
+    assert {:ok, bridge_installations} = AppKitBridge.list_installations("tenant-install")
+    assert Enum.any?(bridge_installations, &(&1.installation_ref.id == installation_id))
 
     assert detail.bindings["execution_bindings"]["expense_capture"]["placement_ref"] ==
              "local_docker"
@@ -131,6 +135,18 @@ defmodule Mezzanine.AppKitBridge.ReviewInstallationServicesTest do
 
     assert {:ok, bridge_installation} = AppKitBridge.get_installation(installation_id)
     assert bridge_installation.installation_ref.id == installation_id
+  end
+
+  test "adapter services normalize missing lookups to bridge-safe not-found errors" do
+    %{tenant_id: tenant_id} = review_fixture_stack("tenant-bridge-missing")
+    missing_id = Ecto.UUID.generate()
+
+    assert {:error, :bridge_not_found} =
+             ReviewQueryService.get_review_detail(tenant_id, missing_id)
+
+    assert {:error, :bridge_not_found} = AppKitBridge.get_review_detail(tenant_id, missing_id)
+    assert {:error, :bridge_not_found} = InstallationService.get_installation(missing_id)
+    assert {:error, :bridge_not_found} = AppKitBridge.get_installation(missing_id)
   end
 
   test "installation service refuses to deploy or install unactivated pack registrations" do

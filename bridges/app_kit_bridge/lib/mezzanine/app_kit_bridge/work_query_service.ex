@@ -9,6 +9,7 @@ defmodule Mezzanine.AppKitBridge.WorkQueryService do
 
   require Ash.Query
 
+  alias Mezzanine.AppKitBridge.AdapterSupport
   alias Mezzanine.Assurance
   alias Mezzanine.Audit
   alias Mezzanine.Control.ControlSession
@@ -415,14 +416,9 @@ defmodule Mezzanine.AppKitBridge.WorkQueryService do
   defp control_mode(control_session), do: control_session.current_mode
 
   defp fetch_string(attrs, opts, key) do
-    case map_value(attrs, key) || Keyword.get(opts, key) do
-      value when is_binary(value) -> {:ok, value}
-      _ -> {:error, {:missing_required, key}}
-    end
+    AdapterSupport.fetch_string(attrs, opts, key, {:missing_required, key})
   end
 
-  defp map_value(map, key) when is_map(map),
-    do: Map.get(map, key) || Map.get(map, Atom.to_string(key))
-
-  defp actor(tenant_id), do: %{tenant_id: tenant_id}
+  defp map_value(map, key), do: AdapterSupport.map_value(map, key)
+  defp actor(tenant_id), do: AdapterSupport.actor(tenant_id)
 end

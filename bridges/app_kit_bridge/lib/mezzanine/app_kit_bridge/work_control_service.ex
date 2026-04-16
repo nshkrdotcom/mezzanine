@@ -6,6 +6,7 @@ defmodule Mezzanine.AppKitBridge.WorkControlService do
   require Ash.Query
 
   alias AppKit.Core.{Result, RunRef}
+  alias Mezzanine.AppKitBridge.AdapterSupport
   alias Mezzanine.Work.{WorkObject, WorkPlan}
 
   @spec start_run(map(), keyword()) :: {:ok, Result.t()} | {:error, atom()}
@@ -114,10 +115,7 @@ defmodule Mezzanine.AppKitBridge.WorkControlService do
   end
 
   defp fetch_string_value(attrs, opts, key, error) do
-    case Map.get(attrs, key) || Map.get(attrs, Atom.to_string(key)) || Keyword.get(opts, key) do
-      value when is_binary(value) -> {:ok, value}
-      _ -> {:error, error}
-    end
+    AdapterSupport.fetch_string(attrs, opts, key, error)
   end
 
   defp external_ref(attrs) do
@@ -153,12 +151,8 @@ defmodule Mezzanine.AppKitBridge.WorkControlService do
 
   defp review_required?(plan), do: plan.derived_review_intents != []
 
-  defp map_value(map, key) when is_map(map),
-    do: Map.get(map, key) || Map.get(map, Atom.to_string(key))
-
-  defp map_value(_map, _key), do: nil
-
-  defp actor(tenant_id), do: %{tenant_id: tenant_id}
+  defp map_value(map, key), do: AdapterSupport.map_value(map, key)
+  defp actor(tenant_id), do: AdapterSupport.actor(tenant_id)
 
   defp normalize_result({:ok, value}, _fallback), do: {:ok, value}
   defp normalize_result({:error, _reason}, fallback), do: {:error, fallback}
