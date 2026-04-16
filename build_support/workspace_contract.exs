@@ -22,26 +22,135 @@ defmodule Mezzanine.Build.WorkspaceContract do
     "core/archival_engine"
   ]
 
-  @deprecated_package_paths [
-    "core/ops_model",
-    "core/ops_policy",
-    "core/ops_planner",
-    "core/ops_domain",
-    "core/ops_scheduler",
-    "core/ops_audit",
-    "core/ops_control",
-    "core/ops_assurance",
-    "bridges/app_kit_bridge",
-    "surfaces/work_surface",
-    "surfaces/operator_surface",
-    "surfaces/review_surface",
-    "surfaces/program_surface"
+  # Keep this inventory aligned with `Mezzanine.Workspace`; the root workspace
+  # test suite asserts parity so the build contract and runtime helper cannot
+  # drift while the deprecated ontology is being dismantled.
+  @deprecated_packages [
+    %{
+      path: "core/ops_model",
+      delete_ready?: false,
+      blocking_consumers: [
+        "bridges/citadel_bridge",
+        "bridges/integration_bridge",
+        "bridges/app_kit_bridge",
+        "stack_lab/support/citadel_spine_harness"
+      ],
+      cutover_edge: "shared lower intent structs still power the lower bridges and proof harness"
+    },
+    %{
+      path: "core/ops_policy",
+      delete_ready?: false,
+      blocking_consumers: ["core/ops_planner", "core/ops_domain"],
+      cutover_edge: "legacy policy compilation still feeds the deprecated planning/domain path"
+    },
+    %{
+      path: "core/ops_planner",
+      delete_ready?: false,
+      blocking_consumers: ["core/ops_control", "core/ops_domain"],
+      cutover_edge:
+        "legacy work-plan derivation still feeds the deprecated control and domain path"
+    },
+    %{
+      path: "core/ops_domain",
+      delete_ready?: false,
+      blocking_consumers: [
+        "bridges/app_kit_bridge",
+        "app_kit/bridges/mezzanine_bridge",
+        "extravaganza/runtime_provisioner",
+        "stack_lab/support/citadel_spine_harness"
+      ],
+      cutover_edge:
+        "the deprecated repo and program/work-class tables still back product bootstrap and proof harness state"
+    },
+    %{
+      path: "core/ops_scheduler",
+      delete_ready?: true,
+      blocking_consumers: [],
+      cutover_edge:
+        "no surviving cross-repo consumers remain; this package can be removed once repo-local gates stay green"
+    },
+    %{
+      path: "core/ops_audit",
+      delete_ready?: false,
+      blocking_consumers: [
+        "bridges/app_kit_bridge",
+        "core/ops_assurance",
+        "core/ops_control",
+        "stack_lab/support/citadel_spine_harness"
+      ],
+      cutover_edge: "legacy audit assemblers still feed the old app-kit bridge and proof harness"
+    },
+    %{
+      path: "core/ops_control",
+      delete_ready?: false,
+      blocking_consumers: [
+        "bridges/app_kit_bridge",
+        "surfaces/operator_surface",
+        "stack_lab/support/citadel_spine_harness"
+      ],
+      cutover_edge:
+        "the deprecated operator command path still flows through the old bridge and harness"
+    },
+    %{
+      path: "core/ops_assurance",
+      delete_ready?: false,
+      blocking_consumers: [
+        "bridges/app_kit_bridge",
+        "surfaces/work_surface",
+        "surfaces/review_surface",
+        "surfaces/operator_surface",
+        "stack_lab/support/citadel_spine_harness"
+      ],
+      cutover_edge:
+        "legacy assurance logic still feeds the old bridge, harness, and deprecated surfaces"
+    },
+    %{
+      path: "bridges/app_kit_bridge",
+      delete_ready?: false,
+      blocking_consumers: [
+        "app_kit/bridges/mezzanine_bridge",
+        "stack_lab/support/citadel_spine_harness"
+      ],
+      cutover_edge:
+        "AppKit's current backend path and the proof harness still run through this deprecated bridge"
+    },
+    %{
+      path: "surfaces/work_surface",
+      delete_ready?: true,
+      blocking_consumers: [],
+      cutover_edge:
+        "no surviving cross-repo callers remain; delete with the rest of the deprecated surface cluster"
+    },
+    %{
+      path: "surfaces/operator_surface",
+      delete_ready?: true,
+      blocking_consumers: [],
+      cutover_edge:
+        "no surviving cross-repo callers remain; delete with the rest of the deprecated surface cluster"
+    },
+    %{
+      path: "surfaces/review_surface",
+      delete_ready?: true,
+      blocking_consumers: [],
+      cutover_edge:
+        "no surviving cross-repo callers remain; delete with the rest of the deprecated surface cluster"
+    },
+    %{
+      path: "surfaces/program_surface",
+      delete_ready?: false,
+      blocking_consumers: ["extravaganza/runtime_provisioner"],
+      cutover_edge:
+        "Extravaganza still provisions legacy program and work-class records through this surface"
+    }
   ]
+  @deprecated_package_paths Enum.map(@deprecated_packages, & &1.path)
   @package_paths [@kept_package_paths, @neutral_package_paths, @deprecated_package_paths]
                  |> List.flatten()
 
   @active_project_globs [".", "core/*", "apps/*", "bridges/*", "surfaces/*"]
 
   def package_paths, do: @package_paths
+  def deprecated_packages, do: @deprecated_packages
+  def deprecated_package_paths, do: @deprecated_package_paths
   def active_project_globs, do: @active_project_globs
 end
