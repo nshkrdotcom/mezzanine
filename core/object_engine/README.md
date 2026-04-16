@@ -1,8 +1,16 @@
 # MezzanineObjectEngine
 
-Neutral subject and object lifecycle engine scaffold for the Mezzanine rebuild.
+Neutral subject ledger and lifecycle engine for the Mezzanine rebuild.
 
-This package is the future home for durable subject records, state transitions,
-and lifecycle mechanics that do not belong in the legacy `ops_*` model.
+This package now owns the Phase `2.4.3` durable subject-ledger slice:
 
-Status: Phase `2.1` scaffold only.
+- durable `SubjectRecord` persistence
+- installation-scoped source refs and identity
+- canonical `lifecycle_state` ownership
+- optimistic row-versioning for lifecycle updates
+- subject block/unblock rescue overlay
+
+Primary modules:
+
+- `Mezzanine.Objects`
+- `Mezzanine.Objects.SubjectRecord`

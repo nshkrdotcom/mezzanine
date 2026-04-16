@@ -1,18 +1,13 @@
 defmodule MezzanineObjectEngine do
   @moduledoc """
-  Documentation for `MezzanineObjectEngine`.
+  Neutral subject-ledger contract entrypoint for the Mezzanine rebuild.
   """
 
-  @doc """
-  Hello world.
-
-  ## Examples
-
-      iex> MezzanineObjectEngine.hello()
-      :world
-
-  """
-  def hello do
-    :world
+  @spec components() :: [module()]
+  def components do
+    [
+      Mezzanine.Objects,
+      Mezzanine.Objects.SubjectRecord
+    ]
   end
 end

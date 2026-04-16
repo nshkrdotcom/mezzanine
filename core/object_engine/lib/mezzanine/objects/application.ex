@@ -1,0 +1,14 @@
+defmodule Mezzanine.Objects.Application do
+  @moduledoc false
+
+  use Application
+
+  @impl true
+  def start(_type, _args) do
+    children = [
+      Mezzanine.Objects.Repo
+    ]
+
+    Supervisor.start_link(children, strategy: :one_for_one, name: Mezzanine.Objects.Supervisor)
+  end
+end
