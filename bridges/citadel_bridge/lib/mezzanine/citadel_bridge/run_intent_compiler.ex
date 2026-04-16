@@ -30,7 +30,7 @@ defmodule Mezzanine.CitadelBridge.RunIntentCompiler do
        constraints: constraints,
        execution: %{
          execution_intent_family: Map.get(attrs, :execution_intent_family, "process"),
-         execution_intent: intent.input,
+         execution_intent: Map.get(attrs, :execution_intent, intent.input),
          allowed_operations: Map.get(attrs, :allowed_operations, [intent.capability]),
          allowed_tools:
            Map.get(attrs, :allowed_tools, value(intent.grant_profile, :allowed_tools, [])),

@@ -3,6 +3,7 @@ defmodule MezzanineOpsModel.Codec do
   Stable serialization helpers for persisting pure operational structs.
   """
 
+  def dump(value) when is_boolean(value), do: value
   @spec dump(term()) :: term()
   def dump(%DateTime{} = value), do: DateTime.to_iso8601(value)
   def dump(%NaiveDateTime{} = value), do: NaiveDateTime.to_iso8601(value)

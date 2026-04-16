@@ -17,7 +17,8 @@ defmodule Mezzanine.Policy.ApprovalPosture do
        %{
          mode: mode,
          reviewers: Helpers.string_list(Helpers.value(approval, :reviewers, [])),
-         escalation_required: Helpers.value(approval, :escalation_required, false)
+         escalation_required:
+           Helpers.boolean(Helpers.value(approval, :escalation_required, false), false)
        }}
     end
   end

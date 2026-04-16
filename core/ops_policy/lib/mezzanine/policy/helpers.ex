@@ -33,4 +33,13 @@ defmodule Mezzanine.Policy.Helpers do
   @spec string_list(term()) :: [String.t()]
   def string_list(values) when is_list(values), do: Enum.map(values, &to_string/1)
   def string_list(_), do: []
+
+  @spec boolean(term(), boolean()) :: boolean()
+  def boolean(value, default \\ false)
+
+  def boolean(value, _default) when is_boolean(value), do: value
+  def boolean("true", _default), do: true
+  def boolean("false", _default), do: false
+  def boolean(value, default) when is_binary(value), do: String.trim(value) == "true" || default
+  def boolean(_value, default), do: default
 end

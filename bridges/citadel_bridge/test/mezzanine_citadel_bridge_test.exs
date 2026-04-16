@@ -22,6 +22,29 @@ defmodule Mezzanine.CitadelBridgeTest do
     assert request.execution.allowed_operations == ["linear.issue.execute"]
   end
 
+  test "compile_run_request accepts an explicit lower execution intent override" do
+    intent = run_intent()
+
+    assert {:ok, %RunRequest{} = request} =
+             CitadelBridge.compile_run_request(intent, %{
+               target_id: "linear-default",
+               service_id: "linear",
+               execution_intent_family: "process",
+               execution_intent: %{
+                 "command" => "echo",
+                 "args" => ["hello"],
+                 "environment" => %{},
+                 "extensions" => %{"source" => "test"}
+               },
+               allowed_operations: ["linear.issue.execute"],
+               objective: "Execute Linear work"
+             })
+
+    assert request.execution.execution_intent_family == "process"
+    assert request.execution.execution_intent["command"] == "echo"
+    assert request.execution.execution_intent["extensions"]["source"] == "test"
+  end
+
   test "build_request_context emits a valid host-ingress request context" do
     intent = run_intent()
 

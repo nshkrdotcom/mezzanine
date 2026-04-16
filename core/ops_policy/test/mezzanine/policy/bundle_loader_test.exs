@@ -78,6 +78,52 @@ defmodule Mezzanine.Policy.BundleLoaderTest do
            ]
   end
 
+  test "coerces persisted boolean strings in compiled bundles" do
+    persisted_bundle =
+      MezzanineOpsModel.PolicyBundle.new!(%{
+        bundle_id: "policy-legacy",
+        source_ref: "WORKFLOW.md",
+        config: %{},
+        prompt_template: "Do the work.",
+        compiled_form: %{
+          "approval_posture" => %{
+            "mode" => "manual",
+            "reviewers" => ["ops_lead"],
+            "escalation_required" => "false"
+          },
+          "review_rules" => %{
+            "required" => "false",
+            "required_decisions" => 0,
+            "gates" => ["operator"]
+          },
+          "run_profile" => %{
+            "profile_id" => "default_session",
+            "runtime_class" => "session",
+            "capability" => "linear.issue.execute",
+            "target" => "linear-default"
+          },
+          "retry_profile" => %{
+            "strategy" => "exponential",
+            "max_attempts" => 4,
+            "initial_backoff_ms" => 5_000,
+            "max_backoff_ms" => 300_000
+          },
+          "placement_profile" => %{
+            "profile_id" => "default-placement",
+            "strategy" => "affinity",
+            "target_selector" => %{},
+            "runtime_preferences" => %{},
+            "workspace_policy" => %{},
+            "metadata" => %{}
+          },
+          "capability_grants" => []
+        }
+      })
+
+    assert TypedConfig.approval_posture(persisted_bundle).escalation_required == false
+    assert TypedConfig.review_rules(persisted_bundle).required == false
+  end
+
   test "rejects malformed grant declarations during compile" do
     assert {:ok, bundle} =
              BundleLoader.load_map(%{

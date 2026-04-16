@@ -10,7 +10,7 @@ defmodule Mezzanine.Policy.ReviewRules do
   @spec from_config(map()) :: {:ok, t()}
   def from_config(config) do
     review = Helpers.section(config, :review)
-    required = Helpers.value(review, :required, false)
+    required = Helpers.boolean(Helpers.value(review, :required, false), false)
 
     {:ok,
      %{

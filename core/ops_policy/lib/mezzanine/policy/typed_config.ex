@@ -3,6 +3,7 @@ defmodule Mezzanine.Policy.TypedConfig do
   Typed getters over compiled policy bundles.
   """
 
+  alias Mezzanine.Policy.Helpers
   alias MezzanineOpsModel.{CapabilityGrant, PlacementProfile}
   alias MezzanineOpsModel.PolicyBundle
 
@@ -40,7 +41,10 @@ defmodule Mezzanine.Policy.TypedConfig do
   def run_profile(%PolicyBundle{} = bundle), do: fetch(bundle, :run_profile)
 
   @spec approval_posture(PolicyBundle.t()) :: map()
-  def approval_posture(%PolicyBundle{} = bundle), do: fetch(bundle, :approval_posture)
+  def approval_posture(%PolicyBundle{} = bundle) do
+    posture = fetch(bundle, :approval_posture)
+    Map.put(posture, :escalation_required, Helpers.boolean(posture[:escalation_required], false))
+  end
 
   @spec retry_profile(PolicyBundle.t()) :: map()
   def retry_profile(%PolicyBundle{} = bundle), do: fetch(bundle, :retry_profile)
@@ -54,7 +58,10 @@ defmodule Mezzanine.Policy.TypedConfig do
   end
 
   @spec review_rules(PolicyBundle.t()) :: map()
-  def review_rules(%PolicyBundle{} = bundle), do: fetch(bundle, :review_rules)
+  def review_rules(%PolicyBundle{} = bundle) do
+    rules = fetch(bundle, :review_rules)
+    Map.put(rules, :required, Helpers.boolean(rules[:required], false))
+  end
 
   @spec capability_grants(PolicyBundle.t()) :: [MezzanineOpsModel.CapabilityGrant.t()]
   def capability_grants(%PolicyBundle{} = bundle) do

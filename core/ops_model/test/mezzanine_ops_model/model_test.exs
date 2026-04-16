@@ -175,7 +175,7 @@ defmodule MezzanineOpsModel.ModelTest do
         work_id: "work-1",
         capability: "linear.issue.execute",
         runtime_class: :session,
-        metadata: %{source: :planner}
+        metadata: %{source: :planner, review_required: false}
       })
 
     dumped = Codec.dump(run_intent)
@@ -185,7 +185,7 @@ defmodule MezzanineOpsModel.ModelTest do
              "grant_profile" => %{},
              "input" => %{},
              "intent_id" => "intent-run-1",
-             "metadata" => %{"source" => "planner"},
+             "metadata" => %{"review_required" => false, "source" => "planner"},
              "placement" => %{},
              "program_id" => "program-1",
              "runtime_class" => "session",
