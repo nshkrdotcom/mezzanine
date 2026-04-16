@@ -1,18 +1,14 @@
 defmodule MezzanineEvidenceEngine do
   @moduledoc """
-  Documentation for `MezzanineEvidenceEngine`.
+  Neutral evidence-ledger contract entrypoint for the Mezzanine rebuild.
   """
 
-  @doc """
-  Hello world.
-
-  ## Examples
-
-      iex> MezzanineEvidenceEngine.hello()
-      :world
-
-  """
-  def hello do
-    :world
+  @spec components() :: [module()]
+  def components do
+    [
+      Mezzanine.EvidenceLedger,
+      Mezzanine.EvidenceLedger.EvidenceRecord,
+      Mezzanine.EvidenceLedger.Summary
+    ]
   end
 end

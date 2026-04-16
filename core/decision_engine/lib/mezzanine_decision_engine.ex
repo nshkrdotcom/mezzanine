@@ -1,18 +1,13 @@
 defmodule MezzanineDecisionEngine do
   @moduledoc """
-  Documentation for `MezzanineDecisionEngine`.
+  Neutral decision-ledger contract entrypoint for the Mezzanine rebuild.
   """
 
-  @doc """
-  Hello world.
-
-  ## Examples
-
-      iex> MezzanineDecisionEngine.hello()
-      :world
-
-  """
-  def hello do
-    :world
+  @spec components() :: [module()]
+  def components do
+    [
+      Mezzanine.Decisions,
+      Mezzanine.Decisions.DecisionRecord
+    ]
   end
 end

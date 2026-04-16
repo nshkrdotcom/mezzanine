@@ -5,5 +5,7 @@ config :mezzanine_core,
     Mezzanine.ConfigRegistry,
     Mezzanine.Audit,
     Mezzanine.Objects,
-    Mezzanine.Execution
+    Mezzanine.Execution,
+    Mezzanine.Decisions,
+    Mezzanine.EvidenceLedger
   ]

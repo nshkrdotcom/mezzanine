@@ -1,20 +1,30 @@
 defmodule MezzanineEvidenceEngine.MixProject do
   use Mix.Project
 
+  @source_url "https://github.com/nshkrdotcom/mezzanine"
+
   def project do
     [
       app: :mezzanine_evidence_engine,
       version: "0.1.0",
       elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      elixirc_paths: elixirc_paths(Mix.env()),
+      deps: deps(),
+      aliases: aliases(),
+      dialyzer: [plt_add_deps: :apps_tree],
+      description: "Durable evidence ledger and completeness helpers for Mezzanine",
+      docs: [main: "readme", extras: ["README.md"]],
+      name: "Mezzanine Evidence Engine",
+      source_url: @source_url,
+      homepage_url: @source_url
     ]
   end
 
-  # Run "mix help compile.app" to learn about applications.
   def application do
     [
-      extra_applications: [:logger]
+      mod: {Mezzanine.EvidenceLedger.Application, []},
+      extra_applications: [:logger, :runtime_tools]
     ]
   end
 
@@ -22,8 +32,58 @@ defmodule MezzanineEvidenceEngine.MixProject do
     [preferred_envs: [ci: :test]]
   end
 
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_env), do: ["lib"]
+
+  defp aliases do
+    [
+      setup: ["deps.get", "ecto.setup"],
+      "ecto.setup": [
+        "ecto.create",
+        "audit.migrate",
+        "object.migrate",
+        "execution.migrate",
+        "ecto.migrate"
+      ],
+      "ecto.reset": ["ecto.drop", "ecto.setup"],
+      "execution.migrate": [
+        "ecto.migrate -r Mezzanine.Execution.Repo --migrations-path ../execution_engine/priv/repo/migrations"
+      ],
+      "object.migrate": [
+        "ecto.migrate -r Mezzanine.Objects.Repo --migrations-path ../object_engine/priv/repo/migrations"
+      ],
+      "audit.migrate": [
+        "ecto.migrate -r Mezzanine.Audit.Repo --migrations-path ../audit_engine/priv/repo/migrations"
+      ],
+      test: [
+        "ecto.create --quiet",
+        "audit.migrate",
+        "object.migrate",
+        "execution.migrate",
+        "ecto.migrate",
+        "test"
+      ],
+      ci: [
+        "format --check-formatted",
+        "compile --warnings-as-errors",
+        "cmd env MIX_ENV=test mix test",
+        "credo --strict",
+        "cmd env MIX_ENV=dev mix dialyzer",
+        "cmd env MIX_ENV=dev mix docs --warnings-as-errors"
+      ]
+    ]
+  end
+
   defp deps do
     [
+      {:mezzanine_audit_engine, path: "../audit_engine"},
+      {:mezzanine_object_engine, path: "../object_engine"},
+      {:mezzanine_execution_engine, path: "../execution_engine"},
+      {:ash, "~> 3.24"},
+      {:ash_postgres, "~> 2.6"},
+      {:ecto_sql, "~> 3.13"},
+      {:postgrex, ">= 0.0.0"},
+      {:jason, "~> 1.4"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.40.1", only: :dev, runtime: false}
