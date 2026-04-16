@@ -6,8 +6,8 @@ defmodule Mezzanine.Assurance do
   require Ash.Query
 
   alias Mezzanine.Assurance.{GateEvaluator, WaiverEngine}
-  alias Mezzanine.Audit
   alias Mezzanine.Review.{Escalation, ReviewDecision, ReviewUnit, Waiver}
+  alias Mezzanine.WorkAudit
 
   @spec list_pending_reviews(String.t()) :: {:ok, [struct()]} | {:error, term()}
   def list_pending_reviews(tenant_id) when is_binary(tenant_id) do
@@ -92,7 +92,7 @@ defmodule Mezzanine.Assurance do
   end
 
   defp record_review_audit(tenant_id, review_unit, decision, attrs) do
-    Audit.record_event(tenant_id, %{
+    WorkAudit.record_event(tenant_id, %{
       program_id: Map.fetch!(attrs, :program_id),
       work_object_id: review_unit.work_object_id,
       review_unit_id: review_unit.id,

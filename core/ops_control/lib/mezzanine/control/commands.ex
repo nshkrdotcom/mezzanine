@@ -5,10 +5,10 @@ defmodule Mezzanine.Control.Commands do
 
   require Ash.Query
 
-  alias Mezzanine.Audit
   alias Mezzanine.Control.{ControlSession, OperatorIntervention}
   alias Mezzanine.Runs.{Run, RunSeries}
   alias Mezzanine.Work.{WorkObject, WorkPlan}
+  alias Mezzanine.WorkAudit
 
   @spec pause_work(String.t(), Ecto.UUID.t(), String.t(), map()) ::
           {:ok, map()} | {:error, term()}
@@ -21,7 +21,7 @@ defmodule Mezzanine.Control.Commands do
          {:ok, intervention} <-
            record_intervention(tenant_id, paused_session.id, operator_ref, :pause, payload),
          {:ok, _audit} <-
-           Audit.record_event(tenant_id, %{
+           WorkAudit.record_event(tenant_id, %{
              program_id: work_object.program_id,
              work_object_id: work_object.id,
              event_kind: :operator_paused,
@@ -44,7 +44,7 @@ defmodule Mezzanine.Control.Commands do
          {:ok, intervention} <-
            record_intervention(tenant_id, resumed_session.id, operator_ref, :resume, payload),
          {:ok, _audit} <-
-           Audit.record_event(tenant_id, %{
+           WorkAudit.record_event(tenant_id, %{
              program_id: work_object.program_id,
              work_object_id: work_object.id,
              event_kind: :operator_resumed,
@@ -68,7 +68,7 @@ defmodule Mezzanine.Control.Commands do
          :ok <- cancel_active_run(tenant_id, work_object_id),
          {:ok, cancelled_work} <- mark_work_terminal(work_object, tenant_id, :cancelled),
          {:ok, _audit} <-
-           Audit.record_event(tenant_id, %{
+           WorkAudit.record_event(tenant_id, %{
              program_id: work_object.program_id,
              work_object_id: work_object.id,
              event_kind: :operator_cancelled,
@@ -92,7 +92,7 @@ defmodule Mezzanine.Control.Commands do
          {:ok, prior_plan} <- maybe_supersede_current_plan(tenant_id, work_object.current_plan_id),
          {:ok, replanned_work} <- compile_plan(work_object, tenant_id, prior_plan),
          {:ok, _audit} <-
-           Audit.record_event(tenant_id, %{
+           WorkAudit.record_event(tenant_id, %{
              program_id: work_object.program_id,
              work_object_id: work_object.id,
              event_kind: :replan_requested,
@@ -129,7 +129,7 @@ defmodule Mezzanine.Control.Commands do
              normalized_override_set
            ),
          {:ok, _audit} <-
-           Audit.record_event(tenant_id, %{
+           WorkAudit.record_event(tenant_id, %{
              program_id: work_object.program_id,
              work_object_id: work_object.id,
              event_kind: :grant_override_applied,

@@ -53,7 +53,7 @@ defmodule Mezzanine.AppKitBridge.OperatorQueryService do
   def subject_status(tenant_id, subject_id)
       when is_binary(tenant_id) and is_binary(subject_id) do
     with {:ok, detail} <- WorkQueryService.get_subject_detail(tenant_id, subject_id),
-         {:ok, audit_report} <- Mezzanine.Audit.work_report(tenant_id, subject_id) do
+         {:ok, audit_report} <- Mezzanine.WorkAudit.work_report(tenant_id, subject_id) do
       subject_ref = subject_ref(subject_id)
 
       {:ok,

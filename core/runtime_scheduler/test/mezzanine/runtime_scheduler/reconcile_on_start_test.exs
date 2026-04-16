@@ -2,9 +2,14 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStartTest do
   use Mezzanine.RuntimeScheduler.DataCase, async: false
 
   alias Ash
+  alias Ecto.Adapters.SQL.Sandbox
+  alias Mezzanine.Audit.Repo, as: AuditRepo
   alias Mezzanine.Execution.{Dispatcher, DispatchOutboxEntry, ExecutionRecord}
+  alias Mezzanine.Execution.Repo, as: ExecutionRepo
+  alias Mezzanine.Objects.Repo, as: ObjectsRepo
   alias Mezzanine.Objects.SubjectRecord
   alias Mezzanine.RuntimeScheduler.ReconcileOnStart
+  alias Mezzanine.RuntimeScheduler.Repo, as: RuntimeSchedulerRepo
 
   @dispatch_snapshot %{
     "placement_ref" => "local_docker",
@@ -12,15 +17,15 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStartTest do
     "connector_bindings" => %{"github_write" => %{"connector_key" => "github_app"}}
   }
 
-  test "requeues dispatching rows claimed before restart and replays them without duplicating the outbox row" do
-    crash_now = ~U[2026-04-16 11:00:00.000000Z]
-    recovery_now = ~U[2026-04-16 11:00:05.000000Z]
-
+  test "requeues dispatching rows claimed before restart and replays them without duplicating the outbox row",
+       %{sandbox_owners: sandbox_owners} do
     assert {:ok, subject} = ingest_subject("linear:ticket:restart-recovery")
     assert {:ok, execution} = dispatch_execution(subject, "trace-runtime-recovery", "restart")
     assert {:ok, initial_outbox} = DispatchOutboxEntry.by_execution_id(execution.id)
+    crash_now = DateTime.add(initial_outbox.available_at, 5, :second)
+    recovery_now = DateTime.add(crash_now, 5, :second)
 
-    claimed = crash_after_claim!(crash_now)
+    claimed = crash_after_claim!(crash_now, sandbox_owners)
 
     assert claimed.execution_id == execution.id
     assert claimed.outbox_id == initial_outbox.id
@@ -76,24 +81,43 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStartTest do
     assert completed_outbox.status == :completed
   end
 
-  defp crash_after_claim!(now) do
+  defp crash_after_claim!(now, sandbox_owners) do
     parent = self()
 
     {pid, ref} =
       spawn_monitor(fn ->
-        Dispatcher.dispatch_next(
-          submit_fun: fn claimed ->
-            send(parent, {:claimed_dispatch, claimed})
-            exit(:dispatch_process_crashed)
-          end,
-          actor_ref: %{kind: :dispatcher},
-          now: now
-        )
+        receive do
+          :proceed ->
+            Dispatcher.dispatch_next(
+              submit_fun: fn claimed ->
+                send(parent, {:claimed_dispatch, claimed})
+                exit(:dispatch_process_crashed)
+              end,
+              actor_ref: %{kind: :dispatcher},
+              now: now
+            )
+        end
       end)
+
+    allow_sandbox_access!(sandbox_owners, pid)
+    send(pid, :proceed)
 
     assert_receive {:claimed_dispatch, claimed}
     assert_receive {:DOWN, ^ref, :process, ^pid, :dispatch_process_crashed}
     claimed
+  end
+
+  defp allow_sandbox_access!(sandbox_owners, pid) do
+    owner_by_repo = %{
+      AuditRepo => sandbox_owners.audit,
+      ExecutionRepo => sandbox_owners.execution,
+      ObjectsRepo => sandbox_owners.objects,
+      RuntimeSchedulerRepo => sandbox_owners.runtime_scheduler
+    }
+
+    Enum.each(owner_by_repo, fn {repo, owner} ->
+      :ok = Sandbox.allow(repo, owner, pid)
+    end)
   end
 
   defp ingest_subject(source_ref) do

@@ -6,12 +6,12 @@ defmodule Mezzanine.Surfaces.WorkSurface do
   require Ash.Query
 
   alias Mezzanine.Assurance
-  alias Mezzanine.Audit
   alias Mezzanine.Control.ControlSession
   alias Mezzanine.Review.{Escalation, ReviewUnit}
   alias Mezzanine.Runs.{Run, RunSeries}
   alias Mezzanine.Surfaces.{WorkDetail, WorkQueueStats, WorkStatusProjection}
   alias Mezzanine.Work.{WorkObject, WorkPlan}
+  alias Mezzanine.WorkAudit
 
   @active_statuses [:pending, :planning, :planned, :running, :awaiting_review, :blocked]
   @opaque work_resource :: struct()
@@ -49,7 +49,7 @@ defmodule Mezzanine.Surfaces.WorkSurface do
          {:ok, active_run} <- fetch_active_run(tenant_id, run_series),
          {:ok, pending_reviews} <- list_pending_reviews_for_work(tenant_id, work_object.id),
          {:ok, control_session} <- fetch_control_session(tenant_id, work_object.id),
-         {:ok, audit_report} <- Audit.work_report(tenant_id, work_object.id),
+         {:ok, audit_report} <- WorkAudit.work_report(tenant_id, work_object.id),
          {:ok, gate_status} <- Assurance.gate_status(tenant_id, work_object.id) do
       {:ok,
        %WorkDetail{
@@ -106,7 +106,7 @@ defmodule Mezzanine.Surfaces.WorkSurface do
          {:ok, active_run} <- fetch_active_run(tenant_id, run_series),
          {:ok, control_session} <- fetch_control_session(tenant_id, work_object.id),
          {:ok, gate_status} <- Assurance.gate_status(tenant_id, work_object.id),
-         {:ok, timeline_projection} <- Audit.timeline_for_work(tenant_id, work_object.id) do
+         {:ok, timeline_projection} <- WorkAudit.timeline_for_work(tenant_id, work_object.id) do
       {:ok,
        %WorkStatusProjection{
          work_object_id: work_object.id,

@@ -39,7 +39,7 @@ defmodule Mezzanine.Surfaces.OperatorSurface do
          {:ok, review_units} <- list_review_units_for_run(tenant_id, run.id),
          {:ok, run_artifacts} <-
            RunArtifact.list_for_run(run.id, actor: actor(tenant_id), tenant: tenant_id),
-         {:ok, audit_report} <- Mezzanine.Audit.work_report(tenant_id, work_object.id) do
+         {:ok, audit_report} <- Mezzanine.WorkAudit.work_report(tenant_id, work_object.id) do
       {:ok,
        %RunDetail{
          run: run,

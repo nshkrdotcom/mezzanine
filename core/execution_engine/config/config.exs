@@ -1,7 +1,7 @@
 import Config
 
 config :ash,
-  domains: [Mezzanine.Execution, Mezzanine.Objects, Mezzanine.AuditDomain]
+  domains: [Mezzanine.Execution, Mezzanine.Objects, Mezzanine.Audit]
 
 config :mezzanine_execution_engine,
   ecto_repos: [Mezzanine.Execution.Repo],
@@ -13,7 +13,7 @@ config :mezzanine_object_engine,
 
 config :mezzanine_audit_engine,
   ecto_repos: [Mezzanine.Audit.Repo],
-  ash_domains: [Mezzanine.AuditDomain]
+  ash_domains: [Mezzanine.Audit]
 
 config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",

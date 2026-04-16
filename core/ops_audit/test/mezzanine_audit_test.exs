@@ -1,11 +1,11 @@
-defmodule Mezzanine.AuditTest do
+defmodule Mezzanine.WorkAuditTest do
   use ExUnit.Case, async: false
 
   alias Ecto.Adapters.SQL.Sandbox
-  alias Mezzanine.Audit
   alias Mezzanine.OpsDomain.Repo
   alias Mezzanine.Programs.{PolicyBundle, Program}
   alias Mezzanine.Work.{WorkClass, WorkObject}
+  alias Mezzanine.WorkAudit
 
   setup do
     pid = Sandbox.start_owner!(Repo, shared: false)
@@ -18,7 +18,7 @@ defmodule Mezzanine.AuditTest do
       fixture_stack("tenant-a")
 
     {:ok, _} =
-      Audit.record_event(tenant_id, %{
+      WorkAudit.record_event(tenant_id, %{
         program_id: program.id,
         work_object_id: work_object.id,
         event_kind: :run_completed,
@@ -29,7 +29,7 @@ defmodule Mezzanine.AuditTest do
       })
 
     {:ok, _} =
-      Audit.record_event(tenant_id, %{
+      WorkAudit.record_event(tenant_id, %{
         program_id: program.id,
         work_object_id: work_object.id,
         event_kind: :work_planned,
@@ -39,7 +39,7 @@ defmodule Mezzanine.AuditTest do
         occurred_at: ~U[2026-04-14 19:00:01Z]
       })
 
-    assert {:ok, projection} = Audit.refresh_timeline(tenant_id, work_object.id)
+    assert {:ok, projection} = WorkAudit.refresh_timeline(tenant_id, work_object.id)
     assert Enum.map(projection.timeline, & &1.event_kind) == ["work_planned", "run_completed"]
   end
 
@@ -48,7 +48,7 @@ defmodule Mezzanine.AuditTest do
       fixture_stack("tenant-b")
 
     {:ok, _} =
-      Audit.record_event(tenant_id, %{
+      WorkAudit.record_event(tenant_id, %{
         program_id: program.id,
         work_object_id: work_object.id,
         event_kind: :work_planned,
@@ -59,7 +59,7 @@ defmodule Mezzanine.AuditTest do
       })
 
     assert {:ok, bundle} =
-             Audit.assemble_bundle(tenant_id, %{
+             WorkAudit.assemble_bundle(tenant_id, %{
                program_id: program.id,
                work_object_id: work_object.id
              })

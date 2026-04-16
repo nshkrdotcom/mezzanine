@@ -4,7 +4,10 @@ defmodule Mezzanine.OpsDomain.Application do
 
   @impl true
   def start(_type, _args) do
-    Supervisor.start_link(children(), strategy: :one_for_one, name: Mezzanine.OpsDomain.Supervisor)
+    Supervisor.start_link(children(),
+      strategy: :one_for_one,
+      name: Mezzanine.OpsDomain.Supervisor
+    )
   end
 
   defp children do

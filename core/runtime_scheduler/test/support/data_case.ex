@@ -21,8 +21,8 @@ defmodule Mezzanine.RuntimeScheduler.DataCase do
   end
 
   setup tags do
-    setup_sandboxes(tags)
-    :ok
+    owners = setup_sandboxes(tags)
+    {:ok, sandbox_owners: owners}
   end
 
   def setup_sandboxes(tags) do
@@ -39,5 +39,12 @@ defmodule Mezzanine.RuntimeScheduler.DataCase do
       Sandbox.stop_owner(execution_owner)
       Sandbox.stop_owner(runtime_scheduler_owner)
     end)
+
+    %{
+      audit: audit_owner,
+      execution: execution_owner,
+      objects: objects_owner,
+      runtime_scheduler: runtime_scheduler_owner
+    }
   end
 end

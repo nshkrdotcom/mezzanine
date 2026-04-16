@@ -6,12 +6,12 @@ defmodule Mezzanine.Surfaces.ReviewSurface do
   require Ash.Query
 
   alias Mezzanine.Assurance
-  alias Mezzanine.Audit
   alias Mezzanine.Evidence.EvidenceItem
   alias Mezzanine.Review.ReviewUnit
   alias Mezzanine.Runs.{Run, RunArtifact, RunSeries}
   alias Mezzanine.Surfaces.{ReviewDetail, ReviewListing}
   alias Mezzanine.Work.WorkObject
+  alias Mezzanine.WorkAudit
 
   @opaque work_resource :: struct()
 
@@ -48,7 +48,7 @@ defmodule Mezzanine.Surfaces.ReviewSurface do
          review_unit = assurance_detail.review_unit,
          {:ok, work_object} <- fetch_work_object(tenant_id, review_unit.work_object_id),
          {:ok, active_run} <- fetch_active_run_for_work(tenant_id, review_unit.work_object_id),
-         {:ok, audit_report} <- Audit.work_report(tenant_id, review_unit.work_object_id),
+         {:ok, audit_report} <- WorkAudit.work_report(tenant_id, review_unit.work_object_id),
          {:ok, evidence_items} <- list_evidence_items(tenant_id, review_unit.evidence_bundle_id),
          {:ok, run_artifacts} <- list_run_artifacts(tenant_id, review_unit.run_id) do
       {:ok,
@@ -153,7 +153,7 @@ defmodule Mezzanine.Surfaces.ReviewSurface do
              tenant: tenant_id
            ),
          {:ok, _audit} <-
-           Audit.record_event(tenant_id, %{
+           WorkAudit.record_event(tenant_id, %{
              program_id: completed_work.program_id,
              work_object_id: completed_work.id,
              event_kind: :work_completed,

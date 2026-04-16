@@ -7,7 +7,7 @@ defmodule Mezzanine.Audit.ExecutionLineageRecord do
   """
 
   use Ash.Resource,
-    domain: Mezzanine.AuditDomain,
+    domain: Mezzanine.Audit,
     data_layer: AshPostgres.DataLayer
 
   postgres do

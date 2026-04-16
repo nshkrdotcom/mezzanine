@@ -5,7 +5,7 @@ config :ash,
     Mezzanine.EvidenceLedger,
     Mezzanine.Execution,
     Mezzanine.Objects,
-    Mezzanine.AuditDomain
+    Mezzanine.Audit
   ]
 
 config :mezzanine_evidence_engine,
@@ -22,7 +22,7 @@ config :mezzanine_object_engine,
 
 config :mezzanine_audit_engine,
   ecto_repos: [Mezzanine.Audit.Repo],
-  ash_domains: [Mezzanine.AuditDomain]
+  ash_domains: [Mezzanine.Audit]
 
 config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",

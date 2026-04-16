@@ -2,7 +2,7 @@ import Config
 
 config :ash,
   domains: [
-    Mezzanine.AuditDomain,
+    Mezzanine.Audit,
     Mezzanine.ConfigRegistry,
     Mezzanine.Objects,
     Mezzanine.Execution,
@@ -18,7 +18,7 @@ config :ash,
 
 config :mezzanine_audit_engine,
   ecto_repos: [Mezzanine.Audit.Repo],
-  ash_domains: [Mezzanine.AuditDomain]
+  ash_domains: [Mezzanine.Audit]
 
 config :mezzanine_object_engine,
   ecto_repos: [Mezzanine.Objects.Repo],

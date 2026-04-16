@@ -7,11 +7,11 @@ defmodule Mezzanine.AppKitBridge.WorkControlService do
 
   alias AppKit.Core.{RequestContext, Result, RunRef, RunRequest}
   alias Mezzanine.AppKitBridge.AdapterSupport
-  alias Mezzanine.Audit
   alias Mezzanine.Control.ControlSession
   alias Mezzanine.Review.ReviewUnit
   alias Mezzanine.Runs.{Run, RunSeries}
   alias Mezzanine.Work.{WorkObject, WorkPlan}
+  alias Mezzanine.WorkAudit
 
   @active_run_statuses [:pending, :scheduled, :running]
   @review_kind_map %{
@@ -410,7 +410,7 @@ defmodule Mezzanine.AppKitBridge.WorkControlService do
          trace_id,
          recipe_ref
        ) do
-    Audit.record_event(tenant_id, %{
+    WorkAudit.record_event(tenant_id, %{
       program_id: work_object.program_id,
       work_object_id: work_object.id,
       run_id: run.id,

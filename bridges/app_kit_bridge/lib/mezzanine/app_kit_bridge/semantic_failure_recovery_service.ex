@@ -10,11 +10,11 @@ defmodule Mezzanine.AppKitBridge.SemanticFailureRecoveryService do
   require Ash.Query
 
   alias Mezzanine.AppKitBridge.AdapterSupport
-  alias Mezzanine.Audit
   alias Mezzanine.Execution.ExecutionRecord
   alias Mezzanine.Review.ReviewUnit
   alias Mezzanine.Runs.{Run, RunSeries}
   alias Mezzanine.Work.WorkObject
+  alias Mezzanine.WorkAudit
 
   @open_review_statuses [:pending, :in_review, :escalated]
   @terminal_run_statuses [:completed, :failed, :cancelled]
@@ -59,7 +59,7 @@ defmodule Mezzanine.AppKitBridge.SemanticFailureRecoveryService do
              review_created?,
              opts
            ),
-         {:ok, _timeline} <- Audit.refresh_timeline(tenant_id, work_object.id, now(opts)) do
+         {:ok, _timeline} <- WorkAudit.refresh_timeline(tenant_id, work_object.id, now(opts)) do
       {:ok,
        %{
          execution: execution,
@@ -257,7 +257,7 @@ defmodule Mezzanine.AppKitBridge.SemanticFailureRecoveryService do
          true,
          opts
        ) do
-    Audit.record_event(tenant_id, %{
+    WorkAudit.record_event(tenant_id, %{
       program_id: work_object.program_id,
       work_object_id: work_object.id,
       run_id: run.id,
@@ -293,7 +293,7 @@ defmodule Mezzanine.AppKitBridge.SemanticFailureRecoveryService do
          true,
          opts
        ) do
-    Audit.record_event(tenant_id, %{
+    WorkAudit.record_event(tenant_id, %{
       program_id: work_object.program_id,
       work_object_id: work_object.id,
       run_id: run_id(run),

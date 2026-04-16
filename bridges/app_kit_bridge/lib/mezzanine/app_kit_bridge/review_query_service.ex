@@ -10,11 +10,11 @@ defmodule Mezzanine.AppKitBridge.ReviewQueryService do
 
   alias Mezzanine.AppKitBridge.AdapterSupport
   alias Mezzanine.Assurance
-  alias Mezzanine.Audit
   alias Mezzanine.Evidence.EvidenceItem
   alias Mezzanine.Review.ReviewUnit
   alias Mezzanine.Runs.{Run, RunArtifact, RunSeries}
   alias Mezzanine.Work.WorkObject
+  alias Mezzanine.WorkAudit
 
   @spec list_pending_reviews(String.t(), Ecto.UUID.t()) :: {:ok, [map()]} | {:error, term()}
   def list_pending_reviews(tenant_id, program_id)
@@ -56,7 +56,7 @@ defmodule Mezzanine.AppKitBridge.ReviewQueryService do
          subject_ref = subject_ref(review_unit.work_object_id),
          {:ok, work_object} <- fetch_work_object(tenant_id, review_unit.work_object_id),
          {:ok, run} <- fetch_review_run(tenant_id, review_unit),
-         {:ok, audit_report} <- Audit.work_report(tenant_id, review_unit.work_object_id),
+         {:ok, audit_report} <- WorkAudit.work_report(tenant_id, review_unit.work_object_id),
          {:ok, evidence_items} <- list_evidence_items(tenant_id, review_unit.evidence_bundle_id),
          {:ok, run_artifacts} <- list_run_artifacts(tenant_id, review_unit.run_id) do
       {:ok,

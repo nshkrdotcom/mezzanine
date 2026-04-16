@@ -5,7 +5,10 @@ defmodule Mezzanine.Execution.Application do
 
   @impl true
   def start(_type, _args) do
-    Supervisor.start_link(children(), strategy: :one_for_one, name: Mezzanine.Execution.Supervisor)
+    Supervisor.start_link(children(),
+      strategy: :one_for_one,
+      name: Mezzanine.Execution.Supervisor
+    )
   end
 
   defp children do

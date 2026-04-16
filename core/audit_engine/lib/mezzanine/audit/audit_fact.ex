@@ -4,7 +4,7 @@ defmodule Mezzanine.Audit.AuditFact do
   """
 
   use Ash.Resource,
-    domain: Mezzanine.AuditDomain,
+    domain: Mezzanine.Audit,
     data_layer: AshPostgres.DataLayer
 
   postgres do

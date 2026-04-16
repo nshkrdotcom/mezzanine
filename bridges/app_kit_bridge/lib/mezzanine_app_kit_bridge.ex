@@ -8,6 +8,7 @@ defmodule Mezzanine.AppKitBridge do
   alias Mezzanine.AppKitBridge.{
     InstallationService,
     OperatorProjectionAdapter,
+    ProgramContextService,
     ReviewActionService,
     ReviewQueryService,
     WorkControlAdapter
@@ -36,6 +37,11 @@ defmodule Mezzanine.AppKitBridge do
 
   @spec create_installation(map(), keyword()) :: {:ok, map()} | {:error, term()}
   defdelegate create_installation(attrs, opts \\ []), to: InstallationService
+
+  @spec resolve_program_context(String.t(), map(), keyword()) :: {:ok, map()} | {:error, term()}
+  defdelegate resolve_program_context(tenant_id, attrs, opts \\ []),
+    to: ProgramContextService,
+    as: :resolve
 
   @spec get_installation(Ecto.UUID.t(), keyword()) :: {:ok, map()} | {:error, term()}
   defdelegate get_installation(installation_id, opts \\ []), to: InstallationService

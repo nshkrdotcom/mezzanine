@@ -1,4 +1,4 @@
-defmodule Mezzanine.Audit do
+defmodule Mezzanine.WorkAudit do
   @moduledoc """
   Durable audit and evidence services above the persistent evidence domain.
   """

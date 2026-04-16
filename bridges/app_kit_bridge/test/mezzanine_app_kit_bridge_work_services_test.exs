@@ -3,7 +3,14 @@ defmodule Mezzanine.AppKitBridge.WorkServicesTest do
 
   alias AppKit.Core.{RequestContext, RunRef, RunRequest}
   alias Ecto.Adapters.SQL.Sandbox
-  alias Mezzanine.AppKitBridge.{ReviewQueryService, WorkControlService, WorkQueryService}
+
+  alias Mezzanine.AppKitBridge.{
+    ProgramContextService,
+    ReviewQueryService,
+    WorkControlService,
+    WorkQueryService
+  }
+
   alias Mezzanine.OpsDomain.Repo
   alias Mezzanine.Programs.{PolicyBundle, Program}
   alias Mezzanine.Work.{WorkClass, WorkObject}
@@ -136,6 +143,20 @@ defmodule Mezzanine.AppKitBridge.WorkServicesTest do
 
     assert {:ok, pending_reviews} = ReviewQueryService.list_pending_reviews(tenant_id, program.id)
     assert Enum.any?(pending_reviews, &(&1.decision_ref.id == result.payload.review_unit_id))
+  end
+
+  test "program context service resolves durable routing ids from product metadata" do
+    %{tenant_id: tenant_id, program: program, work_class: work_class} =
+      fixture_stack("tenant-bridge-routing-context")
+
+    assert {:ok, resolved} =
+             ProgramContextService.resolve(
+               tenant_id,
+               %{program_slug: program.slug, work_class_name: work_class.name}
+             )
+
+    assert resolved.program_id == program.id
+    assert resolved.work_class_id == work_class.id
   end
 
   defp fixture_stack(tenant_id) do

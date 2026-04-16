@@ -11,11 +11,11 @@ defmodule Mezzanine.AppKitBridge.WorkQueryService do
 
   alias Mezzanine.AppKitBridge.AdapterSupport
   alias Mezzanine.Assurance
-  alias Mezzanine.Audit
   alias Mezzanine.Control.ControlSession
   alias Mezzanine.Review.{Escalation, ReviewUnit}
   alias Mezzanine.Runs.{Run, RunSeries}
   alias Mezzanine.Work.{WorkObject, WorkPlan}
+  alias Mezzanine.WorkAudit
 
   @active_statuses [:pending, :planning, :planned, :running, :awaiting_review, :blocked]
 
@@ -55,7 +55,7 @@ defmodule Mezzanine.AppKitBridge.WorkQueryService do
          {:ok, active_run} <- fetch_active_run(tenant_id, run_series),
          {:ok, pending_reviews} <- list_pending_reviews_for_work(tenant_id, work_object.id),
          {:ok, control_session} <- fetch_control_session(tenant_id, work_object.id),
-         {:ok, audit_report} <- Audit.work_report(tenant_id, work_object.id),
+         {:ok, audit_report} <- WorkAudit.work_report(tenant_id, work_object.id),
          {:ok, gate_status} <- Assurance.gate_status(tenant_id, work_object.id) do
       {:ok,
        %{
@@ -96,7 +96,7 @@ defmodule Mezzanine.AppKitBridge.WorkQueryService do
          {:ok, active_run} <- fetch_active_run(tenant_id, run_series),
          {:ok, control_session} <- fetch_control_session(tenant_id, work_object.id),
          {:ok, gate_status} <- Assurance.gate_status(tenant_id, work_object.id),
-         {:ok, timeline_projection} <- Audit.timeline_for_work(tenant_id, work_object.id) do
+         {:ok, timeline_projection} <- WorkAudit.timeline_for_work(tenant_id, work_object.id) do
       {:ok,
        %{
          subject_id: work_object.id,

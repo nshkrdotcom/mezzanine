@@ -184,7 +184,7 @@ defmodule MezzanineOperatorSurfaceTest do
       )
 
     {:ok, _audit} =
-      Mezzanine.Audit.record_event(tenant_id, %{
+      Mezzanine.WorkAudit.record_event(tenant_id, %{
         program_id: program.id,
         work_object_id: work_object.id,
         run_id: run.id,
