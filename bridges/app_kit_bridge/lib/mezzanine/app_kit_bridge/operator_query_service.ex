@@ -159,6 +159,7 @@ defmodule Mezzanine.AppKitBridge.OperatorQueryService do
     with {:ok, installation_id} <- fetch_string(attrs, opts, :installation_id),
          {:ok, execution_id} <- fetch_string(attrs, opts, :execution_id),
          {:ok, trace_id} <- fetch_string(attrs, opts, :trace_id),
+         :ok <- authorize_trace_query(installation_id, execution_id, trace_id),
          {:ok, query} <- build_unified_trace_query(attrs, installation_id, trace_id),
          {:ok, sources} <- fetch_trace_sources(attrs, opts, query, execution_id),
          {:ok, timeline} <- UnifiedTrace.assemble(query, sources) do
@@ -258,6 +259,30 @@ defmodule Mezzanine.AppKitBridge.OperatorQueryService do
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  defp authorize_trace_query(installation_id, execution_id, trace_id) do
+    with {:ok, execution} <- fetch_execution_record(execution_id) do
+      cond do
+        is_nil(execution) ->
+          :ok
+
+        execution.installation_id != installation_id ->
+          {:error, :unauthorized_lower_read}
+
+        execution.trace_id != trace_id ->
+          {:error, :invalid_trace_query}
+
+        true ->
+          :ok
+      end
+    end
+  end
+
+  defp fetch_execution_record(execution_id) do
+    ExecutionRecord
+    |> Ash.Query.filter(id == ^execution_id)
+    |> Ash.read_one(authorize?: false, domain: Mezzanine.Execution)
   end
 
   defp list_decision_records(installation_id, trace_id) do
@@ -527,6 +552,17 @@ defmodule Mezzanine.AppKitBridge.OperatorQueryService do
 
   defp merge_lower_fact_result({:ok, records}, acc, _query, _execution_id, _operation, _now) do
     {:cont, {:ok, acc ++ records}}
+  end
+
+  defp merge_lower_fact_result(
+         {:error, :unauthorized_lower_read},
+         _acc,
+         _query,
+         _execution_id,
+         _operation,
+         _now
+       ) do
+    {:halt, {:error, :unauthorized_lower_read}}
   end
 
   defp merge_lower_fact_result({:error, reason}, acc, query, execution_id, operation, now) do

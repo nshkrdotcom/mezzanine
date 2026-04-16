@@ -225,6 +225,26 @@ defmodule Mezzanine.AppKitBridge.OperatorServicesTest do
     assert_received {:events, ["lower-run-trace-operator-services"]}
   end
 
+  test "operator query service returns explicit auth denial for unauthorized lower-enriched trace reads" do
+    %{tenant_id: tenant_id, work_object: work_object} =
+      fixture_stack("tenant-operator-unified-trace-denied")
+
+    %{execution: execution, trace_id: trace_id} =
+      seed_trace_ledger(tenant_id, work_object.id, "trace-operator-services-denied")
+
+    assert {:error, :unauthorized_lower_read} =
+             OperatorQueryService.get_unified_trace(
+               %{
+                 tenant_id: tenant_id,
+                 actor_id: "ops_lead",
+                 installation_id: "inst-other",
+                 execution_id: execution.id,
+                 trace_id: trace_id
+               },
+               lower_facts: LowerFactsStub
+             )
+  end
+
   defp fixture_stack(tenant_id) do
     actor = %{tenant_id: tenant_id}
 
