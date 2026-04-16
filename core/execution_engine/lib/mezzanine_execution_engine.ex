@@ -8,7 +8,8 @@ defmodule MezzanineExecutionEngine do
     [
       Mezzanine.Execution,
       Mezzanine.Execution.ExecutionRecord,
-      Mezzanine.Execution.DispatchOutboxEntry
+      Mezzanine.Execution.DispatchOutboxEntry,
+      Mezzanine.Execution.Dispatcher
     ]
   end
 end

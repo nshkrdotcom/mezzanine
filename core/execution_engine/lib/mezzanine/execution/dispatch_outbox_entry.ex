@@ -39,6 +39,8 @@ defmodule Mezzanine.Execution.DispatchOutboxEntry do
         :status,
         :dispatch_envelope,
         :submission_dedupe_key,
+        :compiled_pack_revision,
+        :binding_snapshot,
         :available_at
       ])
     end
@@ -124,6 +126,18 @@ defmodule Mezzanine.Execution.DispatchOutboxEntry do
 
     attribute :submission_dedupe_key, :string do
       allow_nil?(false)
+      public?(true)
+    end
+
+    attribute :compiled_pack_revision, :integer do
+      allow_nil?(false)
+      default(1)
+      public?(true)
+    end
+
+    attribute :binding_snapshot, :map do
+      allow_nil?(false)
+      default(%{})
       public?(true)
     end
 

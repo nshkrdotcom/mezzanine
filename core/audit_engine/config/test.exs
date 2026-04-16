@@ -7,4 +7,4 @@ config :mezzanine_audit_engine, Mezzanine.Audit.Repo,
   port: String.to_integer(System.get_env("PGPORT", "5432")),
   database: "mezzanine_audit_engine_test",
   pool: Ecto.Adapters.SQL.Sandbox,
-  pool_size: 10
+  pool_size: 2

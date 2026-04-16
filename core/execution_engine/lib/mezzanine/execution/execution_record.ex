@@ -17,6 +17,14 @@ defmodule Mezzanine.Execution.ExecutionRecord do
     :accepted,
     :running
   ]
+  @failure_kinds [
+    :transient_failure,
+    :timeout,
+    :infrastructure_error,
+    :auth_error,
+    :semantic_failure,
+    :fatal_error
+  ]
 
   postgres do
     table("execution_records")
@@ -35,6 +43,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
     define(:record_accepted, action: :record_accepted)
     define(:record_retryable_failure, action: :record_retryable_failure)
     define(:record_terminal_rejection, action: :record_terminal_rejection)
+    define(:record_semantic_failure, action: :record_semantic_failure)
     define(:active_for_subject, action: :active_for_subject, args: [:subject_id])
   end
 
@@ -46,6 +55,8 @@ defmodule Mezzanine.Execution.ExecutionRecord do
         :installation_id,
         :subject_id,
         :recipe_ref,
+        :compiled_pack_revision,
+        :binding_snapshot,
         :trace_id,
         :causation_id
       ])
@@ -69,6 +80,8 @@ defmodule Mezzanine.Execution.ExecutionRecord do
             status: :pending,
             dispatch_envelope: Ash.Changeset.get_argument(changeset, :dispatch_envelope),
             submission_dedupe_key: Ash.Changeset.get_argument(changeset, :submission_dedupe_key),
+            compiled_pack_revision: execution.compiled_pack_revision,
+            binding_snapshot: execution.binding_snapshot,
             available_at: execution.next_dispatch_at
           }
 
@@ -111,6 +124,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
       change(set_attribute(:last_dispatch_error_kind, nil))
       change(set_attribute(:last_dispatch_error_payload, %{}))
       change(set_attribute(:terminal_rejection_reason, nil))
+      change(set_attribute(:failure_kind, nil))
 
       change(
         after_action(fn changeset, execution, _context ->
@@ -151,6 +165,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
       change(set_attribute(:last_dispatch_error_payload, arg(:last_dispatch_error_payload)))
       change(set_attribute(:trace_id, arg(:trace_id)))
       change(set_attribute(:causation_id, arg(:causation_id)))
+      change(set_attribute(:failure_kind, nil))
 
       change(
         after_action(fn changeset, execution, _context ->
@@ -194,6 +209,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
       change(set_attribute(:last_dispatch_error_payload, arg(:last_dispatch_error_payload)))
       change(set_attribute(:trace_id, arg(:trace_id)))
       change(set_attribute(:causation_id, arg(:causation_id)))
+      change(set_attribute(:failure_kind, nil))
 
       change(
         after_action(fn changeset, execution, _context ->
@@ -211,6 +227,44 @@ defmodule Mezzanine.Execution.ExecutionRecord do
                    %{
                      classification: "terminal_rejection",
                      terminal_rejection_reason: execution.terminal_rejection_reason
+                   }
+                 ) do
+            {:ok, execution}
+          end
+        end)
+      )
+    end
+
+    update :record_semantic_failure do
+      accept([])
+      require_atomic?(false)
+
+      argument(:lower_receipt, :map, allow_nil?: false)
+      argument(:last_dispatch_error_payload, :map, allow_nil?: false)
+      argument(:trace_id, :string, allow_nil?: false)
+      argument(:causation_id, :string, allow_nil?: false)
+      argument(:actor_ref, :map, allow_nil?: false)
+
+      change(optimistic_lock(:row_version))
+      change(set_attribute(:dispatch_state, :failed))
+      change(set_attribute(:failure_kind, :semantic_failure))
+      change(set_attribute(:lower_receipt, arg(:lower_receipt)))
+      change(set_attribute(:last_dispatch_error_kind, "semantic_failure"))
+      change(set_attribute(:last_dispatch_error_payload, arg(:last_dispatch_error_payload)))
+      change(set_attribute(:trace_id, arg(:trace_id)))
+      change(set_attribute(:causation_id, arg(:causation_id)))
+      change(set_attribute(:terminal_rejection_reason, nil))
+
+      change(
+        after_action(fn changeset, execution, _context ->
+          with {:ok, _fact} <-
+                 record_audit_fact(
+                   execution,
+                   Ash.Changeset.get_argument(changeset, :actor_ref),
+                   :execution_failed,
+                   %{
+                     classification: "semantic_failure",
+                     failure_kind: "semantic_failure"
                    }
                  ) do
             {:ok, execution}
@@ -241,6 +295,18 @@ defmodule Mezzanine.Execution.ExecutionRecord do
 
     attribute :recipe_ref, :string do
       allow_nil?(false)
+      public?(true)
+    end
+
+    attribute :compiled_pack_revision, :integer do
+      allow_nil?(false)
+      default(1)
+      public?(true)
+    end
+
+    attribute :binding_snapshot, :map do
+      allow_nil?(false)
+      default(%{})
       public?(true)
     end
 
@@ -306,6 +372,11 @@ defmodule Mezzanine.Execution.ExecutionRecord do
     end
 
     attribute :terminal_rejection_reason, :string do
+      public?(true)
+    end
+
+    attribute :failure_kind, :atom do
+      constraints(one_of: @failure_kinds)
       public?(true)
     end
 

@@ -13,6 +13,11 @@ defmodule Mezzanine.Execution.PersistenceTest do
                installation_id: "inst-1",
                subject_id: subject.id,
                recipe_ref: "triage_ticket",
+               compiled_pack_revision: 7,
+               binding_snapshot: %{
+                 "placement_ref" => "local_docker",
+                 "connector_bindings" => %{"github_write" => %{"connector_key" => "github_app"}}
+               },
                dispatch_envelope: %{"capability" => "sandbox.exec"},
                submission_dedupe_key: "inst-1:exec:dispatch",
                trace_id: "trace-dispatch",
@@ -23,11 +28,23 @@ defmodule Mezzanine.Execution.PersistenceTest do
     assert execution.dispatch_state == :pending_dispatch
     assert execution.dispatch_attempt_count == 0
     assert execution.trace_id == "trace-dispatch"
+    assert execution.compiled_pack_revision == 7
+
+    assert execution.binding_snapshot == %{
+             "placement_ref" => "local_docker",
+             "connector_bindings" => %{"github_write" => %{"connector_key" => "github_app"}}
+           }
 
     assert {:ok, outbox} = DispatchOutboxEntry.by_execution_id(execution.id)
     assert outbox.status == :pending
     assert outbox.submission_dedupe_key == "inst-1:exec:dispatch"
     assert outbox.execution_id == execution.id
+    assert outbox.compiled_pack_revision == 7
+
+    assert outbox.binding_snapshot == %{
+             "placement_ref" => "local_docker",
+             "connector_bindings" => %{"github_write" => %{"connector_key" => "github_app"}}
+           }
 
     assert {:ok, lineage} = ExecutionLineageStore.fetch(execution.id)
     assert lineage.dispatch_outbox_entry_id == outbox.id
@@ -124,6 +141,8 @@ defmodule Mezzanine.Execution.PersistenceTest do
       installation_id: "inst-1",
       subject_id: subject.id,
       recipe_ref: "triage_ticket",
+      compiled_pack_revision: 1,
+      binding_snapshot: %{},
       dispatch_envelope: %{"capability" => "sandbox.exec"},
       submission_dedupe_key: "inst-1:exec:#{suffix}",
       trace_id: trace_id,
