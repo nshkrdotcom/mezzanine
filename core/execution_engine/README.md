@@ -1,9 +1,16 @@
 # MezzanineExecutionEngine
 
-Neutral execution ledger and continuation engine scaffold for the Mezzanine
-rebuild.
+Neutral execution ledger and dispatch outbox engine for the Mezzanine rebuild.
 
-This package will own execution records, outbox classification, and lifecycle
-continuation mechanics on the new neutral core.
+This package now owns the Phase `2.4.4` durable execution slice:
 
-Status: Phase `2.1` scaffold only.
+- durable `ExecutionRecord` persistence
+- durable `DispatchOutboxEntry` truth
+- substrate-owned dispatch-state and retry metadata
+- stable execution-to-outbox lineage linkage
+
+Primary modules:
+
+- `Mezzanine.Execution`
+- `Mezzanine.Execution.ExecutionRecord`
+- `Mezzanine.Execution.DispatchOutboxEntry`
