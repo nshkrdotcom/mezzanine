@@ -23,7 +23,8 @@ defmodule MezzanineRuntimeScheduler.MixProject do
 
   def application do
     [
-      extra_applications: [:logger, :runtime_tools]
+      extra_applications: [:logger, :runtime_tools],
+      mod: {Mezzanine.RuntimeScheduler.Application, []}
     ]
   end
 
@@ -36,9 +37,19 @@ defmodule MezzanineRuntimeScheduler.MixProject do
 
   defp aliases do
     [
-      setup: ["deps.get", "ash.setup", "audit.migrate", "object.migrate", "execution.migrate"],
+      setup: [
+        "deps.get",
+        "ash.setup",
+        "runtime_scheduler.migrate",
+        "audit.migrate",
+        "object.migrate",
+        "execution.migrate"
+      ],
       "ecto.setup": ["setup"],
       "ecto.reset": ["ecto.drop", "setup"],
+      "runtime_scheduler.migrate": [
+        "ecto.migrate -r Mezzanine.RuntimeScheduler.Repo --migrations-path priv/repo/migrations"
+      ],
       "execution.migrate": [
         "ecto.migrate -r Mezzanine.Execution.Repo --migrations-path ../execution_engine/priv/repo/migrations"
       ],
@@ -48,7 +59,14 @@ defmodule MezzanineRuntimeScheduler.MixProject do
       "audit.migrate": [
         "ecto.migrate -r Mezzanine.Audit.Repo --migrations-path ../audit_engine/priv/repo/migrations"
       ],
-      test: ["ash.setup --quiet", "audit.migrate", "object.migrate", "execution.migrate", "test"],
+      test: [
+        "ash.setup --quiet",
+        "runtime_scheduler.migrate",
+        "audit.migrate",
+        "object.migrate",
+        "execution.migrate",
+        "test"
+      ],
       ci: [
         "format --check-formatted",
         "compile --warnings-as-errors",

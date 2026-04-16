@@ -1,5 +1,13 @@
 import Config
 
+config :mezzanine_runtime_scheduler, Mezzanine.RuntimeScheduler.Repo,
+  username: "postgres",
+  password: "postgres",
+  hostname: "localhost",
+  database: "mezzanine_runtime_scheduler_test",
+  pool: Ecto.Adapters.SQL.Sandbox,
+  pool_size: 2
+
 config :mezzanine_execution_engine, Mezzanine.Execution.Repo,
   username: "postgres",
   password: "postgres",

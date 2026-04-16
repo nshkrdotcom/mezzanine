@@ -4,11 +4,27 @@ defmodule MezzanineRuntimeScheduler do
   recovery.
   """
 
-  alias Mezzanine.RuntimeScheduler.ReconcileOnStart
+  alias Mezzanine.RuntimeScheduler.{InstallationLease, InstallationLeaseStore, ReconcileOnStart}
 
   @spec components() :: [module()]
   def components do
-    [ReconcileOnStart]
+    [InstallationLeaseStore, ReconcileOnStart]
+  end
+
+  @spec acquire_installation_lease(
+          InstallationLease.t(),
+          DateTime.t(),
+          keyword()
+        ) ::
+          {:ok, :acquired | :renewed, InstallationLease.t()} | {:error, term()}
+  def acquire_installation_lease(%InstallationLease{} = lease, now, opts \\ []) do
+    InstallationLeaseStore.acquire_lease(lease, now, opts)
+  end
+
+  @spec fetch_installation_lease(String.t(), keyword()) ::
+          {:ok, InstallationLease.t()} | :error
+  def fetch_installation_lease(installation_id, opts \\ []) when is_binary(installation_id) do
+    InstallationLeaseStore.fetch_current_lease(installation_id, opts)
   end
 
   @spec reconcile_on_start(String.t(), DateTime.t(), keyword()) ::

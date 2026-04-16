@@ -16,7 +16,12 @@ config :mezzanine_audit_engine,
   ash_domains: [Mezzanine.Audit]
 
 config :mezzanine_runtime_scheduler,
-  ecto_repos: [Mezzanine.Execution.Repo, Mezzanine.Objects.Repo, Mezzanine.Audit.Repo],
+  ecto_repos: [
+    Mezzanine.RuntimeScheduler.Repo,
+    Mezzanine.Execution.Repo,
+    Mezzanine.Objects.Repo,
+    Mezzanine.Audit.Repo
+  ],
   ash_domains: [Mezzanine.Execution, Mezzanine.Objects, Mezzanine.Audit]
 
 import_config "#{config_env()}.exs"
