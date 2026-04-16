@@ -4,8 +4,7 @@ defmodule Mezzanine.AppKitBridge.OperatorActionService do
   """
 
   alias AppKit.Core.RunRef
-  alias AppKit.RunGovernance
-  alias Mezzanine.Assurance
+  alias Mezzanine.AppKitBridge.ReviewActionService
   alias Mezzanine.Control.Commands
 
   @supported_actions [:pause, :resume, :cancel, :replan, :grant_override]
@@ -29,7 +28,7 @@ defmodule Mezzanine.AppKitBridge.OperatorActionService do
   @spec review_run(RunRef.t(), map(), keyword()) :: {:ok, map()} | {:error, atom()}
   def review_run(%RunRef{} = run_ref, evidence_attrs, opts \\ [])
       when is_map(evidence_attrs) and is_list(opts) do
-    with {:ok, result} <- record_review_decision(run_ref, evidence_attrs, opts) do
+    with {:ok, result} <- ReviewActionService.record_run_review(run_ref, evidence_attrs, opts) do
       {:ok,
        %{
          decision: result.metadata.decision,
@@ -42,38 +41,7 @@ defmodule Mezzanine.AppKitBridge.OperatorActionService do
   @spec record_review_decision(RunRef.t(), map(), keyword()) :: {:ok, map()} | {:error, atom()}
   def record_review_decision(%RunRef{} = run_ref, evidence_attrs, opts \\ [])
       when is_map(evidence_attrs) and is_list(opts) do
-    with {:ok, tenant_id} <- fetch_tenant_id(run_ref, evidence_attrs, opts),
-         {:ok, review_unit_id} <- fetch_review_unit_id(run_ref, evidence_attrs),
-         {:ok, program_id} <- fetch_program_id(run_ref, evidence_attrs, opts),
-         {:ok, evidence} <- RunGovernance.evidence(evidence_attrs),
-         state <- RunGovernance.review_state(evidence, opts),
-         {:ok, decision} <- build_decision(run_ref, state, opts),
-         {:ok, bridge_result} <-
-           Assurance.record_decision(tenant_id, review_unit_id, %{
-             program_id: program_id,
-             decision: decision_to_assurance(state),
-             actor_kind: :human,
-             actor_ref: actor_ref(evidence_attrs, opts),
-             reason: Keyword.get(opts, :reason),
-             payload: %{
-               summary: evidence.summary,
-               details: evidence.details
-             }
-           }) do
-      {:ok,
-       %{
-         status: :completed,
-         action_ref: review_action_ref(run_ref, state),
-         message: review_message(state),
-         metadata: %{
-           decision: decision,
-           review_unit: bridge_result.review_unit,
-           bridge_result: bridge_result
-         }
-       }}
-    else
-      {:error, reason} -> {:error, normalize_error(reason)}
-    end
+    ReviewActionService.record_run_review(run_ref, evidence_attrs, opts)
   end
 
   defp dispatch_action(:pause, tenant_id, subject_id, params, actor) do
@@ -117,65 +85,6 @@ defmodule Mezzanine.AppKitBridge.OperatorActionService do
       Map.get(params, :active_override_set) || Map.get(params, "active_override_set") || params
   end
 
-  defp fetch_tenant_id(run_ref, attrs, opts) do
-    case Keyword.get(opts, :tenant_id) || Map.get(attrs, :tenant_id) ||
-           Map.get(attrs, "tenant_id") ||
-           Map.get(run_ref.metadata, :tenant_id) || Map.get(run_ref.metadata, "tenant_id") do
-      value when is_binary(value) -> {:ok, value}
-      _ -> {:error, :missing_tenant_id}
-    end
-  end
-
-  defp fetch_review_unit_id(run_ref, attrs) do
-    case Map.get(attrs, :review_unit_id) || Map.get(attrs, "review_unit_id") ||
-           Map.get(run_ref.metadata, :review_unit_id) ||
-           Map.get(run_ref.metadata, "review_unit_id") do
-      value when is_binary(value) -> {:ok, value}
-      _ -> {:error, :missing_review_unit_id}
-    end
-  end
-
-  defp fetch_program_id(run_ref, attrs, opts) do
-    case Keyword.get(opts, :program_id) || Map.get(attrs, :program_id) ||
-           Map.get(attrs, "program_id") ||
-           Map.get(run_ref.metadata, :program_id) || Map.get(run_ref.metadata, "program_id") do
-      value when is_binary(value) -> {:ok, value}
-      _ -> {:error, :missing_program_id}
-    end
-  end
-
-  defp build_decision(run_ref, state, opts) do
-    RunGovernance.decision(%{
-      run_id: run_ref.run_id,
-      state: state,
-      reason: Keyword.get(opts, :reason)
-    })
-  end
-
-  defp decision_to_assurance(:approved), do: :accept
-  defp decision_to_assurance(:needs_changes), do: :reject
-
-  defp review_action_ref(run_ref, state) do
-    work_object_id =
-      Map.get(run_ref.metadata, :work_object_id) || Map.get(run_ref.metadata, "work_object_id")
-
-    %{
-      id: "#{work_object_id || run_ref.run_id}:review:#{state}",
-      action_kind: review_action_kind(state),
-      subject_ref:
-        if(is_binary(work_object_id),
-          do: %{id: work_object_id, subject_kind: "work_object"},
-          else: nil
-        )
-    }
-  end
-
-  defp review_action_kind(:approved), do: "review_accept"
-  defp review_action_kind(:needs_changes), do: "review_reject"
-
-  defp review_message(:approved), do: "Review accepted"
-  defp review_message(:needs_changes), do: "Review rejected"
-
   defp action_ref(subject_id, action) do
     %{
       id: "#{subject_id}:#{action}",
@@ -205,8 +114,4 @@ defmodule Mezzanine.AppKitBridge.OperatorActionService do
 
   defp normalize_value(value) when is_list(value), do: Enum.map(value, &normalize_value/1)
   defp normalize_value(value), do: value
-
-  defp normalize_error(:not_found), do: :bridge_not_found
-  defp normalize_error(reason) when is_atom(reason), do: reason
-  defp normalize_error(_reason), do: :bridge_failed
 end

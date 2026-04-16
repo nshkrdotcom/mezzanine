@@ -3,6 +3,7 @@ import Config
 config :ash,
   domains: [
     Mezzanine.Audit,
+    Mezzanine.ConfigRegistry,
     Mezzanine.Objects,
     Mezzanine.Execution,
     Mezzanine.Decisions,
@@ -35,6 +36,10 @@ config :mezzanine_evidence_engine,
   ecto_repos: [Mezzanine.EvidenceLedger.Repo],
   ash_domains: [Mezzanine.EvidenceLedger]
 
+config :mezzanine_config_registry,
+  ecto_repos: [Mezzanine.ConfigRegistry.Repo],
+  ash_domains: [Mezzanine.ConfigRegistry]
+
 config :mezzanine_ops_domain,
   ecto_repos: [Mezzanine.OpsDomain.Repo],
   ash_domains: [
@@ -57,6 +62,7 @@ config :mezzanine_ops_control,
 config :mezzanine_app_kit_bridge,
   ecto_repos: [
     Mezzanine.Audit.Repo,
+    Mezzanine.ConfigRegistry.Repo,
     Mezzanine.Objects.Repo,
     Mezzanine.Execution.Repo,
     Mezzanine.Decisions.Repo,

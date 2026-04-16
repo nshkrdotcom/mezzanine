@@ -10,9 +10,8 @@ defmodule Mezzanine.AppKitBridge.OperatorQueryService do
 
   alias AppKit.Core.RunRef
   alias Ecto.Adapters.SQL
+  alias Mezzanine.AppKitBridge.ReviewQueryService
   alias Mezzanine.AppKitBridge.WorkQueryService
-
-  alias Mezzanine.Assurance
   alias Mezzanine.Audit.ExecutionLineage
   alias Mezzanine.Audit.Repo
   alias Mezzanine.Audit.UnifiedTrace
@@ -129,31 +128,7 @@ defmodule Mezzanine.AppKitBridge.OperatorQueryService do
   @spec list_pending_reviews(String.t(), Ecto.UUID.t()) :: {:ok, [map()]} | {:error, term()}
   def list_pending_reviews(tenant_id, program_id)
       when is_binary(tenant_id) and is_binary(program_id) do
-    with {:ok, work_index} <- program_work_index(tenant_id, program_id),
-         {:ok, review_units} <- Assurance.list_pending_reviews(tenant_id) do
-      summaries =
-        review_units
-        |> Enum.filter(&Map.has_key?(work_index, &1.work_object_id))
-        |> Enum.map(fn review_unit ->
-          work_object = Map.fetch!(work_index, review_unit.work_object_id)
-          ref = subject_ref(work_object.id)
-
-          %{
-            decision_ref: decision_ref(review_unit.id, ref, review_unit.review_kind),
-            subject_ref: ref,
-            status: normalize_state(review_unit.status),
-            required_by: review_unit.required_by,
-            summary: work_object.title,
-            payload: %{
-              reviewer_actor: normalize_value(review_unit.reviewer_actor),
-              review_kind: normalize_state(review_unit.review_kind)
-            }
-          }
-        end)
-        |> Enum.sort_by(&{&1.required_by || DateTime.utc_now(), &1.decision_ref.id})
-
-      {:ok, summaries}
-    end
+    ReviewQueryService.list_pending_reviews(tenant_id, program_id)
   end
 
   @spec system_health(String.t(), Ecto.UUID.t()) :: {:ok, map()} | {:error, term()}
@@ -472,14 +447,6 @@ defmodule Mezzanine.AppKitBridge.OperatorQueryService do
     Enum.map(rows, fn row ->
       Enum.zip(columns, row) |> Map.new(fn {key, value} -> {String.to_atom(key), value} end)
     end)
-  end
-
-  defp program_work_index(tenant_id, program_id) do
-    WorkObject.list_for_program(program_id, actor: actor(tenant_id), tenant: tenant_id)
-    |> case do
-      {:ok, work_objects} -> {:ok, Map.new(work_objects, &{&1.id, &1})}
-      {:error, reason} -> {:error, reason}
-    end
   end
 
   defp open_control_sessions(tenant_id, program_id) do
