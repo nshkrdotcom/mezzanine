@@ -14,6 +14,8 @@ defmodule Mezzanine.Execution.DispatcherTest do
   }
 
   test "dispatch_next accepts duplicate-safe submissions and preserves the frozen dispatch snapshot" do
+    dispatch_now = due_now()
+
     assert {:ok, subject} = ingest_subject("linear:ticket:dispatcher-accepted")
     assert {:ok, execution} = dispatch_execution(subject, "trace-dispatcher-accepted", "accepted")
 
@@ -33,7 +35,7 @@ defmodule Mezzanine.Execution.DispatcherTest do
                   }}
                end,
                actor_ref: %{kind: :dispatcher},
-               now: ~U[2026-04-16 08:00:00.000000Z]
+               now: dispatch_now
              )
 
     assert received_claim(execution.id) == %{
@@ -110,7 +112,7 @@ defmodule Mezzanine.Execution.DispatcherTest do
   end
 
   test "dispatch_next records terminal rejection and stops retries" do
-    reject_now = ~U[2026-04-16 08:30:00.000000Z]
+    reject_now = due_now()
 
     assert {:ok, subject} = ingest_subject("linear:ticket:dispatcher-reject")
     assert {:ok, execution} = dispatch_execution(subject, "trace-dispatcher-reject", "reject")
@@ -141,7 +143,7 @@ defmodule Mezzanine.Execution.DispatcherTest do
   end
 
   test "reconcile_result records semantic failure without reopening the lowering outbox" do
-    accepted_now = ~U[2026-04-16 09:00:00.000000Z]
+    accepted_now = due_now()
 
     assert {:ok, subject} = ingest_subject("linear:ticket:dispatcher-semantic")
     assert {:ok, execution} = dispatch_execution(subject, "trace-dispatcher-semantic", "semantic")
@@ -223,5 +225,11 @@ defmodule Mezzanine.Execution.DispatcherTest do
       causation_id: "cause-#{suffix}",
       actor_ref: %{kind: :scheduler}
     })
+  end
+
+  defp due_now do
+    DateTime.utc_now()
+    |> DateTime.truncate(:second)
+    |> DateTime.add(5, :second)
   end
 end
