@@ -24,6 +24,12 @@ defmodule Mezzanine.WorkspaceTest do
     assert "MEZZANINE_NEUTRAL_CORE_CUTOVER" in Mezzanine.Workspace.coexistence_gates()
   end
 
+  test "kept lower bridges stay limited to active lower seams" do
+    assert "bridges/citadel_bridge" in Mezzanine.Workspace.kept_package_paths()
+    assert "bridges/integration_bridge" in Mezzanine.Workspace.kept_package_paths()
+    refute "bridges/execution_plane_bridge" in Mezzanine.Workspace.kept_package_paths()
+  end
+
   test "exposes the workspace project globs" do
     assert "." in Mezzanine.Workspace.active_project_globs()
     assert "core/*" in Mezzanine.Workspace.active_project_globs()

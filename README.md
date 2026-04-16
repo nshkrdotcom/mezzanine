@@ -45,7 +45,6 @@ mezzanine/
                        # [DEPRECATED-PENDING-MIGRATION] frozen legacy northbound bridge
   bridges/citadel_bridge
   bridges/integration_bridge
-  bridges/execution_plane_bridge
   surfaces/*           # [DEPRECATED-PENDING-MIGRATION] frozen legacy northbound surfaces
   docs/                # repo-level architecture and publication docs
 ```

@@ -30,7 +30,6 @@ core/mezzanine_core/
 bridges/app_kit_bridge/
 bridges/citadel_bridge/
 bridges/integration_bridge/
-bridges/execution_plane_bridge/
 surfaces/work_surface/
 surfaces/operator_surface/
 surfaces/review_surface/
@@ -43,8 +42,8 @@ The current repo layout is intentionally split into three bands:
 
 - projected neutral core packages under `core/pack_*`, `core/*_engine`, and
   `core/config_registry/`
-- kept lower bridges in `bridges/citadel_bridge/`,
-  `bridges/integration_bridge/`, and `bridges/execution_plane_bridge/`
+- kept lower bridges in `bridges/citadel_bridge/` and
+  `bridges/integration_bridge/`
 - frozen legacy migration scaffolding in `core/ops_*/`, `bridges/app_kit_bridge/`,
   and `surfaces/*`
 
