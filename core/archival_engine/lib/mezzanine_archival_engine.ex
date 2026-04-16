@@ -1,6 +1,7 @@
 defmodule MezzanineArchivalEngine do
   @moduledoc """
-  Neutral archival-contract entrypoint for the Mezzanine rebuild.
+  Durable archival manifest persistence plus pure countdown/offload contracts for
+  the neutral Mezzanine runtime.
   """
 
   @spec contract_modules() :: [module()]
@@ -9,7 +10,8 @@ defmodule MezzanineArchivalEngine do
       Mezzanine.Archival.CountdownPolicy,
       Mezzanine.Archival.Graph,
       Mezzanine.Archival.Manifest,
-      Mezzanine.Archival.OffloadPlan
+      Mezzanine.Archival.OffloadPlan,
+      Mezzanine.Archival.ArchivalManifest
     ]
   end
 end

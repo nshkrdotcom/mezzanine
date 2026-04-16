@@ -1,8 +1,14 @@
 # MezzanineProjectionEngine
 
-Neutral projection and read-model engine scaffold for the Mezzanine rebuild.
+Neutral projection engine for the Mezzanine rebuild.
 
-This package will own live projections, read-model materialization, and query
-support for the new neutral runtime.
+This package now owns the durable `2.4.6` substrate read-model slice for:
 
-Status: Phase `2.1` scaffold only.
+- named projection rows with indexed `trace_id` / `causation_id` joins
+- async `MaterializedProjection` snapshots for non-interactive views
+- package-local migrations and tests proving durable projection ownership
+
+Primary modules:
+
+- `Mezzanine.Projections.ProjectionRow`
+- `Mezzanine.Projections.MaterializedProjection`

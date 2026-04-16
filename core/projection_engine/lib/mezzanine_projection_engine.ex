@@ -1,18 +1,19 @@
 defmodule MezzanineProjectionEngine do
   @moduledoc """
-  Documentation for `MezzanineProjectionEngine`.
+  Durable named projection rows and async materialized projections for the
+  neutral Mezzanine runtime.
   """
 
-  @doc """
-  Hello world.
+  @spec domain_modules() :: [module()]
+  def domain_modules do
+    [Mezzanine.Projections]
+  end
 
-  ## Examples
-
-      iex> MezzanineProjectionEngine.hello()
-      :world
-
-  """
-  def hello do
-    :world
+  @spec resource_modules() :: [module()]
+  def resource_modules do
+    [
+      Mezzanine.Projections.ProjectionRow,
+      Mezzanine.Projections.MaterializedProjection
+    ]
   end
 end

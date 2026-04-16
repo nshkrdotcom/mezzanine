@@ -9,10 +9,11 @@ defmodule MezzanineArchivalEngine.MixProject do
       version: "0.1.0",
       elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
+      elixirc_paths: elixirc_paths(Mix.env()),
       deps: deps(),
       aliases: aliases(),
       dialyzer: [plt_add_deps: :apps_tree],
-      description: "Archival countdown and hot/cold offload contracts for Mezzanine",
+      description: "Durable archival manifests and offload contracts for Mezzanine",
       docs: [main: "readme", extras: ["README.md"]],
       name: "Mezzanine Archival Engine",
       source_url: @source_url,
@@ -21,15 +22,57 @@ defmodule MezzanineArchivalEngine.MixProject do
   end
 
   def application do
-    [extra_applications: [:logger]]
+    [
+      mod: {Mezzanine.Archival.Application, []},
+      extra_applications: [:logger, :runtime_tools]
+    ]
   end
 
   def cli do
     [preferred_envs: [ci: :test]]
   end
 
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_env), do: ["lib"]
+
   defp aliases do
     [
+      setup: ["deps.get", "ecto.setup"],
+      "ecto.setup": [
+        "ecto.create",
+        "audit.migrate",
+        "object.migrate",
+        "execution.migrate",
+        "decision.migrate",
+        "evidence.migrate",
+        "ecto.migrate"
+      ],
+      "ecto.reset": ["ecto.drop", "ecto.setup"],
+      "evidence.migrate": [
+        "ecto.migrate -r Mezzanine.EvidenceLedger.Repo --migrations-path ../evidence_engine/priv/repo/migrations"
+      ],
+      "decision.migrate": [
+        "ecto.migrate -r Mezzanine.Decisions.Repo --migrations-path ../decision_engine/priv/repo/migrations"
+      ],
+      "execution.migrate": [
+        "ecto.migrate -r Mezzanine.Execution.Repo --migrations-path ../execution_engine/priv/repo/migrations"
+      ],
+      "object.migrate": [
+        "ecto.migrate -r Mezzanine.Objects.Repo --migrations-path ../object_engine/priv/repo/migrations"
+      ],
+      "audit.migrate": [
+        "ecto.migrate -r Mezzanine.Audit.Repo --migrations-path ../audit_engine/priv/repo/migrations"
+      ],
+      test: [
+        "ecto.create --quiet",
+        "audit.migrate",
+        "object.migrate",
+        "execution.migrate",
+        "decision.migrate",
+        "evidence.migrate",
+        "ecto.migrate",
+        "test"
+      ],
       ci: [
         "format --check-formatted",
         "compile --warnings-as-errors",
@@ -43,6 +86,16 @@ defmodule MezzanineArchivalEngine.MixProject do
 
   defp deps do
     [
+      {:mezzanine_audit_engine, path: "../audit_engine"},
+      {:mezzanine_object_engine, path: "../object_engine"},
+      {:mezzanine_execution_engine, path: "../execution_engine"},
+      {:mezzanine_decision_engine, path: "../decision_engine"},
+      {:mezzanine_evidence_engine, path: "../evidence_engine"},
+      {:ash, "~> 3.24"},
+      {:ash_postgres, "~> 2.6"},
+      {:ecto_sql, "~> 3.13"},
+      {:postgrex, ">= 0.0.0"},
+      {:jason, "~> 1.4"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.40.1", only: :dev, runtime: false}

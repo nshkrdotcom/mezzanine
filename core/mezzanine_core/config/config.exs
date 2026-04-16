@@ -7,5 +7,7 @@ config :mezzanine_core,
     Mezzanine.Objects,
     Mezzanine.Execution,
     Mezzanine.Decisions,
-    Mezzanine.EvidenceLedger
+    Mezzanine.EvidenceLedger,
+    Mezzanine.Projections,
+    Mezzanine.Archival
   ]
