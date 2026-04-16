@@ -5,6 +5,8 @@ defmodule Mezzanine.ConfigRegistry.PackRegistration do
   Each registration stores the serialized compiled manifest, canonical subject
   kinds, and serializer metadata needed to hydrate installation runtime state.
   """
+  require Ash.Query
+
   use Ash.Resource,
     domain: Mezzanine.ConfigRegistry,
     data_layer: AshPostgres.DataLayer
@@ -53,7 +55,28 @@ defmodule Mezzanine.ConfigRegistry.PackRegistration do
     update :activate do
       accept([])
       require_atomic?(false)
-      change(set_attribute(:status, :active))
+
+      change(fn changeset, _context ->
+        case overlapping_subject_kinds(changeset.data) do
+          {:ok, []} ->
+            Ash.Changeset.force_change_attribute(changeset, :status, :active)
+
+          {:ok, overlaps} ->
+            Ash.Changeset.add_error(
+              changeset,
+              field: :canonical_subject_kinds,
+              message:
+                "cannot activate pack registration because canonical subject kinds overlap active packs: #{Enum.join(overlaps, ", ")}"
+            )
+
+          {:error, reason} ->
+            Ash.Changeset.add_error(
+              changeset,
+              field: :canonical_subject_kinds,
+              message: "failed to validate canonical subject kind overlap: #{inspect(reason)}"
+            )
+        end
+      end)
     end
 
     update :deprecate do
@@ -118,5 +141,30 @@ defmodule Mezzanine.ConfigRegistry.PackRegistration do
 
   identities do
     identity(:unique_pack_version, [:pack_slug, :version])
+  end
+
+  defp overlapping_subject_kinds(%{id: registration_id, canonical_subject_kinds: subject_kinds}) do
+    __MODULE__
+    |> Ash.Query.filter(status == :active and id != ^registration_id)
+    |> Ash.read(domain: Mezzanine.ConfigRegistry)
+    |> case do
+      {:ok, active_registrations} ->
+        current_subject_kinds = MapSet.new(subject_kinds)
+
+        overlaps =
+          active_registrations
+          |> Enum.flat_map(fn active_registration ->
+            current_subject_kinds
+            |> MapSet.intersection(MapSet.new(active_registration.canonical_subject_kinds))
+            |> MapSet.to_list()
+          end)
+          |> Enum.uniq()
+          |> Enum.sort()
+
+        {:ok, overlaps}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 end

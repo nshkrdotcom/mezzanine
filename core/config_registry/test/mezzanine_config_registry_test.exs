@@ -1,9 +1,20 @@
 defmodule MezzanineConfigRegistryTest do
   use Mezzanine.ConfigRegistry.DataCase, async: false
 
+  alias Ash.Error.Invalid
   alias Mezzanine.ConfigRegistry.{Installation, PackRegistration}
+
+  alias Mezzanine.Pack.{
+    CompiledPack,
+    Compiler,
+    ExecutionRecipeSpec,
+    LifecycleSpec,
+    Manifest,
+    ProjectionSpec,
+    SubjectKindSpec
+  }
+
   alias Mezzanine.Pack.Registry
-  alias Mezzanine.TestPacks.RegistryFixturePack
 
   test "register_pack persists compiled payload and canonical subject kinds" do
     compiled = fixture_pack()
@@ -79,13 +90,83 @@ defmodule MezzanineConfigRegistryTest do
            end) == 0
   end
 
+  test "pack activation rejects overlapping canonical subject kinds and allows distinct active packs" do
+    first_registration =
+      fixture_pack(pack_slug: :expense_approval, version: "1.0.0", subject_kind: :expense_request)
+      |> MezzanineConfigRegistry.register_pack!()
+
+    assert {:ok, %PackRegistration{status: :active}} =
+             PackRegistration.activate(first_registration)
+
+    overlapping_registration =
+      fixture_pack(pack_slug: :invoice_ops, version: "1.0.0", subject_kind: :expense_request)
+      |> MezzanineConfigRegistry.register_pack!()
+
+    assert {:error, %Invalid{} = error} = PackRegistration.activate(overlapping_registration)
+    assert Exception.message(error) =~ "canonical subject kinds"
+    assert Exception.message(error) =~ "expense_request"
+
+    assert {:ok, %PackRegistration{status: :registered}} =
+             Ash.get(PackRegistration, overlapping_registration.id)
+
+    distinct_registration =
+      fixture_pack(pack_slug: :invoice_ops, version: "1.0.1", subject_kind: :invoice_request)
+      |> MezzanineConfigRegistry.register_pack!()
+
+    assert {:ok, %PackRegistration{status: :active}} =
+             PackRegistration.activate(distinct_registration)
+  end
+
   defp register_fixture_pack! do
     fixture_pack()
     |> MezzanineConfigRegistry.register_pack!()
   end
 
-  defp fixture_pack do
-    RegistryFixturePack.compiled_pack!()
+  defp fixture_pack(opts \\ []) do
+    pack_slug = Keyword.get(opts, :pack_slug, :expense_approval)
+    version = Keyword.get(opts, :version, "1.0.0")
+    subject_kind = Keyword.get(opts, :subject_kind, :expense_request)
+    recipe_ref = Keyword.get(opts, :recipe_ref, :"#{subject_kind}_capture")
+    terminal_state = Keyword.get(opts, :terminal_state, :"#{subject_kind}_done")
+    projection_name = Keyword.get(opts, :projection_name, :"active_#{subject_kind}")
+
+    manifest = %Manifest{
+      pack_slug: pack_slug,
+      version: version,
+      subject_kind_specs: [
+        %SubjectKindSpec{name: subject_kind}
+      ],
+      lifecycle_specs: [
+        %LifecycleSpec{
+          subject_kind: subject_kind,
+          initial_state: :submitted,
+          terminal_states: [terminal_state],
+          transitions: [
+            %{
+              from: :submitted,
+              to: :processing,
+              trigger: {:execution_requested, recipe_ref}
+            },
+            %{from: :processing, to: terminal_state, trigger: {:execution_completed, recipe_ref}}
+          ]
+        }
+      ],
+      execution_recipe_specs: [
+        %ExecutionRecipeSpec{
+          recipe_ref: recipe_ref,
+          runtime_class: :session,
+          placement_ref: :local_runner
+        }
+      ],
+      projection_specs: [
+        %ProjectionSpec{name: projection_name, subject_kinds: [subject_kind]}
+      ]
+    }
+
+    case Compiler.compile(manifest) do
+      {:ok, %CompiledPack{} = compiled_pack} -> compiled_pack
+      {:error, errors} -> raise "failed to compile registry fixture pack: #{inspect(errors)}"
+    end
   end
 
   defp query_count(fun) do
