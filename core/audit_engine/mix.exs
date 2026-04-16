@@ -59,6 +59,8 @@ defmodule MezzanineAuditEngine.MixProject do
       {:ecto_sql, "~> 3.13"},
       {:postgrex, ">= 0.0.0"},
       {:jason, "~> 1.4"},
+      {:igniter, "~> 0.7.9", only: [:dev, :test], runtime: false},
+      {:owl, "~> 0.13.0", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.40.1", only: :dev, runtime: false}

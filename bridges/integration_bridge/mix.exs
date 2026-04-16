@@ -23,11 +23,13 @@ defmodule MezzanineIntegrationBridge.MixProject do
   end
 
   def cli do
-    [preferred_envs: [test: :test]]
+    [preferred_envs: [test: :test, ci: :test]]
   end
 
   defp aliases do
     [
+      setup: ["deps.get", "ash.setup"],
+      test: ["ash.setup --quiet", "test"],
       ci: [
         "format --check-formatted",
         "compile --warnings-as-errors",
@@ -42,6 +44,7 @@ defmodule MezzanineIntegrationBridge.MixProject do
   defp deps do
     [
       {:mezzanine_ops_model, path: "../../core/ops_model"},
+      {:mezzanine_audit_engine, path: "../../core/audit_engine"},
       {:jido_integration_v2, path: "../../../jido_integration/core/platform"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
