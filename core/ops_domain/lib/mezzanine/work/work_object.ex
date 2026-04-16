@@ -23,6 +23,7 @@ defmodule Mezzanine.Work.WorkObject do
     define :mark_planned
     define :block, action: :block
     define :unblock, action: :unblock
+    define :mark_awaiting_review
     define :mark_running
     define :mark_terminal
   end
@@ -148,6 +149,12 @@ defmodule Mezzanine.Work.WorkObject do
       accept []
       require_atomic? false
       change set_attribute(:status, :running)
+    end
+
+    update :mark_awaiting_review do
+      accept []
+      require_atomic? false
+      change set_attribute(:status, :awaiting_review)
     end
 
     update :mark_terminal do
