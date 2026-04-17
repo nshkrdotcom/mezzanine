@@ -3,7 +3,7 @@ defmodule Mezzanine.CitadelBridgeTest do
 
   alias Citadel.HostIngress.{RequestContext, RunRequest}
   alias Mezzanine.CitadelBridge
-  alias MezzanineOpsModel.Intent.RunIntent
+  alias Mezzanine.Intent.RunIntent
 
   test "compile_run_request emits a valid Citadel host-ingress request" do
     intent = run_intent()

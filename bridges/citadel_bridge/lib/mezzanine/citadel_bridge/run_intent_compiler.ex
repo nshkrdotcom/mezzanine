@@ -1,12 +1,11 @@
 defmodule Mezzanine.CitadelBridge.RunIntentCompiler do
   @moduledoc """
-  Pure lowering from `MezzanineOpsModel.Intent.RunIntent` into
-  `Citadel.HostIngress.RunRequest`.
+  Pure lowering from `Mezzanine.Intent.RunIntent` into `Citadel.HostIngress.RunRequest`.
   """
 
   alias Citadel.HostIngress.RunRequest
   alias Mezzanine.CitadelBridge.PlacementBinder
-  alias MezzanineOpsModel.Intent.RunIntent
+  alias Mezzanine.Intent.RunIntent
 
   @spec compile(RunIntent.t(), map()) :: {:ok, RunRequest.t()} | {:error, term()}
   def compile(%RunIntent{} = intent, attrs \\ %{}) when is_map(attrs) do

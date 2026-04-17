@@ -4,7 +4,7 @@ defmodule Mezzanine.IntegrationBridge.EffectDispatcher do
   resolve to an Integration capability.
   """
 
-  alias MezzanineOpsModel.Intent.EffectIntent
+  alias Mezzanine.Intent.EffectIntent
 
   @invoke_fun &Jido.Integration.V2.invoke/3
 

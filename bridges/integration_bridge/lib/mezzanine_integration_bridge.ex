@@ -10,7 +10,7 @@ defmodule Mezzanine.IntegrationBridge do
     ReadDispatcher
   }
 
-  alias MezzanineOpsModel.Intent.{EffectIntent, ReadIntent, RunIntent}
+  alias Mezzanine.Intent.{EffectIntent, ReadIntent, RunIntent}
 
   @spec invoke_run_intent(RunIntent.t(), keyword()) :: {:ok, map()} | {:error, term()}
   defdelegate invoke_run_intent(intent, opts \\ []), to: DirectRunDispatcher

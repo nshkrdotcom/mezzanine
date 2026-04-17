@@ -12,7 +12,7 @@ defmodule Mezzanine.IntegrationBridge.ReadDispatcher do
 
   alias Jido.Integration.V2.LowerFacts
   alias Mezzanine.Audit.{ExecutionLineage, ExecutionLineageStore, Freshness}
-  alias MezzanineOpsModel.Intent.ReadIntent
+  alias Mezzanine.Intent.ReadIntent
 
   @lower_facts LowerFacts
   @fetch_lineage &ExecutionLineageStore.fetch/1

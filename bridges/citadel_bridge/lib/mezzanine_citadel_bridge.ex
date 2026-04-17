@@ -6,7 +6,7 @@ defmodule Mezzanine.CitadelBridge do
   alias Citadel.HostIngress
   alias Citadel.HostIngress.RequestContext
   alias Mezzanine.CitadelBridge.{AuthorityAssembler, EventMapper, RunIntentCompiler}
-  alias MezzanineOpsModel.Intent.RunIntent
+  alias Mezzanine.Intent.RunIntent
 
   @spec compile_run_request(RunIntent.t(), map()) ::
           {:ok, Citadel.HostIngress.RunRequest.t()} | {:error, term()}

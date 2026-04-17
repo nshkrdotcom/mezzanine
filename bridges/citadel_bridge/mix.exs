@@ -41,7 +41,7 @@ defmodule MezzanineCitadelBridge.MixProject do
 
   defp deps do
     [
-      {:mezzanine_ops_model, path: "../../core/ops_model"},
+      {:mezzanine_core, path: "../../core/mezzanine_core"},
       {:citadel_host_ingress_bridge, path: "../../../citadel/bridges/host_ingress_bridge"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},

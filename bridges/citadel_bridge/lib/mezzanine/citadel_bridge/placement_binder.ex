@@ -4,7 +4,7 @@ defmodule Mezzanine.CitadelBridge.PlacementBinder do
   and constraint shapes.
   """
 
-  alias MezzanineOpsModel.Intent.RunIntent
+  alias Mezzanine.Intent.RunIntent
 
   @spec bind(RunIntent.t(), map()) :: %{target: map(), constraints: map()}
   def bind(%RunIntent{} = intent, attrs \\ %{}) when is_map(attrs) do

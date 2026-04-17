@@ -3,7 +3,7 @@ defmodule Mezzanine.IntegrationBridge.DirectRunDispatcher do
   Direct public-platform dispatch for narrow run-intent cases.
   """
 
-  alias MezzanineOpsModel.Intent.RunIntent
+  alias Mezzanine.Intent.RunIntent
 
   @invoke_fun &Jido.Integration.V2.invoke/3
 

@@ -23,6 +23,12 @@ The legacy `ops_*` packages remain outside this projected artifact and are
 `mezzanine_core` continues to project the reusable neutral substrate rather than
 the legacy product-shaped ontology.
 
+It also owns the neutral lower-intent seam shared by the active lower bridges:
+
+- `Mezzanine.Intent.RunIntent`
+- `Mezzanine.Intent.ReadIntent`
+- `Mezzanine.Intent.EffectIntent`
+
 Phase `2.3` also freezes the generator-assisted boundary posture here:
 
 - repetitive northbound DTO, mapper, and backend-adapter scaffolding is

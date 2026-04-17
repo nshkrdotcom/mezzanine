@@ -27,14 +27,10 @@ defmodule Mezzanine.Workspace do
   @deprecated_packages [
     %{
       path: "core/ops_model",
-      delete_ready?: false,
-      blocking_consumers: [
-        "bridges/citadel_bridge",
-        "bridges/integration_bridge",
-        "app_kit/bridges/mezzanine_bridge",
-        "stack_lab/support/citadel_spine_harness"
-      ],
-      cutover_edge: "shared lower intent structs still power the lower bridges and proof harness"
+      delete_ready?: true,
+      blocking_consumers: [],
+      cutover_edge:
+        "shared lower intent structs now live at Mezzanine.Intent.*; package is retained only until the final delete pass"
     },
     %{
       path: "core/ops_policy",

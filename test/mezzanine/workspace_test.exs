@@ -33,7 +33,7 @@ defmodule Mezzanine.WorkspaceTest do
   end
 
   test "classifies the remaining blocked deprecated packages explicitly" do
-    assert Mezzanine.Workspace.delete_ready_deprecated_package_paths() == []
+    assert "core/ops_model" in Mezzanine.Workspace.delete_ready_deprecated_package_paths()
 
     ops_domain =
       Enum.find(Mezzanine.Workspace.blocked_deprecated_packages(), fn package ->
@@ -44,12 +44,9 @@ defmodule Mezzanine.WorkspaceTest do
     assert "stack_lab/support/citadel_spine_harness" in ops_domain.blocking_consumers
     refute "extravaganza/runtime_provisioner" in ops_domain.blocking_consumers
 
-    ops_model =
-      Enum.find(Mezzanine.Workspace.blocked_deprecated_packages(), fn package ->
-        package.path == "core/ops_model"
-      end)
-
-    assert "app_kit/bridges/mezzanine_bridge" in ops_model.blocking_consumers
+    refute Enum.any?(Mezzanine.Workspace.blocked_deprecated_packages(), fn package ->
+             package.path == "core/ops_model"
+           end)
 
     refute Enum.any?(Mezzanine.Workspace.blocked_deprecated_packages(), fn package ->
              package.path == "bridges/app_kit_bridge"
@@ -59,8 +56,8 @@ defmodule Mezzanine.WorkspaceTest do
              package.path == "surfaces/program_surface"
            end)
 
-    assert Enum.all?(Mezzanine.Workspace.deprecated_packages(), fn package ->
-             package.delete_ready? == false
+    assert Enum.any?(Mezzanine.Workspace.deprecated_packages(), fn package ->
+             package.path == "core/ops_model" and package.delete_ready?
            end)
   end
 
@@ -93,9 +90,66 @@ defmodule Mezzanine.WorkspaceTest do
     refute "bridges/execution_plane_bridge" in Mezzanine.Workspace.kept_package_paths()
   end
 
+  test "kept lower bridges no longer depend on the deprecated ops_model seam" do
+    root = Path.expand("../..", __DIR__)
+
+    assert_refutes_file_patterns(
+      root,
+      ["bridges/citadel_bridge/mix.exs", "bridges/citadel_bridge/README.md"],
+      ":mezzanine_ops_model"
+    )
+
+    assert_refutes_file_patterns(
+      root,
+      ["bridges/integration_bridge/mix.exs", "bridges/integration_bridge/README.md"],
+      ":mezzanine_ops_model"
+    )
+
+    assert_refutes_file_patterns(
+      root,
+      [
+        "bridges/citadel_bridge/README.md",
+        "bridges/citadel_bridge/lib/**/*.ex",
+        "bridges/citadel_bridge/test/**/*.exs"
+      ],
+      "MezzanineOpsModel"
+    )
+
+    assert_refutes_file_patterns(
+      root,
+      [
+        "bridges/integration_bridge/README.md",
+        "bridges/integration_bridge/lib/**/*.ex",
+        "bridges/integration_bridge/test/**/*.exs"
+      ],
+      "MezzanineOpsModel"
+    )
+  end
+
   test "exposes the workspace project globs" do
     assert "." in Mezzanine.Workspace.active_project_globs()
     assert "core/*" in Mezzanine.Workspace.active_project_globs()
     refute "surfaces/*" in Mezzanine.Workspace.active_project_globs()
+  end
+
+  defp assert_refutes_file_patterns(root, patterns, needle) do
+    patterns
+    |> Enum.flat_map(fn pattern ->
+      wildcard_or_literal(root, pattern)
+    end)
+    |> Enum.uniq()
+    |> Enum.each(fn path ->
+      refute File.read!(path) =~ needle, "#{path} still references #{needle}"
+    end)
+  end
+
+  defp wildcard_or_literal(root, pattern) do
+    absolute = Path.join(root, pattern)
+
+    if String.contains?(pattern, "*") do
+      Path.wildcard(absolute, match_dot: true)
+    else
+      [absolute]
+    end
   end
 end

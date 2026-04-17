@@ -4,7 +4,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
   alias Ecto.Adapters.SQL.Sandbox
   alias Mezzanine.Audit.{ExecutionLineage, ExecutionLineageStore, Repo}
   alias Mezzanine.IntegrationBridge
-  alias MezzanineOpsModel.Intent.{EffectIntent, ReadIntent, RunIntent}
+  alias Mezzanine.Intent.{EffectIntent, ReadIntent, RunIntent}
 
   defmodule LowerFactsStub do
     @operations [

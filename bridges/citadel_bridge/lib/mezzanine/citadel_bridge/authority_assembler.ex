@@ -5,7 +5,7 @@ defmodule Mezzanine.CitadelBridge.AuthorityAssembler do
   """
 
   alias Citadel.HostIngress.RequestContext
-  alias MezzanineOpsModel.Intent.RunIntent
+  alias Mezzanine.Intent.RunIntent
 
   @spec request_context(RunIntent.t(), map()) :: {:ok, RequestContext.t()} | {:error, term()}
   def request_context(%RunIntent{} = intent, attrs \\ %{}) when is_map(attrs) do

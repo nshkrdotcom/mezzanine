@@ -43,7 +43,7 @@ defmodule MezzanineIntegrationBridge.MixProject do
 
   defp deps do
     [
-      {:mezzanine_ops_model, path: "../../core/ops_model"},
+      {:mezzanine_core, path: "../../core/mezzanine_core"},
       {:mezzanine_audit_engine, path: "../../core/audit_engine"},
       {:jido_integration_v2, path: "../../../jido_integration/core/platform"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
