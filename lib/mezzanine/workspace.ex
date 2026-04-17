@@ -27,10 +27,10 @@ defmodule Mezzanine.Workspace do
   @deprecated_packages [
     %{
       path: "core/ops_model",
-      delete_ready?: true,
-      blocking_consumers: [],
+      delete_ready?: false,
+      blocking_consumers: ["core/ops_domain"],
       cutover_edge:
-        "shared lower intent structs now live at Mezzanine.Intent.*; package is retained only until the final delete pass"
+        "shared lower intent structs now live at Mezzanine.Intent.*; residual internal planning still uses MezzanineOpsModel through core/ops_domain"
     },
     %{
       path: "core/ops_domain",
@@ -38,27 +38,6 @@ defmodule Mezzanine.Workspace do
       blocking_consumers: ["core/execution_engine"],
       cutover_edge:
         "execution_engine still hosts the deprecated repo wiring and legacy resources that back the new neutral lower facades; residual policy/planner helpers now live inside core/ops_domain"
-    },
-    %{
-      path: "core/ops_audit",
-      delete_ready?: true,
-      blocking_consumers: [],
-      cutover_edge:
-        "bounded bridge and review-gating consumers now bind to neutral services; package is retained only until the final delete pass"
-    },
-    %{
-      path: "core/ops_control",
-      delete_ready?: true,
-      blocking_consumers: [],
-      cutover_edge:
-        "operator command handling now lives in Mezzanine.WorkControl and Mezzanine.OperatorActions; package is retained only until the final delete pass"
-    },
-    %{
-      path: "core/ops_assurance",
-      delete_ready?: true,
-      blocking_consumers: [],
-      cutover_edge:
-        "review gating now lives in Mezzanine.Reviews; package is retained only until the final delete pass"
     }
   ]
   @deprecated_package_paths Enum.map(@deprecated_packages, & &1.path)

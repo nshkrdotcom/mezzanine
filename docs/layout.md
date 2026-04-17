@@ -20,9 +20,6 @@ core/audit_engine/
 core/archival_engine/
 core/ops_model/
 core/ops_domain/
-core/ops_audit/
-core/ops_control/
-core/ops_assurance/
 core/mezzanine_core/
 bridges/citadel_bridge/
 bridges/integration_bridge/

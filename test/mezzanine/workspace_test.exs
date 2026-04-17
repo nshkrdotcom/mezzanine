@@ -20,8 +20,12 @@ defmodule Mezzanine.WorkspaceTest do
 
   test "declares the remaining deprecated coexistence scaffold and gates" do
     assert "core/ops_model" in Mezzanine.Workspace.deprecated_package_paths()
+    assert "core/ops_domain" in Mezzanine.Workspace.deprecated_package_paths()
     refute "core/ops_policy" in Mezzanine.Workspace.deprecated_package_paths()
     refute "core/ops_planner" in Mezzanine.Workspace.deprecated_package_paths()
+    refute "core/ops_audit" in Mezzanine.Workspace.deprecated_package_paths()
+    refute "core/ops_control" in Mezzanine.Workspace.deprecated_package_paths()
+    refute "core/ops_assurance" in Mezzanine.Workspace.deprecated_package_paths()
     refute "surfaces/program_surface" in Mezzanine.Workspace.deprecated_package_paths()
     assert "NO_NEW_PRODUCT_DEP_ON_OLD_MEZZANINE" in Mezzanine.Workspace.coexistence_gates()
     assert "MEZZANINE_NEUTRAL_CORE_CUTOVER" in Mezzanine.Workspace.coexistence_gates()
@@ -35,13 +39,19 @@ defmodule Mezzanine.WorkspaceTest do
   end
 
   test "classifies the remaining blocked deprecated packages explicitly" do
-    assert "core/ops_model" in Mezzanine.Workspace.delete_ready_deprecated_package_paths()
+    assert Mezzanine.Workspace.delete_ready_deprecated_package_paths() == []
+
+    ops_model =
+      Enum.find(Mezzanine.Workspace.blocked_deprecated_packages(), fn package ->
+        package.path == "core/ops_model"
+      end)
 
     ops_domain =
       Enum.find(Mezzanine.Workspace.blocked_deprecated_packages(), fn package ->
         package.path == "core/ops_domain"
       end)
 
+    assert "core/ops_domain" in ops_model.blocking_consumers
     assert "core/execution_engine" in ops_domain.blocking_consumers
     refute "app_kit/bridges/mezzanine_bridge" in ops_domain.blocking_consumers
     refute "stack_lab/support/citadel_spine_harness" in ops_domain.blocking_consumers
@@ -56,31 +66,23 @@ defmodule Mezzanine.WorkspaceTest do
            end)
 
     refute Enum.any?(Mezzanine.Workspace.blocked_deprecated_packages(), fn package ->
-             package.path == "core/ops_model"
+             package.path == "core/ops_audit"
            end)
 
     refute Enum.any?(Mezzanine.Workspace.blocked_deprecated_packages(), fn package ->
-             package.path == "bridges/app_kit_bridge"
+             package.path == "core/ops_control"
            end)
 
     refute Enum.any?(Mezzanine.Workspace.blocked_deprecated_packages(), fn package ->
-             package.path == "surfaces/program_surface"
+             package.path == "core/ops_assurance"
            end)
 
     assert Enum.any?(Mezzanine.Workspace.deprecated_packages(), fn package ->
-             package.path == "core/ops_model" and package.delete_ready?
+             package.path == "core/ops_model" and not package.delete_ready?
            end)
 
     assert Enum.any?(Mezzanine.Workspace.deprecated_packages(), fn package ->
-             package.path == "core/ops_audit" and package.delete_ready?
-           end)
-
-    assert Enum.any?(Mezzanine.Workspace.deprecated_packages(), fn package ->
-             package.path == "core/ops_control" and package.delete_ready?
-           end)
-
-    assert Enum.any?(Mezzanine.Workspace.deprecated_packages(), fn package ->
-             package.path == "core/ops_assurance" and package.delete_ready?
+             package.path == "core/ops_domain" and not package.delete_ready?
            end)
   end
 
@@ -117,18 +119,32 @@ defmodule Mezzanine.WorkspaceTest do
 
     assert_refutes_file_patterns(
       root,
-      ["core/ops_domain/mix.exs", "core/ops_control/mix.exs"],
+      ["core/ops_domain/mix.exs"],
       ":mezzanine_ops_policy"
     )
 
     assert_refutes_file_patterns(
       root,
-      ["core/ops_domain/mix.exs", "core/ops_control/mix.exs"],
+      ["core/ops_domain/mix.exs"],
       ":mezzanine_ops_planner"
     )
 
     assert_refutes_file_patterns(root, ["docs/layout.md"], "core/ops_policy/")
     assert_refutes_file_patterns(root, ["docs/layout.md"], "core/ops_planner/")
+  end
+
+  test "removes the retired ops_audit, ops_control, and ops_assurance packages from the workspace" do
+    root = Path.expand("../..", __DIR__)
+
+    retired_paths = ["core/ops_audit", "core/ops_control", "core/ops_assurance"]
+
+    assert Enum.all?(retired_paths, &(&1 not in Mezzanine.Workspace.package_paths()))
+    assert Enum.all?(retired_paths, &(&1 not in WorkspaceContract.package_paths()))
+    assert Enum.all?(retired_paths, &(&1 not in Mezzanine.Workspace.deprecated_package_paths()))
+
+    assert_refutes_file_patterns(root, ["docs/layout.md"], "core/ops_audit/")
+    assert_refutes_file_patterns(root, ["docs/layout.md"], "core/ops_control/")
+    assert_refutes_file_patterns(root, ["docs/layout.md"], "core/ops_assurance/")
   end
 
   test "kept lower bridges stay limited to active lower seams" do
