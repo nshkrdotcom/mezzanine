@@ -62,13 +62,6 @@ defmodule Mezzanine.Workspace do
         "the deprecated repo and program/work-class tables still back product bootstrap and proof harness state"
     },
     %{
-      path: "core/ops_scheduler",
-      delete_ready?: true,
-      blocking_consumers: [],
-      cutover_edge:
-        "no surviving cross-repo consumers remain; this package can be removed once repo-local gates stay green"
-    },
-    %{
       path: "core/ops_audit",
       delete_ready?: false,
       blocking_consumers: [
@@ -112,27 +105,6 @@ defmodule Mezzanine.Workspace do
       ],
       cutover_edge:
         "AppKit's current backend path and the proof harness still run through this deprecated bridge"
-    },
-    %{
-      path: "surfaces/work_surface",
-      delete_ready?: true,
-      blocking_consumers: [],
-      cutover_edge:
-        "no surviving cross-repo callers remain; delete with the rest of the deprecated surface cluster"
-    },
-    %{
-      path: "surfaces/operator_surface",
-      delete_ready?: true,
-      blocking_consumers: [],
-      cutover_edge:
-        "no surviving cross-repo callers remain; delete with the rest of the deprecated surface cluster"
-    },
-    %{
-      path: "surfaces/review_surface",
-      delete_ready?: true,
-      blocking_consumers: [],
-      cutover_edge:
-        "no surviving cross-repo callers remain; delete with the rest of the deprecated surface cluster"
     },
     %{
       path: "surfaces/program_surface",

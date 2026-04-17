@@ -18,10 +18,10 @@ defmodule Mezzanine.WorkspaceTest do
     assert "core/archival_engine" in Mezzanine.Workspace.neutral_package_paths()
   end
 
-  test "declares the deprecated coexistence scaffold and gates" do
+  test "declares the remaining deprecated coexistence scaffold and gates" do
     assert "core/ops_model" in Mezzanine.Workspace.deprecated_package_paths()
     assert "bridges/app_kit_bridge" in Mezzanine.Workspace.deprecated_package_paths()
-    assert "surfaces/work_surface" in Mezzanine.Workspace.deprecated_package_paths()
+    assert "surfaces/program_surface" in Mezzanine.Workspace.deprecated_package_paths()
     assert "NO_NEW_PRODUCT_DEP_ON_OLD_MEZZANINE" in Mezzanine.Workspace.coexistence_gates()
     assert "MEZZANINE_NEUTRAL_CORE_CUTOVER" in Mezzanine.Workspace.coexistence_gates()
   end
@@ -33,13 +33,8 @@ defmodule Mezzanine.WorkspaceTest do
              WorkspaceContract.deprecated_package_paths()
   end
 
-  test "classifies delete-ready and blocked deprecated packages explicitly" do
-    assert Enum.sort(Mezzanine.Workspace.delete_ready_deprecated_package_paths()) == [
-             "core/ops_scheduler",
-             "surfaces/operator_surface",
-             "surfaces/review_surface",
-             "surfaces/work_surface"
-           ]
+  test "classifies the remaining blocked deprecated packages explicitly" do
+    assert Mezzanine.Workspace.delete_ready_deprecated_package_paths() == []
 
     program_surface =
       Enum.find(Mezzanine.Workspace.blocked_deprecated_packages(), fn package ->
@@ -56,13 +51,29 @@ defmodule Mezzanine.WorkspaceTest do
     assert "app_kit/bridges/mezzanine_bridge" in app_kit_bridge.blocking_consumers
     assert "stack_lab/support/citadel_spine_harness" in app_kit_bridge.blocking_consumers
 
-    assert Enum.all?(Mezzanine.Workspace.delete_ready_deprecated_package_paths(), fn path ->
-             package =
-               Enum.find(Mezzanine.Workspace.deprecated_packages(), fn candidate ->
-                 candidate.path == path
-               end)
+    assert Enum.all?(Mezzanine.Workspace.deprecated_packages(), fn package ->
+             package.delete_ready? == false
+           end)
+  end
 
-             package.blocking_consumers == []
+  test "removes delete-ready packages from the live workspace when phase 6.1.2 closes" do
+    delete_ready_paths = [
+      "core/ops_scheduler",
+      "surfaces/work_surface",
+      "surfaces/operator_surface",
+      "surfaces/review_surface"
+    ]
+
+    assert Enum.all?(delete_ready_paths, fn path ->
+             path not in Mezzanine.Workspace.package_paths()
+           end)
+
+    assert Enum.all?(delete_ready_paths, fn path ->
+             path not in WorkspaceContract.package_paths()
+           end)
+
+    assert Enum.all?(delete_ready_paths, fn path ->
+             path not in Mezzanine.Workspace.deprecated_package_paths()
            end)
   end
 
