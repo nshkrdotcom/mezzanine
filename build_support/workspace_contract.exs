@@ -49,12 +49,9 @@ defmodule Mezzanine.Build.WorkspaceContract do
     %{
       path: "core/ops_domain",
       delete_ready?: false,
-      blocking_consumers: [
-        "app_kit/bridges/mezzanine_bridge",
-        "stack_lab/support/citadel_spine_harness"
-      ],
+      blocking_consumers: ["core/execution_engine"],
       cutover_edge:
-        "the deprecated repo and program/work-class tables still back the bounded app-kit bridge and proof harness state"
+        "execution_engine still hosts the deprecated repo wiring and legacy resources that back the new neutral lower facades"
     },
     %{
       path: "core/ops_audit",

@@ -40,8 +40,9 @@ defmodule Mezzanine.WorkspaceTest do
         package.path == "core/ops_domain"
       end)
 
-    assert "app_kit/bridges/mezzanine_bridge" in ops_domain.blocking_consumers
-    assert "stack_lab/support/citadel_spine_harness" in ops_domain.blocking_consumers
+    assert "core/execution_engine" in ops_domain.blocking_consumers
+    refute "app_kit/bridges/mezzanine_bridge" in ops_domain.blocking_consumers
+    refute "stack_lab/support/citadel_spine_harness" in ops_domain.blocking_consumers
     refute "extravaganza/runtime_provisioner" in ops_domain.blocking_consumers
 
     refute Enum.any?(Mezzanine.Workspace.blocked_deprecated_packages(), fn package ->
