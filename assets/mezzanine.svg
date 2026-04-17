@@ -1,54 +1,399 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200" fill="none" role="img" aria-labelledby="title desc">
-  <title id="title">Mezzanine logo</title>
-  <desc id="desc">A layered hexagonal structure with stacked terraces and a suspended central span representing a reusable upper business layer.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200" fill="none" role="img" aria-labelledby="mzTitle mzDesc">
+  <title id="mzTitle">Mezzanine logo</title>
+  <desc id="mzDesc">A crystalline hexagonal emblem with faceted layers and luminous energy channels, representing the intermediate reusable substrate of the nshkr product stack.</desc>
   <defs>
-    <linearGradient id="mzShell" x1="32" y1="24" x2="168" y2="176" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#7AE6D2"/>
-      <stop offset="0.52" stop-color="#55A9FF"/>
-      <stop offset="1" stop-color="#B983FF"/>
-    </linearGradient>
-    <linearGradient id="mzTrace" x1="54" y1="46" x2="146" y2="154" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#E9FFF8"/>
-      <stop offset="1" stop-color="#DCD7FF"/>
-    </linearGradient>
-    <radialGradient id="mzAura" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(100 100) rotate(90) scale(74)">
-      <stop offset="0" stop-color="#8BCBFF" stop-opacity="0.7"/>
-      <stop offset="1" stop-color="#8BCBFF" stop-opacity="0"/>
+    <!-- Perfect regular hexagon path, tightly fitted. Center at 100,100. -->
+    <!-- For a regular hexagon inscribed in the 200px canvas with ~4px padding: radius ≈ 96 -->
+    <!-- Flat-top hexagon: vertices at angles 0°, 60°, 120°, 180°, 240°, 300° -->
+    <!-- x = 100 + 96*cos(angle), y = 100 + 96*sin(angle) for pointy-top -->
+    <!-- Pointy-top: top vertex at (100, 4), bottom at (100, 196) -->
+
+    <clipPath id="mzClip">
+      <path id="mzHexPath" d="M100 4 L183.14 52 L183.14 148 L100 196 L16.86 148 L16.86 52 Z"/>
+    </clipPath>
+
+    <!-- === BACKGROUND GRADIENTS === -->
+
+    <!-- Deep space radial: center luminance fading to midnight edges -->
+    <radialGradient id="mzBgRadial" cx="100" cy="95" r="110" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1a1040"/>
+      <stop offset="0.35" stop-color="#0f0a2a"/>
+      <stop offset="0.7" stop-color="#080618"/>
+      <stop offset="1" stop-color="#03020a"/>
     </radialGradient>
-    <filter id="mzShadow" x="14" y="12" width="172" height="178" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
-      <feDropShadow dx="0" dy="11" stdDeviation="11" flood-color="#0B1220" flood-opacity="0.24"/>
+
+    <!-- Outer shell gradient: sapphire to deep indigo metallic -->
+    <linearGradient id="mzShellGrad" x1="16" y1="4" x2="184" y2="196" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6e8efb"/>
+      <stop offset="0.3" stop-color="#4a5fc1"/>
+      <stop offset="0.5" stop-color="#7c5cbf"/>
+      <stop offset="0.7" stop-color="#4a5fc1"/>
+      <stop offset="1" stop-color="#3b82c4"/>
+    </linearGradient>
+
+    <!-- Secondary shell highlight for bevel illusion -->
+    <linearGradient id="mzShellHighlight" x1="100" y1="4" x2="100" y2="196" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#a8c0ff" stop-opacity="0.7"/>
+      <stop offset="0.45" stop-color="#7c5cbf" stop-opacity="0.2"/>
+      <stop offset="1" stop-color="#1a0a3a" stop-opacity="0.6"/>
+    </linearGradient>
+
+    <!-- === FACET GRADIENTS === -->
+
+    <!-- Upper facet: bright crystal face -->
+    <linearGradient id="mzFacetTop" x1="100" y1="30" x2="100" y2="100" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#a8c0ff" stop-opacity="0.12"/>
+      <stop offset="0.5" stop-color="#6e8efb" stop-opacity="0.06"/>
+      <stop offset="1" stop-color="#4a5fc1" stop-opacity="0.02"/>
+    </linearGradient>
+
+    <!-- Lower facet: shadowed crystal face -->
+    <linearGradient id="mzFacetBot" x1="100" y1="100" x2="100" y2="180" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7c5cbf" stop-opacity="0.04"/>
+      <stop offset="0.6" stop-color="#1a0a3a" stop-opacity="0.1"/>
+      <stop offset="1" stop-color="#0a0520" stop-opacity="0.15"/>
+    </linearGradient>
+
+    <!-- Central energy core glow -->
+    <radialGradient id="mzCoreGlow" cx="100" cy="100" r="45" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#00e5ff" stop-opacity="0.25"/>
+      <stop offset="0.4" stop-color="#6e8efb" stop-opacity="0.1"/>
+      <stop offset="1" stop-color="#4a5fc1" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Horizontal energy band gradient -->
+    <linearGradient id="mzEnergyBand" x1="20" y1="100" x2="180" y2="100" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#00e5ff" stop-opacity="0"/>
+      <stop offset="0.15" stop-color="#00e5ff" stop-opacity="0.6"/>
+      <stop offset="0.35" stop-color="#00e5ff" stop-opacity="0.9"/>
+      <stop offset="0.5" stop-color="#b0f0ff" stop-opacity="1"/>
+      <stop offset="0.65" stop-color="#00e5ff" stop-opacity="0.9"/>
+      <stop offset="0.85" stop-color="#00e5ff" stop-opacity="0.6"/>
+      <stop offset="1" stop-color="#00e5ff" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Upper channel gradient -->
+    <linearGradient id="mzChannelUp" x1="100" y1="60" x2="100" y2="95" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#a78bfa" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#a78bfa" stop-opacity="0.4"/>
+      <stop offset="1" stop-color="#c4b5fd" stop-opacity="0.7"/>
+    </linearGradient>
+
+    <!-- Lower channel gradient -->
+    <linearGradient id="mzChannelDn" x1="100" y1="105" x2="100" y2="140" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#c4b5fd" stop-opacity="0.7"/>
+      <stop offset="0.5" stop-color="#a78bfa" stop-opacity="0.4"/>
+      <stop offset="1" stop-color="#a78bfa" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Node pulse glow -->
+    <radialGradient id="mzNodePulse" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#00e5ff" stop-opacity="1"/>
+      <stop offset="0.3" stop-color="#00e5ff" stop-opacity="0.6"/>
+      <stop offset="0.7" stop-color="#6e8efb" stop-opacity="0.2"/>
+      <stop offset="1" stop-color="#4a5fc1" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Inner hex accent gradient -->
+    <linearGradient id="mzInnerHex" x1="50" y1="30" x2="150" y2="170" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#a8c0ff" stop-opacity="0.25"/>
+      <stop offset="0.5" stop-color="#00e5ff" stop-opacity="0.15"/>
+      <stop offset="1" stop-color="#7c5cbf" stop-opacity="0.2"/>
+    </linearGradient>
+
+    <!-- Diamond accent gradient -->
+    <linearGradient id="mzDiamondGrad" x1="100" y1="60" x2="100" y2="140" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#a8c0ff" stop-opacity="0.08"/>
+      <stop offset="0.5" stop-color="#00e5ff" stop-opacity="0.04"/>
+      <stop offset="1" stop-color="#7c5cbf" stop-opacity="0.06"/>
+    </linearGradient>
+
+    <!-- Circuit trace gradient -->
+    <linearGradient id="mzTraceGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#00e5ff" stop-opacity="0"/>
+      <stop offset="0.3" stop-color="#00e5ff" stop-opacity="0.5"/>
+      <stop offset="0.7" stop-color="#00e5ff" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#00e5ff" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- === FILTERS === -->
+
+    <!-- Outer drop shadow -->
+    <filter id="mzDropShadow" x="-15%" y="-10%" width="130%" height="130%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#0a0520" flood-opacity="0.7"/>
     </filter>
-    <filter id="mzBloom" x="38" y="38" width="124" height="124" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
-      <feGaussianBlur stdDeviation="4.2" result="blur"/>
+
+    <!-- Energy bloom / glow -->
+    <filter id="mzBloom" x="-25%" y="-25%" width="150%" height="150%" color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur"/>
       <feBlend in="SourceGraphic" in2="blur" mode="screen"/>
     </filter>
+
+    <!-- Intense glow for core elements -->
+    <filter id="mzIntenseGlow" x="-40%" y="-40%" width="180%" height="180%" color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="glow1"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2" result="glow2"/>
+      <feMerge>
+        <feMergeNode in="glow1"/>
+        <feMergeNode in="glow2"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Soft ambient glow -->
+    <filter id="mzAmbientGlow" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="8" result="glow"/>
+      <feBlend in="SourceGraphic" in2="glow" mode="screen"/>
+    </filter>
+
+    <!-- Fine noise texture -->
+    <filter id="mzNoise" x="0%" y="0%" width="100%" height="100%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="3" stitchTiles="stitch" result="noise"/>
+      <feColorMatrix in="noise" type="saturate" values="0" result="desaturated"/>
+      <feBlend in="SourceGraphic" in2="desaturated" mode="overlay"/>
+    </filter>
+
+    <!-- Subtle inner bevel -->
+    <filter id="mzBevel" x="-2%" y="-2%" width="104%" height="104%" color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="1.2" result="alpha"/>
+      <feOffset in="alpha" dx="0" dy="1.5" result="topLight"/>
+      <feOffset in="alpha" dx="0" dy="-1" result="botShadow"/>
+      <feComposite in="SourceGraphic" in2="topLight" operator="over"/>
+    </filter>
+
+    <!-- Fine line pattern for crystalline texture -->
+    <pattern id="mzCrystalPattern" x="0" y="0" width="20" height="20" patternUnits="userSpaceOnUse" patternTransform="rotate(30)">
+      <line x1="0" y1="0" x2="0" y2="20" stroke="#a8c0ff" stroke-opacity="0.03" stroke-width="0.5"/>
+      <line x1="10" y1="0" x2="10" y2="20" stroke="#6e8efb" stroke-opacity="0.02" stroke-width="0.3"/>
+    </pattern>
+
+    <!-- Hexagonal micro-pattern -->
+    <pattern id="mzHexPattern" x="0" y="0" width="16" height="18.48" patternUnits="userSpaceOnUse">
+      <path d="M8 0 L14.93 4.62 L14.93 13.86 L8 18.48 L1.07 13.86 L1.07 4.62 Z" fill="none" stroke="#6e8efb" stroke-opacity="0.025" stroke-width="0.3"/>
+    </pattern>
   </defs>
 
-  <g filter="url(#mzShadow)">
-    <path d="M100 20L158.89 54V122L100 156L41.11 122V54L100 20Z" fill="url(#mzAura)"/>
-    <path d="M100 24L155.42 56V120L100 152L44.58 120V56L100 24Z" fill="#0D1621" fill-opacity="0.95" stroke="url(#mzShell)" stroke-width="4.6" stroke-linejoin="round"/>
-    <path d="M100 42L140.13 65V111L100 134L59.87 111V65L100 42Z" fill="#111B29" stroke="url(#mzTrace)" stroke-width="3.2" stroke-linejoin="round"/>
-    <path d="M100 56L126 71V101L100 116L74 101V71L100 56Z" fill="#101927" stroke="#E6FFF8" stroke-opacity="0.72" stroke-width="2.2" stroke-linejoin="round"/>
+  <!-- === OUTER HEXAGON WITH SHADOW === -->
+  <g filter="url(#mzDropShadow)">
+    <!-- Ambient aura behind hexagon -->
+    <path d="M100 1 L185.58 50.5 L185.58 149.5 L100 199 L14.42 149.5 L14.42 50.5 Z" fill="#6e8efb" fill-opacity="0.05"/>
+
+    <!-- Main hexagon body -->
+    <path d="M100 4 L183.14 52 L183.14 148 L100 196 L16.86 148 L16.86 52 Z"
+          fill="url(#mzBgRadial)"/>
+
+    <!-- Crystalline texture overlay -->
+    <path d="M100 4 L183.14 52 L183.14 148 L100 196 L16.86 148 L16.86 52 Z"
+          fill="url(#mzCrystalPattern)" clip-path="url(#mzClip)"/>
+
+    <!-- Hex micro-pattern overlay -->
+    <path d="M100 4 L183.14 52 L183.14 148 L100 196 L16.86 148 L16.86 52 Z"
+          fill="url(#mzHexPattern)" clip-path="url(#mzClip)"/>
+
+    <!-- Border stroke with gradient -->
+    <path d="M100 4 L183.14 52 L183.14 148 L100 196 L16.86 148 L16.86 52 Z"
+          fill="none"
+          stroke="url(#mzShellGrad)" stroke-width="2.5" stroke-linejoin="round"/>
+
+    <!-- Inner highlight stroke for bevel -->
+    <path d="M100 8 L180 53.5 L180 146.5 L100 192 L20 146.5 L20 53.5 Z"
+          fill="none"
+          stroke="url(#mzShellHighlight)" stroke-width="0.8" stroke-linejoin="round" stroke-opacity="0.5"/>
   </g>
 
-  <g filter="url(#mzBloom)" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M65 73H135" stroke="url(#mzShell)" stroke-opacity="0.5" stroke-width="1.5"/>
-    <path d="M60 88H140" stroke="url(#mzShell)" stroke-opacity="0.45" stroke-width="1.5"/>
-    <path d="M67 103H133" stroke="url(#mzShell)" stroke-opacity="0.5" stroke-width="1.5"/>
-    <path d="M73 118H127" stroke="url(#mzTrace)" stroke-opacity="0.58" stroke-width="1.5"/>
-    <path d="M59.87 65L140.13 65" stroke="#E9FFF8" stroke-opacity="0.48" stroke-width="1.35"/>
-    <path d="M59.87 111L140.13 111" stroke="#E9FFF8" stroke-opacity="0.48" stroke-width="1.35"/>
-    <path d="M74 71L88 58H112L126 71" stroke="#7AE6D2" stroke-opacity="0.78" stroke-width="1.8"/>
-    <path d="M78 103L91 92H109L122 103" stroke="#DCD7FF" stroke-opacity="0.82" stroke-width="1.8"/>
-    <path d="M88 58V91" stroke="#E9FFF8" stroke-opacity="0.66" stroke-width="1.4"/>
-    <path d="M112 58V91" stroke="#E9FFF8" stroke-opacity="0.66" stroke-width="1.4"/>
-    <path d="M91 92V116" stroke="#DCD7FF" stroke-opacity="0.72" stroke-width="1.4"/>
-    <path d="M109 92V116" stroke="#DCD7FF" stroke-opacity="0.72" stroke-width="1.4"/>
-    <rect x="89.5" y="79.5" width="21" height="17" rx="4.2" fill="#162436" stroke="#E9FFF8" stroke-width="1.9"/>
-    <circle cx="100" cy="88" r="3.7" fill="#7AE6D2"/>
-    <circle cx="74" cy="71" r="2.8" fill="#0D1621" stroke="#7AE6D2" stroke-width="1.15"/>
-    <circle cx="126" cy="71" r="2.8" fill="#0D1621" stroke="#7AE6D2" stroke-width="1.15"/>
-    <circle cx="78" cy="103" r="2.8" fill="#0D1621" stroke="#DCD7FF" stroke-width="1.15"/>
-    <circle cx="122" cy="103" r="2.8" fill="#0D1621" stroke="#DCD7FF" stroke-width="1.15"/>
+  <!-- === INTERIOR CONTENT (clipped to hexagon) === -->
+  <g clip-path="url(#mzClip)">
+
+    <!-- === FACETED CRYSTAL PLANES === -->
+    <!-- Upper crystal face -->
+    <path d="M100 4 L183.14 52 L100 100 L16.86 52 Z" fill="url(#mzFacetTop)"/>
+    <!-- Lower crystal face -->
+    <path d="M100 100 L183.14 148 L100 196 L16.86 148 Z" fill="url(#mzFacetBot)"/>
+
+    <!-- Central facet division line (subtle) -->
+    <line x1="16.86" y1="100" x2="183.14" y2="100" stroke="#6e8efb" stroke-opacity="0.06" stroke-width="0.5"/>
+
+    <!-- === INNER HEXAGONAL FRAME === -->
+    <path d="M100 28 L162.36 64 L162.36 136 L100 172 L37.64 136 L37.64 64 Z"
+          fill="none"
+          stroke="url(#mzInnerHex)" stroke-width="1" stroke-linejoin="round"/>
+
+    <!-- Second inner hex frame (tighter) -->
+    <path d="M100 44 L148.5 72 L148.5 128 L100 156 L51.5 128 L51.5 72 Z"
+          fill="none"
+          stroke="#6e8efb" stroke-opacity="0.08" stroke-width="0.6" stroke-linejoin="round" stroke-dasharray="3 6"/>
+
+    <!-- === DIAMOND FACET OVERLAY (rotated square = diamond) === -->
+    <path d="M100 50 L150 100 L100 150 L50 100 Z"
+          fill="url(#mzDiamondGrad)"
+          stroke="#a8c0ff" stroke-opacity="0.06" stroke-width="0.5"/>
+
+    <!-- Inner diamond -->
+    <path d="M100 68 L132 100 L100 132 L68 100 Z"
+          fill="none"
+          stroke="#00e5ff" stroke-opacity="0.08" stroke-width="0.5"/>
+
+    <!-- === VERTICAL ENERGY CHANNELS (data flow paths) === -->
+    <g opacity="0.6">
+      <!-- Central vertical channel -->
+      <line x1="100" y1="44" x2="100" y2="92" stroke="url(#mzChannelUp)" stroke-width="1.5" stroke-linecap="round"/>
+      <line x1="100" y1="108" x2="100" y2="156" stroke="url(#mzChannelDn)" stroke-width="1.5" stroke-linecap="round"/>
+
+      <!-- Left channels -->
+      <line x1="75" y1="54" x2="75" y2="94" stroke="url(#mzChannelUp)" stroke-width="0.8" stroke-linecap="round" opacity="0.5"/>
+      <line x1="75" y1="106" x2="75" y2="146" stroke="url(#mzChannelDn)" stroke-width="0.8" stroke-linecap="round" opacity="0.5"/>
+
+      <!-- Right channels -->
+      <line x1="125" y1="54" x2="125" y2="94" stroke="url(#mzChannelUp)" stroke-width="0.8" stroke-linecap="round" opacity="0.5"/>
+      <line x1="125" y1="106" x2="125" y2="146" stroke="url(#mzChannelDn)" stroke-width="0.8" stroke-linecap="round" opacity="0.5"/>
+
+      <!-- Outer diagonal channels -->
+      <line x1="50" y1="64" x2="70" y2="95" stroke="#a78bfa" stroke-opacity="0.2" stroke-width="0.6" stroke-linecap="round"/>
+      <line x1="150" y1="64" x2="130" y2="95" stroke="#a78bfa" stroke-opacity="0.2" stroke-width="0.6" stroke-linecap="round"/>
+      <line x1="70" y1="105" x2="50" y2="136" stroke="#a78bfa" stroke-opacity="0.15" stroke-width="0.6" stroke-linecap="round"/>
+      <line x1="130" y1="105" x2="150" y2="136" stroke="#a78bfa" stroke-opacity="0.15" stroke-width="0.6" stroke-linecap="round"/>
+    </g>
+
+    <!-- === CIRCUIT TRACE LINES (horizontal, representing substrate connectivity) === -->
+    <g opacity="0.4">
+      <line x1="30" y1="72" x2="170" y2="72" stroke="#6e8efb" stroke-opacity="0.12" stroke-width="0.4"/>
+      <line x1="35" y1="82" x2="165" y2="82" stroke="#6e8efb" stroke-opacity="0.08" stroke-width="0.3"/>
+      <line x1="35" y1="118" x2="165" y2="118" stroke="#6e8efb" stroke-opacity="0.08" stroke-width="0.3"/>
+      <line x1="30" y1="128" x2="170" y2="128" stroke="#6e8efb" stroke-opacity="0.12" stroke-width="0.4"/>
+    </g>
+
+    <!-- === CORE ENERGY GLOW (ambient center luminance) === -->
+    <circle cx="100" cy="100" r="45" fill="url(#mzCoreGlow)" filter="url(#mzAmbientGlow)"/>
+
+    <!-- === THE MEZZANINE ENERGY BAND (hero element — luminous horizontal seam) === -->
+    <g filter="url(#mzIntenseGlow)">
+      <!-- Wide ambient glow band -->
+      <rect x="20" y="96" width="160" height="8" rx="4" fill="#00e5ff" fill-opacity="0.04"/>
+
+      <!-- Primary energy band -->
+      <rect x="30" y="97.5" width="140" height="5" rx="2.5"
+            fill="#080618"
+            stroke="url(#mzEnergyBand)" stroke-width="1.5"/>
+
+      <!-- Band top edge highlight -->
+      <line x1="35" y1="97.8" x2="165" y2="97.8" stroke="#b0f0ff" stroke-opacity="0.5" stroke-width="0.6"/>
+
+      <!-- Band internal detail lines -->
+      <line x1="40" y1="100" x2="160" y2="100" stroke="#00e5ff" stroke-opacity="0.3" stroke-width="0.4"/>
+      <line x1="42" y1="101.5" x2="158" y2="101.5" stroke="#6e8efb" stroke-opacity="0.15" stroke-width="0.3"/>
+    </g>
+
+    <!-- === JUNCTION NODES on the mezzanine band === -->
+    <g>
+      <!-- Left outer node -->
+      <circle cx="46" cy="100" r="3" fill="url(#mzNodePulse)" filter="url(#mzBloom)"/>
+      <circle cx="46" cy="100" r="1.5" fill="#080618" stroke="#00e5ff" stroke-width="0.8"/>
+      <circle cx="46" cy="100" r="0.6" fill="#b0f0ff"/>
+
+      <!-- Left-mid node -->
+      <circle cx="70" cy="100" r="2.5" fill="url(#mzNodePulse)" filter="url(#mzBloom)"/>
+      <circle cx="70" cy="100" r="1.2" fill="#080618" stroke="#00e5ff" stroke-width="0.7"/>
+      <circle cx="70" cy="100" r="0.5" fill="#00e5ff"/>
+
+      <!-- Center node (largest, primary) -->
+      <circle cx="100" cy="100" r="5" fill="url(#mzNodePulse)" filter="url(#mzBloom)"/>
+      <circle cx="100" cy="100" r="3" fill="#080618" stroke="#00e5ff" stroke-width="1.2"/>
+      <circle cx="100" cy="100" r="1.5" fill="#080618" stroke="#b0f0ff" stroke-width="0.6"/>
+      <circle cx="100" cy="100" r="0.7" fill="#b0f0ff"/>
+
+      <!-- Right-mid node -->
+      <circle cx="130" cy="100" r="2.5" fill="url(#mzNodePulse)" filter="url(#mzBloom)"/>
+      <circle cx="130" cy="100" r="1.2" fill="#080618" stroke="#00e5ff" stroke-width="0.7"/>
+      <circle cx="130" cy="100" r="0.5" fill="#00e5ff"/>
+
+      <!-- Right outer node -->
+      <circle cx="154" cy="100" r="3" fill="url(#mzNodePulse)" filter="url(#mzBloom)"/>
+      <circle cx="154" cy="100" r="1.5" fill="#080618" stroke="#00e5ff" stroke-width="0.8"/>
+      <circle cx="154" cy="100" r="0.6" fill="#b0f0ff"/>
+    </g>
+
+    <!-- === CRYSTALLINE FACET ACCENT LINES radiating from center === -->
+    <g stroke="#a8c0ff" stroke-linecap="round" opacity="0.25">
+      <!-- Top-left facet line -->
+      <line x1="100" y1="100" x2="37.64" y2="64" stroke-width="0.4" stroke-opacity="0.15"/>
+      <!-- Top-right facet line -->
+      <line x1="100" y1="100" x2="162.36" y2="64" stroke-width="0.4" stroke-opacity="0.15"/>
+      <!-- Bottom-left facet line -->
+      <line x1="100" y1="100" x2="37.64" y2="136" stroke-width="0.4" stroke-opacity="0.12"/>
+      <!-- Bottom-right facet line -->
+      <line x1="100" y1="100" x2="162.36" y2="136" stroke-width="0.4" stroke-opacity="0.12"/>
+      <!-- Top center -->
+      <line x1="100" y1="100" x2="100" y2="28" stroke-width="0.5" stroke-opacity="0.18"/>
+      <!-- Bottom center -->
+      <line x1="100" y1="100" x2="100" y2="172" stroke-width="0.5" stroke-opacity="0.14"/>
+    </g>
+
+    <!-- === ABSTRACT "M" MONOGRAM (geometric, futuristic) === -->
+    <g filter="url(#mzBloom)" opacity="0.9">
+      <!-- The M is constructed as a series of angular chevrons above the band -->
+      <path d="M82 86 L82 74 L91 80 L100 72 L109 80 L118 74 L118 86"
+            fill="none" stroke="#00e5ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.8"/>
+      <!-- Inner M highlight -->
+      <path d="M85 84 L85 77 L92 81.5 L100 75 L108 81.5 L115 77 L115 84"
+            fill="none" stroke="#b0f0ff" stroke-width="0.6" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.4"/>
+    </g>
+
+    <!-- === FLOATING PARTICLE DOTS (ambient energy particles) === -->
+    <g fill="#00e5ff">
+      <circle cx="55" cy="56" r="0.8" fill-opacity="0.5"/>
+      <circle cx="142" cy="60" r="0.6" fill-opacity="0.4"/>
+      <circle cx="60" cy="140" r="0.7" fill-opacity="0.35"/>
+      <circle cx="145" cy="138" r="0.6" fill-opacity="0.4"/>
+      <circle cx="85" cy="45" r="0.5" fill-opacity="0.3"/>
+      <circle cx="118" cy="48" r="0.5" fill-opacity="0.3"/>
+      <circle cx="44" cy="100" r="0.4" fill-opacity="0.25"/>
+      <circle cx="156" cy="100" r="0.4" fill-opacity="0.25"/>
+      <circle cx="80" cy="155" r="0.5" fill-opacity="0.3"/>
+      <circle cx="120" cy="152" r="0.5" fill-opacity="0.3"/>
+    </g>
+
+    <!-- === SMALL ACCENT TRIANGLES at edges (crystalline facet highlights) === -->
+    <g fill="#a8c0ff" fill-opacity="0.04">
+      <path d="M100 4 L120 30 L80 30 Z"/>
+      <path d="M100 196 L120 170 L80 170 Z"/>
+    </g>
+
+  </g>
+
+  <!-- === VERTEX ACCENT GEMS (small glowing dots at hexagon vertices) === -->
+  <g>
+    <!-- Top vertex -->
+    <circle cx="100" cy="4" r="2" fill="url(#mzNodePulse)" filter="url(#mzBloom)"/>
+    <circle cx="100" cy="4" r="1" fill="#b0f0ff"/>
+
+    <!-- Top-right vertex -->
+    <circle cx="183.14" cy="52" r="1.8" fill="url(#mzNodePulse)" filter="url(#mzBloom)"/>
+    <circle cx="183.14" cy="52" r="0.9" fill="#a8c0ff"/>
+
+    <!-- Bottom-right vertex -->
+    <circle cx="183.14" cy="148" r="1.8" fill="url(#mzNodePulse)" filter="url(#mzBloom)"/>
+    <circle cx="183.14" cy="148" r="0.9" fill="#a8c0ff"/>
+
+    <!-- Bottom vertex -->
+    <circle cx="100" cy="196" r="2" fill="url(#mzNodePulse)" filter="url(#mzBloom)"/>
+    <circle cx="100" cy="196" r="1" fill="#b0f0ff"/>
+
+    <!-- Bottom-left vertex -->
+    <circle cx="16.86" cy="148" r="1.8" fill="url(#mzNodePulse)" filter="url(#mzBloom)"/>
+    <circle cx="16.86" cy="148" r="0.9" fill="#a8c0ff"/>
+
+    <!-- Top-left vertex -->
+    <circle cx="16.86" cy="52" r="1.8" fill="url(#mzNodePulse)" filter="url(#mzBloom)"/>
+    <circle cx="16.86" cy="52" r="0.9" fill="#a8c0ff"/>
+  </g>
+
+  <!-- === EDGE MIDPOINT ACCENTS (subtle ticks on hex edges) === -->
+  <g stroke="#6e8efb" stroke-opacity="0.3" stroke-width="0.8" stroke-linecap="round">
+    <line x1="141.57" y1="28" x2="138.57" y2="32"/>
+    <line x1="183.14" y1="100" x2="178.14" y2="100"/>
+    <line x1="141.57" y1="172" x2="138.57" y2="168"/>
+    <line x1="58.43" y1="172" x2="61.43" y2="168"/>
+    <line x1="16.86" y1="100" x2="21.86" y2="100"/>
+    <line x1="58.43" y1="28" x2="61.43" y2="32"/>
   </g>
 </svg>
