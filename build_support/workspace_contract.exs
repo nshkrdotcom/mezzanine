@@ -59,13 +59,9 @@ defmodule Mezzanine.Build.WorkspaceContract do
     %{
       path: "core/ops_audit",
       delete_ready?: false,
-      blocking_consumers: [
-        "app_kit/bridges/mezzanine_bridge",
-        "core/ops_assurance",
-        "core/ops_control",
-        "stack_lab/support/citadel_spine_harness"
-      ],
-      cutover_edge: "legacy audit assemblers still feed the old app-kit bridge and proof harness"
+      blocking_consumers: ["core/ops_assurance", "core/ops_control"],
+      cutover_edge:
+        "legacy review-gating and operator-command flows still consume Mezzanine.WorkAudit until phases 7.3.3 and 7.3.4"
     },
     %{
       path: "core/ops_control",

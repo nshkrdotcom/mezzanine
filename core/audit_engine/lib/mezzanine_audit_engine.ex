@@ -19,7 +19,8 @@ defmodule MezzanineAuditEngine do
       Mezzanine.Audit,
       Mezzanine.Audit.AuditFact,
       Mezzanine.Audit.ExecutionLineageRecord,
-      Mezzanine.Audit.ExecutionLineageStore
+      Mezzanine.Audit.ExecutionLineageStore,
+      Mezzanine.Audit.WorkAudit
     ]
   end
 

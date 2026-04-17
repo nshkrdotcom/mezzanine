@@ -9,4 +9,8 @@ defmodule MezzanineAuditEngineTest do
              Mezzanine.Audit.UnifiedTrace
            ] == MezzanineAuditEngine.contract_modules()
   end
+
+  test "exposes the neutral work-audit service from the audit engine" do
+    assert Mezzanine.Audit.WorkAudit in MezzanineAuditEngine.durable_modules()
+  end
 end
