@@ -37,8 +37,21 @@ defmodule MezzanineExecutionEngine.MixProject do
 
   defp aliases do
     [
-      setup: ["deps.get", "ash.setup", "audit.migrate", "object.migrate", "ecto.migrate"],
-      "ecto.setup": ["ecto.create", "audit.migrate", "object.migrate", "ecto.migrate"],
+      setup: [
+        "deps.get",
+        "ash.setup",
+        "audit.migrate",
+        "object.migrate",
+        "ops_domain.migrate",
+        "ecto.migrate"
+      ],
+      "ecto.setup": [
+        "ecto.create",
+        "audit.migrate",
+        "object.migrate",
+        "ops_domain.migrate",
+        "ecto.migrate"
+      ],
       "ecto.reset": ["ecto.drop", "ecto.setup"],
       "object.migrate": [
         "ecto.migrate -r Mezzanine.Objects.Repo --migrations-path ../object_engine/priv/repo/migrations"
@@ -46,7 +59,17 @@ defmodule MezzanineExecutionEngine.MixProject do
       "audit.migrate": [
         "ecto.migrate -r Mezzanine.Audit.Repo --migrations-path ../audit_engine/priv/repo/migrations"
       ],
-      test: ["ash.setup --quiet", "audit.migrate", "object.migrate", "ecto.migrate", "test"],
+      "ops_domain.migrate": [
+        "ecto.migrate -r Mezzanine.OpsDomain.Repo --migrations-path ../ops_domain/priv/repo/migrations"
+      ],
+      test: [
+        "ash.setup --quiet",
+        "audit.migrate",
+        "object.migrate",
+        "ops_domain.migrate",
+        "ecto.migrate",
+        "test"
+      ],
       ci: [
         "format --check-formatted",
         "compile --warnings-as-errors",
@@ -62,6 +85,7 @@ defmodule MezzanineExecutionEngine.MixProject do
     [
       {:mezzanine_audit_engine, path: "../audit_engine"},
       {:mezzanine_object_engine, path: "../object_engine"},
+      {:mezzanine_ops_domain, path: "../ops_domain"},
       {:ash, "~> 3.24"},
       {:ash_postgres, "~> 2.6"},
       {:ecto_sql, "~> 3.13"},

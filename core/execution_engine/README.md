@@ -12,6 +12,8 @@ This package now owns the Phase `2.4.4` durable execution slice:
   `Mezzanine.Execution.Dispatcher`
 - frozen lower-facing dispatch snapshots for retry and restart recovery
 - post-acceptance semantic-failure reconciliation without reopening the outbox
+- neutral control-session reads and ensures through `Mezzanine.WorkControl`
+- neutral operator command handling through `Mezzanine.OperatorActions`
 
 Primary modules:
 
@@ -19,3 +21,5 @@ Primary modules:
 - `Mezzanine.Execution.ExecutionRecord`
 - `Mezzanine.Execution.DispatchOutboxEntry`
 - `Mezzanine.Execution.Dispatcher`
+- `Mezzanine.WorkControl`
+- `Mezzanine.OperatorActions`

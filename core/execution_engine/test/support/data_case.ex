@@ -7,6 +7,7 @@ defmodule Mezzanine.Execution.DataCase do
   alias Mezzanine.Audit.Repo, as: AuditRepo
   alias Mezzanine.Execution.Repo, as: ExecutionRepo
   alias Mezzanine.Objects.Repo, as: ObjectsRepo
+  alias Mezzanine.OpsDomain.Repo, as: OpsDomainRepo
 
   using do
     quote do
@@ -30,8 +31,10 @@ defmodule Mezzanine.Execution.DataCase do
     execution_owner = Sandbox.start_owner!(ExecutionRepo, shared: shared?)
     objects_owner = Sandbox.start_owner!(ObjectsRepo, shared: shared?)
     audit_owner = Sandbox.start_owner!(AuditRepo, shared: shared?)
+    ops_domain_owner = Sandbox.start_owner!(OpsDomainRepo, shared: shared?)
 
     on_exit(fn ->
+      Sandbox.stop_owner(ops_domain_owner)
       Sandbox.stop_owner(audit_owner)
       Sandbox.stop_owner(objects_owner)
       Sandbox.stop_owner(execution_owner)

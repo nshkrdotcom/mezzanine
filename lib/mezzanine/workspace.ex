@@ -58,19 +58,15 @@ defmodule Mezzanine.Workspace do
     %{
       path: "core/ops_audit",
       delete_ready?: false,
-      blocking_consumers: ["core/ops_assurance", "core/ops_control"],
-      cutover_edge:
-        "legacy review-gating and operator-command flows still consume Mezzanine.WorkAudit until phases 7.3.3 and 7.3.4"
+      blocking_consumers: ["core/ops_assurance"],
+      cutover_edge: "legacy review-gating still consumes Mezzanine.WorkAudit until phase 7.3.4"
     },
     %{
       path: "core/ops_control",
-      delete_ready?: false,
-      blocking_consumers: [
-        "app_kit/bridges/mezzanine_bridge",
-        "stack_lab/support/citadel_spine_harness"
-      ],
+      delete_ready?: true,
+      blocking_consumers: [],
       cutover_edge:
-        "the deprecated operator command path still flows through the bounded AppKit bridge and proof harness"
+        "operator command handling now lives in Mezzanine.WorkControl and Mezzanine.OperatorActions; package is retained only until the final delete pass"
     },
     %{
       path: "core/ops_assurance",
