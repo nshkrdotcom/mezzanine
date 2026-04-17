@@ -11,7 +11,8 @@ defmodule MezzanineExecutionEngine do
       Mezzanine.Execution.DispatchOutboxEntry,
       Mezzanine.Execution.Dispatcher,
       Mezzanine.WorkControl,
-      Mezzanine.OperatorActions
+      Mezzanine.OperatorActions,
+      Mezzanine.Reviews
     ]
   end
 end

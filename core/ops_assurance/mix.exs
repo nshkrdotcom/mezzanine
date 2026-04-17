@@ -14,7 +14,7 @@ defmodule MezzanineOpsAssurance.MixProject do
       name: "Mezzanine Ops Assurance",
       source_url: "https://github.com/nshkrdotcom/mezzanine",
       homepage_url: "https://github.com/nshkrdotcom/mezzanine",
-      dialyzer: [plt_add_deps: :apps_tree]
+      dialyzer: [plt_add_deps: :apps_tree, plt_add_apps: [:mezzanine_execution_engine]]
     ]
   end
 
@@ -41,9 +41,8 @@ defmodule MezzanineOpsAssurance.MixProject do
 
   defp deps do
     [
-      {:mezzanine_ops_model, path: "../ops_model"},
       {:mezzanine_ops_domain, path: "../ops_domain"},
-      {:mezzanine_ops_audit, path: "../ops_audit"},
+      {:mezzanine_execution_engine, path: "../execution_engine", runtime: false},
       {:ash, "~> 3.24"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},

@@ -60,15 +60,16 @@ defmodule Mezzanine.WorkspaceTest do
              package.path == "core/ops_model" and package.delete_ready?
            end)
 
-    ops_audit =
-      Enum.find(Mezzanine.Workspace.blocked_deprecated_packages(), fn package ->
-        package.path == "core/ops_audit"
-      end)
-
-    assert ops_audit.blocking_consumers == ["core/ops_assurance"]
+    assert Enum.any?(Mezzanine.Workspace.deprecated_packages(), fn package ->
+             package.path == "core/ops_audit" and package.delete_ready?
+           end)
 
     assert Enum.any?(Mezzanine.Workspace.deprecated_packages(), fn package ->
              package.path == "core/ops_control" and package.delete_ready?
+           end)
+
+    assert Enum.any?(Mezzanine.Workspace.deprecated_packages(), fn package ->
+             package.path == "core/ops_assurance" and package.delete_ready?
            end)
   end
 
@@ -178,6 +179,28 @@ defmodule Mezzanine.WorkspaceTest do
         "../stack_lab/support/citadel_spine_harness/lib/**/*.ex"
       ],
       "Mezzanine.Control"
+    )
+  end
+
+  test "bounded app-kit and harness paths no longer depend on the deprecated ops_assurance seam" do
+    root = Path.expand("../..", __DIR__)
+
+    assert_refutes_file_patterns(
+      root,
+      [
+        "../app_kit/bridges/mezzanine_bridge/mix.exs",
+        "../stack_lab/support/citadel_spine_harness/mix.exs"
+      ],
+      ":mezzanine_ops_assurance"
+    )
+
+    assert_refutes_file_patterns(
+      root,
+      [
+        "../app_kit/bridges/mezzanine_bridge/lib/**/*.ex",
+        "../stack_lab/support/citadel_spine_harness/lib/**/*.ex"
+      ],
+      "Mezzanine.Assurance"
     )
   end
 

@@ -14,6 +14,8 @@ This package now owns the Phase `2.4.4` durable execution slice:
 - post-acceptance semantic-failure reconciliation without reopening the outbox
 - neutral control-session reads and ensures through `Mezzanine.WorkControl`
 - neutral operator command handling through `Mezzanine.OperatorActions`
+- neutral review, waiver, escalation, and gate evaluation through
+  `Mezzanine.Reviews`
 
 Primary modules:
 
@@ -23,3 +25,4 @@ Primary modules:
 - `Mezzanine.Execution.Dispatcher`
 - `Mezzanine.WorkControl`
 - `Mezzanine.OperatorActions`
+- `Mezzanine.Reviews`

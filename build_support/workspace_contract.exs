@@ -58,9 +58,10 @@ defmodule Mezzanine.Build.WorkspaceContract do
     },
     %{
       path: "core/ops_audit",
-      delete_ready?: false,
-      blocking_consumers: ["core/ops_assurance"],
-      cutover_edge: "legacy review-gating still consumes Mezzanine.WorkAudit until phase 7.3.4"
+      delete_ready?: true,
+      blocking_consumers: [],
+      cutover_edge:
+        "bounded bridge and review-gating consumers now bind to neutral services; package is retained only until the final delete pass"
     },
     %{
       path: "core/ops_control",
@@ -71,13 +72,10 @@ defmodule Mezzanine.Build.WorkspaceContract do
     },
     %{
       path: "core/ops_assurance",
-      delete_ready?: false,
-      blocking_consumers: [
-        "app_kit/bridges/mezzanine_bridge",
-        "stack_lab/support/citadel_spine_harness"
-      ],
+      delete_ready?: true,
+      blocking_consumers: [],
       cutover_edge:
-        "legacy assurance logic still feeds the bounded AppKit bridge and proof harness"
+        "review gating now lives in Mezzanine.Reviews; package is retained only until the final delete pass"
     }
   ]
   @deprecated_package_paths Enum.map(@deprecated_packages, & &1.path)
