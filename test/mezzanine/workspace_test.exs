@@ -20,7 +20,6 @@ defmodule Mezzanine.WorkspaceTest do
 
   test "declares the remaining deprecated coexistence scaffold and gates" do
     assert "core/ops_model" in Mezzanine.Workspace.deprecated_package_paths()
-    assert "bridges/app_kit_bridge" in Mezzanine.Workspace.deprecated_package_paths()
     assert "surfaces/program_surface" in Mezzanine.Workspace.deprecated_package_paths()
     assert "NO_NEW_PRODUCT_DEP_ON_OLD_MEZZANINE" in Mezzanine.Workspace.coexistence_gates()
     assert "MEZZANINE_NEUTRAL_CORE_CUTOVER" in Mezzanine.Workspace.coexistence_gates()
@@ -43,22 +42,34 @@ defmodule Mezzanine.WorkspaceTest do
 
     assert "extravaganza/runtime_provisioner" in program_surface.blocking_consumers
 
-    app_kit_bridge =
+    ops_domain =
       Enum.find(Mezzanine.Workspace.blocked_deprecated_packages(), fn package ->
-        package.path == "bridges/app_kit_bridge"
+        package.path == "core/ops_domain"
       end)
 
-    assert "app_kit/bridges/mezzanine_bridge" in app_kit_bridge.blocking_consumers
-    assert "stack_lab/support/citadel_spine_harness" in app_kit_bridge.blocking_consumers
+    assert "app_kit/bridges/mezzanine_bridge" in ops_domain.blocking_consumers
+    assert "stack_lab/support/citadel_spine_harness" in ops_domain.blocking_consumers
+
+    ops_model =
+      Enum.find(Mezzanine.Workspace.blocked_deprecated_packages(), fn package ->
+        package.path == "core/ops_model"
+      end)
+
+    assert "app_kit/bridges/mezzanine_bridge" in ops_model.blocking_consumers
+
+    refute Enum.any?(Mezzanine.Workspace.blocked_deprecated_packages(), fn package ->
+             package.path == "bridges/app_kit_bridge"
+           end)
 
     assert Enum.all?(Mezzanine.Workspace.deprecated_packages(), fn package ->
              package.delete_ready? == false
            end)
   end
 
-  test "removes delete-ready packages from the live workspace when phase 6.1.2 closes" do
+  test "removes retired packages from the live workspace when phases 6.1.2 and 6.1.3.3 close" do
     delete_ready_paths = [
       "core/ops_scheduler",
+      "bridges/app_kit_bridge",
       "surfaces/work_surface",
       "surfaces/operator_surface",
       "surfaces/review_surface"

@@ -25,14 +25,9 @@ core/ops_domain/
 core/ops_audit/
 core/ops_control/
 core/ops_assurance/
-core/ops_scheduler/
 core/mezzanine_core/
-bridges/app_kit_bridge/
 bridges/citadel_bridge/
 bridges/integration_bridge/
-surfaces/work_surface/
-surfaces/operator_surface/
-surfaces/review_surface/
 surfaces/program_surface/
 docs/
 packaging/weld/mezzanine_core/
@@ -44,7 +39,7 @@ The current repo layout is intentionally split into three bands:
   `core/config_registry/`
 - kept lower bridges in `bridges/citadel_bridge/` and
   `bridges/integration_bridge/`
-- frozen legacy migration scaffolding in `core/ops_*/`, `bridges/app_kit_bridge/`,
-  and `surfaces/*`
+- frozen legacy migration scaffolding in `core/ops_*/` and
+  `surfaces/program_surface/`
 
 The root should remain a workspace owner rather than a runtime home.

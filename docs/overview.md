@@ -22,6 +22,6 @@ graph:
 - `audit_engine`
 - `archival_engine`
 
-The legacy `ops_*` and `surfaces/*` packages remain buildable only as bounded
-coexistence scaffolding. New reusable work must land in the neutral package
-graph, not by widening the deprecated ontology.
+The legacy `ops_*` packages and `surfaces/program_surface` remain buildable
+only as bounded coexistence scaffolding. New reusable work must land in the
+neutral package graph, not by widening the deprecated ontology.

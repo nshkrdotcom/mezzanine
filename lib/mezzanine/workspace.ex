@@ -31,7 +31,7 @@ defmodule Mezzanine.Workspace do
       blocking_consumers: [
         "bridges/citadel_bridge",
         "bridges/integration_bridge",
-        "bridges/app_kit_bridge",
+        "app_kit/bridges/mezzanine_bridge",
         "stack_lab/support/citadel_spine_harness"
       ],
       cutover_edge: "shared lower intent structs still power the lower bridges and proof harness"
@@ -53,7 +53,6 @@ defmodule Mezzanine.Workspace do
       path: "core/ops_domain",
       delete_ready?: false,
       blocking_consumers: [
-        "bridges/app_kit_bridge",
         "app_kit/bridges/mezzanine_bridge",
         "extravaganza/runtime_provisioner",
         "stack_lab/support/citadel_spine_harness"
@@ -65,7 +64,7 @@ defmodule Mezzanine.Workspace do
       path: "core/ops_audit",
       delete_ready?: false,
       blocking_consumers: [
-        "bridges/app_kit_bridge",
+        "app_kit/bridges/mezzanine_bridge",
         "core/ops_assurance",
         "core/ops_control",
         "stack_lab/support/citadel_spine_harness"
@@ -76,35 +75,21 @@ defmodule Mezzanine.Workspace do
       path: "core/ops_control",
       delete_ready?: false,
       blocking_consumers: [
-        "bridges/app_kit_bridge",
-        "surfaces/operator_surface",
+        "app_kit/bridges/mezzanine_bridge",
         "stack_lab/support/citadel_spine_harness"
       ],
       cutover_edge:
-        "the deprecated operator command path still flows through the old bridge and harness"
+        "the deprecated operator command path still flows through the bounded AppKit bridge and proof harness"
     },
     %{
       path: "core/ops_assurance",
-      delete_ready?: false,
-      blocking_consumers: [
-        "bridges/app_kit_bridge",
-        "surfaces/work_surface",
-        "surfaces/review_surface",
-        "surfaces/operator_surface",
-        "stack_lab/support/citadel_spine_harness"
-      ],
-      cutover_edge:
-        "legacy assurance logic still feeds the old bridge, harness, and deprecated surfaces"
-    },
-    %{
-      path: "bridges/app_kit_bridge",
       delete_ready?: false,
       blocking_consumers: [
         "app_kit/bridges/mezzanine_bridge",
         "stack_lab/support/citadel_spine_harness"
       ],
       cutover_edge:
-        "AppKit's current backend path and the proof harness still run through this deprecated bridge"
+        "legacy assurance logic still feeds the bounded AppKit bridge and proof harness"
     },
     %{
       path: "surfaces/program_surface",

@@ -11,7 +11,7 @@ The repo is expected to grow into the neutral reusable home for:
 Current coexistence scaffold:
 
 - neutral packages exist for the v3 rebuild
-- legacy `ops_*`, `surfaces/*`, and `bridges/app_kit_bridge` remain
+- legacy `ops_*` and `surfaces/program_surface` remain
   `[DEPRECATED-PENDING-MIGRATION]`
 - lower bridges remain buildable while the neutral engines come online
 
@@ -24,4 +24,4 @@ Next slices:
 
 - implement the neutral pack model and compiler
 - implement the neutral durable engines on the new package graph
-- replace the legacy northbound bridge path from `app_kit`
+- retire the remaining deprecated `ops_*` northbound seams after each consumer cutover
