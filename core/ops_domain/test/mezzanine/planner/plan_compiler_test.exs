@@ -5,7 +5,7 @@ defmodule Mezzanine.Planner.PlanCompilerTest do
   alias Mezzanine.Policy.{BundleLoader, Compiler}
   alias MezzanineOpsModel.WorkObject
 
-  @fixture_path Path.expand("../../../../ops_policy/test/fixtures/workflow.md", __DIR__)
+  @fixture_path Path.expand("../../fixtures/workflow.md", __DIR__)
 
   test "compiles a work object and compiled policy into a full work plan" do
     assert {:ok, bundle} = BundleLoader.load_file(@fixture_path)

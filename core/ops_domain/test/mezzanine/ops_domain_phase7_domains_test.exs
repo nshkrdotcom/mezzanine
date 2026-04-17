@@ -10,7 +10,7 @@ defmodule Mezzanine.OpsDomainPhase7DomainsTest do
   alias Mezzanine.Runs.{Run, RunArtifact, RunGrant, RunSeries}
   alias Mezzanine.Work.{WorkClass, WorkObject}
 
-  @workflow_fixture Path.expand("../../../ops_policy/test/fixtures/workflow.md", __DIR__)
+  @workflow_fixture Path.expand("../fixtures/workflow.md", __DIR__)
 
   test "run lifecycle persists scheduling, grants, artifacts, and evidence attachment" do
     actor = %{tenant_id: "tenant-a"}

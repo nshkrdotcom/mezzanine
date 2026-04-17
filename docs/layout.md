@@ -19,8 +19,6 @@ core/operator_engine/
 core/audit_engine/
 core/archival_engine/
 core/ops_model/
-core/ops_policy/
-core/ops_planner/
 core/ops_domain/
 core/ops_audit/
 core/ops_control/

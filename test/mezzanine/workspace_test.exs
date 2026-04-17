@@ -20,6 +20,8 @@ defmodule Mezzanine.WorkspaceTest do
 
   test "declares the remaining deprecated coexistence scaffold and gates" do
     assert "core/ops_model" in Mezzanine.Workspace.deprecated_package_paths()
+    refute "core/ops_policy" in Mezzanine.Workspace.deprecated_package_paths()
+    refute "core/ops_planner" in Mezzanine.Workspace.deprecated_package_paths()
     refute "surfaces/program_surface" in Mezzanine.Workspace.deprecated_package_paths()
     assert "NO_NEW_PRODUCT_DEP_ON_OLD_MEZZANINE" in Mezzanine.Workspace.coexistence_gates()
     assert "MEZZANINE_NEUTRAL_CORE_CUTOVER" in Mezzanine.Workspace.coexistence_gates()
@@ -44,6 +46,14 @@ defmodule Mezzanine.WorkspaceTest do
     refute "app_kit/bridges/mezzanine_bridge" in ops_domain.blocking_consumers
     refute "stack_lab/support/citadel_spine_harness" in ops_domain.blocking_consumers
     refute "extravaganza/runtime_provisioner" in ops_domain.blocking_consumers
+
+    refute Enum.any?(Mezzanine.Workspace.blocked_deprecated_packages(), fn package ->
+             package.path == "core/ops_policy"
+           end)
+
+    refute Enum.any?(Mezzanine.Workspace.blocked_deprecated_packages(), fn package ->
+             package.path == "core/ops_planner"
+           end)
 
     refute Enum.any?(Mezzanine.Workspace.blocked_deprecated_packages(), fn package ->
              package.path == "core/ops_model"
@@ -95,6 +105,30 @@ defmodule Mezzanine.WorkspaceTest do
     assert Enum.all?(delete_ready_paths, fn path ->
              path not in Mezzanine.Workspace.deprecated_package_paths()
            end)
+  end
+
+  test "removes the retired ops_policy and ops_planner packages from the workspace and owner deps" do
+    root = Path.expand("../..", __DIR__)
+
+    assert "core/ops_policy" not in Mezzanine.Workspace.package_paths()
+    assert "core/ops_planner" not in Mezzanine.Workspace.package_paths()
+    assert "core/ops_policy" not in WorkspaceContract.package_paths()
+    assert "core/ops_planner" not in WorkspaceContract.package_paths()
+
+    assert_refutes_file_patterns(
+      root,
+      ["core/ops_domain/mix.exs", "core/ops_control/mix.exs"],
+      ":mezzanine_ops_policy"
+    )
+
+    assert_refutes_file_patterns(
+      root,
+      ["core/ops_domain/mix.exs", "core/ops_control/mix.exs"],
+      ":mezzanine_ops_planner"
+    )
+
+    assert_refutes_file_patterns(root, ["docs/layout.md"], "core/ops_policy/")
+    assert_refutes_file_patterns(root, ["docs/layout.md"], "core/ops_planner/")
   end
 
   test "kept lower bridges stay limited to active lower seams" do

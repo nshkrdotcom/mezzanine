@@ -34,24 +34,11 @@ defmodule Mezzanine.Build.WorkspaceContract do
         "shared lower intent structs now live at Mezzanine.Intent.*; package is retained only until the final delete pass"
     },
     %{
-      path: "core/ops_policy",
-      delete_ready?: false,
-      blocking_consumers: ["core/ops_planner", "core/ops_domain"],
-      cutover_edge: "legacy policy compilation still feeds the deprecated planning/domain path"
-    },
-    %{
-      path: "core/ops_planner",
-      delete_ready?: false,
-      blocking_consumers: ["core/ops_control", "core/ops_domain"],
-      cutover_edge:
-        "legacy work-plan derivation still feeds the deprecated control and domain path"
-    },
-    %{
       path: "core/ops_domain",
       delete_ready?: false,
       blocking_consumers: ["core/execution_engine"],
       cutover_edge:
-        "execution_engine still hosts the deprecated repo wiring and legacy resources that back the new neutral lower facades"
+        "execution_engine still hosts the deprecated repo wiring and legacy resources that back the new neutral lower facades; residual policy/planner helpers now live inside core/ops_domain"
     },
     %{
       path: "core/ops_audit",

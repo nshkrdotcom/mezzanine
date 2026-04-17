@@ -42,7 +42,6 @@ defmodule MezzanineOpsControl.MixProject do
   defp deps do
     [
       {:mezzanine_ops_model, path: "../ops_model"},
-      {:mezzanine_ops_planner, path: "../ops_planner"},
       {:mezzanine_ops_domain, path: "../ops_domain"},
       {:mezzanine_ops_audit, path: "../ops_audit"},
       {:mezzanine_execution_engine, path: "../execution_engine", runtime: false},

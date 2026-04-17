@@ -5,7 +5,7 @@ defmodule Mezzanine.OpsDomainPlanningTest do
   alias Mezzanine.Programs.{PolicyBundle, Program}
   alias Mezzanine.Work.{WorkClass, WorkObject, WorkPlan}
 
-  @workflow_fixture Path.expand("../../../ops_policy/test/fixtures/workflow.md", __DIR__)
+  @workflow_fixture Path.expand("../fixtures/workflow.md", __DIR__)
 
   test "policy bundles compile on load and preserve last good compiled form on failed recompile" do
     actor = %{tenant_id: "tenant-a"}

@@ -53,8 +53,6 @@ defmodule MezzanineOpsDomain.MixProject do
   defp deps do
     [
       {:mezzanine_ops_model, path: "../ops_model"},
-      {:mezzanine_ops_policy, path: "../ops_policy"},
-      {:mezzanine_ops_planner, path: "../ops_planner"},
       {:ash, "~> 3.24"},
       {:ash_postgres, "~> 2.6"},
       {:ecto_sql, "~> 3.13"},
