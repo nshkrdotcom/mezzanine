@@ -11,8 +11,7 @@ The repo is expected to grow into the neutral reusable home for:
 Current coexistence scaffold:
 
 - neutral packages exist for the v3 rebuild
-- legacy `ops_*` and `surfaces/program_surface` remain
-  `[DEPRECATED-PENDING-MIGRATION]`
+- legacy `ops_*` packages remain `[DEPRECATED-PENDING-MIGRATION]`
 - lower bridges remain buildable while the neutral engines come online
 
 Current gates:

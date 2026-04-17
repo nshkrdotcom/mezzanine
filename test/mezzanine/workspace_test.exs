@@ -20,7 +20,7 @@ defmodule Mezzanine.WorkspaceTest do
 
   test "declares the remaining deprecated coexistence scaffold and gates" do
     assert "core/ops_model" in Mezzanine.Workspace.deprecated_package_paths()
-    assert "surfaces/program_surface" in Mezzanine.Workspace.deprecated_package_paths()
+    refute "surfaces/program_surface" in Mezzanine.Workspace.deprecated_package_paths()
     assert "NO_NEW_PRODUCT_DEP_ON_OLD_MEZZANINE" in Mezzanine.Workspace.coexistence_gates()
     assert "MEZZANINE_NEUTRAL_CORE_CUTOVER" in Mezzanine.Workspace.coexistence_gates()
   end
@@ -35,13 +35,6 @@ defmodule Mezzanine.WorkspaceTest do
   test "classifies the remaining blocked deprecated packages explicitly" do
     assert Mezzanine.Workspace.delete_ready_deprecated_package_paths() == []
 
-    program_surface =
-      Enum.find(Mezzanine.Workspace.blocked_deprecated_packages(), fn package ->
-        package.path == "surfaces/program_surface"
-      end)
-
-    assert "extravaganza/runtime_provisioner" in program_surface.blocking_consumers
-
     ops_domain =
       Enum.find(Mezzanine.Workspace.blocked_deprecated_packages(), fn package ->
         package.path == "core/ops_domain"
@@ -49,6 +42,7 @@ defmodule Mezzanine.WorkspaceTest do
 
     assert "app_kit/bridges/mezzanine_bridge" in ops_domain.blocking_consumers
     assert "stack_lab/support/citadel_spine_harness" in ops_domain.blocking_consumers
+    refute "extravaganza/runtime_provisioner" in ops_domain.blocking_consumers
 
     ops_model =
       Enum.find(Mezzanine.Workspace.blocked_deprecated_packages(), fn package ->
@@ -61,15 +55,20 @@ defmodule Mezzanine.WorkspaceTest do
              package.path == "bridges/app_kit_bridge"
            end)
 
+    refute Enum.any?(Mezzanine.Workspace.blocked_deprecated_packages(), fn package ->
+             package.path == "surfaces/program_surface"
+           end)
+
     assert Enum.all?(Mezzanine.Workspace.deprecated_packages(), fn package ->
              package.delete_ready? == false
            end)
   end
 
-  test "removes retired packages from the live workspace when phases 6.1.2 and 6.1.3.3 close" do
+  test "removes retired packages from the live workspace when phases 6.1.2, 6.1.3.3, and 7.1 close" do
     delete_ready_paths = [
       "core/ops_scheduler",
       "bridges/app_kit_bridge",
+      "surfaces/program_surface",
       "surfaces/work_surface",
       "surfaces/operator_surface",
       "surfaces/review_surface"
@@ -97,5 +96,6 @@ defmodule Mezzanine.WorkspaceTest do
   test "exposes the workspace project globs" do
     assert "." in Mezzanine.Workspace.active_project_globs()
     assert "core/*" in Mezzanine.Workspace.active_project_globs()
+    refute "surfaces/*" in Mezzanine.Workspace.active_project_globs()
   end
 end

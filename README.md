@@ -43,8 +43,6 @@ mezzanine/
   core/ops_*           # [DEPRECATED-PENDING-MIGRATION] legacy ontology packages
   bridges/citadel_bridge
   bridges/integration_bridge
-  surfaces/program_surface
-                       # [DEPRECATED-PENDING-MIGRATION] frozen legacy provisioning surface
   docs/                # repo-level architecture and publication docs
 ```
 
@@ -75,9 +73,8 @@ The active buildout in this repo is the neutral core scaffold:
 - `core/audit_engine`
 - `core/archival_engine`
 
-The legacy `ops_*` packages and `surfaces/program_surface` remain buildable
-only as migration scaffolding and are
-`[DEPRECATED-PENDING-MIGRATION]`.
+The legacy `ops_*` packages remain buildable only as migration scaffolding and
+are `[DEPRECATED-PENDING-MIGRATION]`.
 
 Named coexistence gates:
 
@@ -87,7 +84,7 @@ Named coexistence gates:
 During this phase:
 
 - no new product dependency may widen the deprecated ontology
-- the remaining legacy provisioning surface stays frozen
+- the remaining legacy `ops_*` packages stay frozen
 - the neutral packages are the only place new reusable substrate work may land
 
 ## Development

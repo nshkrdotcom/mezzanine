@@ -17,9 +17,8 @@ This projected package boundary now sits above the neutral rebuild packages:
 - `core/audit_engine`
 - `core/archival_engine`
 
-The legacy `ops_*` packages and `surfaces/program_surface` remain outside this
-projected artifact and are `[DEPRECATED-PENDING-MIGRATION]` migration
-scaffolding only.
+The legacy `ops_*` packages remain outside this projected artifact and are
+`[DEPRECATED-PENDING-MIGRATION]` migration scaffolding only.
 
 `mezzanine_core` continues to project the reusable neutral substrate rather than
 the legacy product-shaped ontology.
