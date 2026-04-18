@@ -1203,8 +1203,6 @@ defmodule Mezzanine.LifecycleEvaluator do
     end)
   end
 
-  defp compact_map(_other), do: %{}
-
   defp compact_value(value) when is_map(value), do: compact_map(value)
   defp compact_value(value) when is_list(value), do: Enum.map(value, &compact_value/1)
   defp compact_value(value), do: value

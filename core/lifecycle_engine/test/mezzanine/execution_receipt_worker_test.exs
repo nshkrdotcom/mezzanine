@@ -133,6 +133,81 @@ defmodule Mezzanine.ExecutionReceiptWorkerTest do
            }
   end
 
+  test "perform routes frozen inference failure kinds through deterministic lifecycle transitions" do
+    for {failure_kind, expected_state} <- [
+          {"semantic_failure", "needs_correction"},
+          {"timeout", "needs_review"},
+          {"infrastructure_error", "needs_review"},
+          {"auth_error", "needs_review"},
+          {"fatal_error", "needs_review"}
+        ] do
+      installation =
+        active_installation_fixture(
+          runtime_class: :inference,
+          execution_failure_transition?: true,
+          generic_failure_transition?: true
+        )
+
+      subject =
+        subject_fixture(%{
+          installation_id: installation.id,
+          source_ref: "expense:receipt-worker:inference-#{failure_kind}",
+          subject_kind: "expense_request",
+          lifecycle_state: "processing",
+          payload: %{"amount_cents" => 12_500},
+          trace_id: "trace-receipt-inference-#{failure_kind}",
+          causation_id: "cause-receipt-inference-#{failure_kind}"
+        })
+
+      assert {:ok, execution} =
+               dispatch_execution(
+                 subject,
+                 installation.id,
+                 "trace-receipt-inference-#{failure_kind}",
+                 "receipt-inference-#{failure_kind}",
+                 dispatch_envelope: %{
+                   "capability" => "sandbox.exec",
+                   "runtime_class" => "inference"
+                 },
+                 intent_snapshot: %{"runtime_class" => "inference"}
+               )
+
+      assert {:ok, awaiting_receipt_execution} =
+               ExecutionRecord.record_accepted(execution, %{
+                 submission_ref: %{"id" => "sub-inference-#{failure_kind}"},
+                 lower_receipt: %{
+                   "state" => "accepted",
+                   "run_id" => "run-inference-#{failure_kind}"
+                 },
+                 trace_id: execution.trace_id,
+                 causation_id: "cause-accepted-inference-#{failure_kind}",
+                 actor_ref: %{kind: :dispatcher}
+               })
+
+      outcome = %{
+        "receipt_id" => "receipt-inference-#{failure_kind}",
+        "status" => "error",
+        "failure_kind" => failure_kind,
+        "lower_receipt" => %{
+          "state" => "failed",
+          "run_id" => "run-inference-#{failure_kind}",
+          "attempt_id" => "attempt-inference-#{failure_kind}"
+        },
+        "normalized_outcome" => %{
+          "error" => %{"kind" => failure_kind, "reason" => "fixture-#{failure_kind}"}
+        },
+        "observed_at" => "2026-04-16T04:05:00Z"
+      }
+
+      assert :ok = perform_receipt(awaiting_receipt_execution.id, outcome)
+
+      assert {:ok, failed_execution} = Ash.get(ExecutionRecord, awaiting_receipt_execution.id)
+      assert failed_execution.dispatch_state == :failed
+      assert failed_execution.failure_kind == String.to_existing_atom(failure_kind)
+      assert %{lifecycle_state: ^expected_state} = fetch_subject(subject.id)
+    end
+  end
+
   test "perform records late receipts as audit-only when the subject was cancelled" do
     telemetry_ids = attach_telemetry([[:mezzanine, :receipt, :post_cancel]])
     installation = active_installation_fixture()
@@ -482,6 +557,21 @@ defmodule Mezzanine.ExecutionReceiptWorkerTest do
     now = DateTime.utc_now() |> DateTime.truncate(:microsecond)
     registration_id = Ecto.UUID.generate()
     installation_id = Ecto.UUID.generate()
+    environment = Keyword.get(opts, :environment, "stage9-#{System.unique_integer([:positive])}")
+
+    binding_config =
+      Keyword.get(
+        opts,
+        :binding_config,
+        %{
+          "execution_bindings" => %{
+            "expense_capture" => %{
+              "placement_ref" => "local_runner",
+              "execution_params" => %{"timeout_ms" => 300_000}
+            }
+          }
+        }
+      )
 
     Repo.query!(
       """
@@ -538,16 +628,9 @@ defmodule Mezzanine.ExecutionReceiptWorkerTest do
         now,
         1,
         "tenant-lifecycle-engine",
-        %{
-          "execution_bindings" => %{
-            "expense_capture" => %{
-              "placement_ref" => "local_runner",
-              "execution_params" => %{"timeout_ms" => 300_000}
-            }
-          }
-        },
+        binding_config,
         to_string(compiled_pack.pack_slug),
-        "stage9",
+        environment,
         dump_uuid!(registration_id)
       ]
     )
@@ -559,6 +642,9 @@ defmodule Mezzanine.ExecutionReceiptWorkerTest do
     execution_failure_transition? = Keyword.get(opts, :execution_failure_transition?, false)
     semantic_retry_transition? = Keyword.get(opts, :semantic_retry_transition?, false)
     join_transition? = Keyword.get(opts, :join_transition?, false)
+    generic_failure_transition? = Keyword.get(opts, :generic_failure_transition?, false)
+    runtime_class = Keyword.get(opts, :runtime_class, :session)
+    version = Keyword.get(opts, :version, "1.0.#{System.unique_integer([:positive])}")
 
     transitions = [
       %{from: :submitted, to: :processing, trigger: {:execution_requested, :expense_capture}},
@@ -594,6 +680,20 @@ defmodule Mezzanine.ExecutionReceiptWorkerTest do
       end
 
     transitions =
+      if generic_failure_transition? do
+        transitions ++
+          [
+            %{
+              from: :processing,
+              to: :needs_review,
+              trigger: {:execution_failed, :expense_capture}
+            }
+          ]
+      else
+        transitions
+      end
+
+    transitions =
       if join_transition? do
         transitions ++
           [
@@ -605,16 +705,17 @@ defmodule Mezzanine.ExecutionReceiptWorkerTest do
 
     manifest = %Manifest{
       pack_slug: :expense_approval,
-      version: "1.0.0",
+      version: version,
       subject_kind_specs: [%SubjectKindSpec{name: :expense_request}],
       lifecycle_specs: [
         %LifecycleSpec{
           subject_kind: :expense_request,
           initial_state: :submitted,
           terminal_states:
-            if(execution_failure_transition? and not semantic_retry_transition?,
-              do: [:paid, :needs_correction],
-              else: [:paid]
+            terminal_states(
+              execution_failure_transition?,
+              semantic_retry_transition?,
+              generic_failure_transition?
             ),
           transitions: transitions
         }
@@ -622,7 +723,7 @@ defmodule Mezzanine.ExecutionReceiptWorkerTest do
       execution_recipe_specs: [
         %ExecutionRecipeSpec{
           recipe_ref: :expense_capture,
-          runtime_class: :session,
+          runtime_class: runtime_class,
           placement_ref: :local_runner,
           execution_params: %{timeout_ms: 300_000},
           retry_config: %{
@@ -682,8 +783,8 @@ defmodule Mezzanine.ExecutionReceiptWorkerTest do
       barrier_id: Keyword.get(opts, :barrier_id),
       recipe_ref: "expense_capture",
       compiled_pack_revision: 1,
-      binding_snapshot: %{},
-      dispatch_envelope: %{"capability" => "sandbox.exec"},
+      binding_snapshot: Keyword.get(opts, :binding_snapshot, %{}),
+      dispatch_envelope: Keyword.get(opts, :dispatch_envelope, %{"capability" => "sandbox.exec"}),
       intent_snapshot: Keyword.get(opts, :intent_snapshot, %{}),
       submission_dedupe_key: "#{installation_id}:exec:#{suffix}",
       trace_id: trace_id,
@@ -797,6 +898,22 @@ defmodule Mezzanine.ExecutionReceiptWorkerTest do
       row_version: row_version
     }
   end
+
+  defp terminal_states(
+         execution_failure_transition?,
+         semantic_retry_transition?,
+         generic_failure_transition?
+       ) do
+    [:paid]
+    |> maybe_add_terminal_state(
+      execution_failure_transition? and not semantic_retry_transition?,
+      :needs_correction
+    )
+    |> maybe_add_terminal_state(generic_failure_transition?, :needs_review)
+  end
+
+  defp maybe_add_terminal_state(states, true, state), do: states ++ [state]
+  defp maybe_add_terminal_state(states, false, _state), do: states
 
   defp cancel_subject!(subject_id) do
     now = DateTime.utc_now() |> DateTime.truncate(:microsecond)

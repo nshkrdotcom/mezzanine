@@ -176,6 +176,69 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
            }
   end
 
+  test "advance/1 keeps inference runtime selection explicit on the binding and intent snapshots" do
+    installation =
+      active_installation_fixture(
+        runtime_class: :inference,
+        binding_config: %{
+          "execution_bindings" => %{
+            "expense_capture" => %{
+              "placement_ref" => "memory_reasoner",
+              "execution_params" => %{
+                "timeout_ms" => 120_000,
+                "reasoning_tier" => "deliberate"
+              },
+              "descriptor" => %{
+                "attachment" => "mezzanine.execution_recipe",
+                "contract" => "authoritative",
+                "ownership" => %{
+                  "external_system" => "hindsight",
+                  "external_system_ref" => "hindsight.primary"
+                }
+              }
+            }
+          }
+        }
+      )
+
+    subject =
+      subject_fixture(%{
+        installation_id: installation.id,
+        source_ref: "expense:request:inference-runtime",
+        subject_kind: "expense_request",
+        lifecycle_state: "submitted",
+        payload: %{"amount_cents" => 12_500},
+        trace_id: "trace-lifecycle-inference-runtime",
+        causation_id: "cause-lifecycle-inference-runtime"
+      })
+
+    assert {:ok, result} = LifecycleEvaluator.advance(subject.id)
+    assert {:ok, execution} = Ash.get(ExecutionRecord, result.execution_id)
+
+    assert execution.binding_snapshot["placement_ref"] == "memory_reasoner"
+
+    assert execution.binding_snapshot["execution_params"] == %{
+             "timeout_ms" => 120_000,
+             "reasoning_tier" => "deliberate"
+           }
+
+    assert get_in(execution.binding_snapshot, ["descriptor", "attachment"]) ==
+             "mezzanine.execution_recipe"
+
+    assert get_in(execution.binding_snapshot, ["descriptor", "ownership", "external_system"]) ==
+             "hindsight"
+
+    assert get_in(
+             execution.binding_snapshot,
+             ["descriptor", "ownership", "external_system_ref"]
+           ) == "hindsight.primary"
+
+    assert execution.dispatch_envelope["runtime_class"] == "inference"
+    assert execution.intent_snapshot["runtime_class"] == "inference"
+    assert execution.intent_snapshot["binding_snapshot"] == execution.binding_snapshot
+    assert execution.intent_snapshot["dispatch_envelope"] == execution.dispatch_envelope
+  end
+
   test "advance/1 refuses to infer executable work when no explicit execution request exists" do
     installation = active_installation_fixture(no_execution_request?: true)
 
@@ -395,6 +458,17 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
     required_lifecycle_hints = Keyword.get(opts, :required_lifecycle_hints, [])
     produced_lifecycle_hints = Keyword.get(opts, :produced_lifecycle_hints, [])
 
+    binding_config =
+      Keyword.get(
+        opts,
+        :binding_config,
+        %{
+          "execution_bindings" => %{
+            "expense_capture" => default_execution_binding(produced_lifecycle_hints)
+          }
+        }
+      )
+
     compiled_pack =
       fixture_compiled_pack(
         no_execution_request?: no_execution_request?,
@@ -402,7 +476,8 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
         manual_retry_transition?: manual_retry_transition?,
         join_transition?: join_transition?,
         max_supersession_depth: max_supersession_depth,
-        required_lifecycle_hints: required_lifecycle_hints
+        required_lifecycle_hints: required_lifecycle_hints,
+        runtime_class: Keyword.get(opts, :runtime_class, :session)
       )
 
     now = DateTime.utc_now() |> DateTime.truncate(:microsecond)
@@ -464,18 +539,7 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
         now,
         1,
         "tenant-lifecycle-engine",
-        %{
-          "execution_bindings" => %{
-            "expense_capture" => %{
-              "placement_ref" => "local_runner",
-              "execution_params" => %{"timeout_ms" => 300_000},
-              "connector_capability" => connector_capability_fixture(produced_lifecycle_hints),
-              "connector_bindings" => %{
-                "expense_system" => %{"connector_key" => "expense_system_api"}
-              }
-            }
-          }
-        },
+        binding_config,
         to_string(compiled_pack.pack_slug),
         "stage9",
         dump_uuid!(registration_id)
@@ -495,6 +559,7 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
     join_transition? = Keyword.get(opts, :join_transition?, false)
     max_supersession_depth = Keyword.get(opts, :max_supersession_depth, 8)
     required_lifecycle_hints = Keyword.get(opts, :required_lifecycle_hints, [])
+    runtime_class = Keyword.get(opts, :runtime_class, :session)
 
     transitions =
       no_execution_request?
@@ -525,7 +590,7 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
       execution_recipe_specs: [
         %ExecutionRecipeSpec{
           recipe_ref: :expense_capture,
-          runtime_class: :session,
+          runtime_class: runtime_class,
           placement_ref: :local_runner,
           required_lifecycle_hints: required_lifecycle_hints,
           execution_params: %{timeout_ms: 300_000},
@@ -552,6 +617,17 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
       "capability_id" => "expense.capture",
       "version" => "2026.04",
       "produces_lifecycle_hints" => Enum.map(produced_lifecycle_hints, &to_string/1)
+    }
+  end
+
+  defp default_execution_binding(produced_lifecycle_hints) do
+    %{
+      "placement_ref" => "local_runner",
+      "execution_params" => %{"timeout_ms" => 300_000},
+      "connector_capability" => connector_capability_fixture(produced_lifecycle_hints),
+      "connector_bindings" => %{
+        "expense_system" => %{"connector_key" => "expense_system_api"}
+      }
     }
   end
 

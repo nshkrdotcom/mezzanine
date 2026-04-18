@@ -44,24 +44,7 @@ defmodule Mezzanine.JoinAdvanceWorker do
              actor_ref: actor_ref(job),
              now: now
            ) do
-      barrier_id
-      |> ParallelBarrier.close_ready_multi(now: now)
-      |> Multi.merge(fn %{parallel_barrier_close: progress} ->
-        if progress.duplicate? do
-          Multi.new()
-        else
-          lifecycle_multi
-        end
-      end)
-      |> Repo.transaction()
-      |> case do
-        {:ok, %{parallel_barrier_close: progress}} ->
-          emit_join_advance(progress, barrier, job, started_at)
-          :ok
-
-        {:error, _step, error, _changes} ->
-          {:error, error}
-      end
+      close_barrier_and_advance(barrier_id, barrier, lifecycle_multi, now, job, started_at)
     else
       :error -> {:error, {:barrier_not_found, barrier_id}}
       {:error, error} -> {:error, error}
@@ -80,6 +63,39 @@ defmodule Mezzanine.JoinAdvanceWorker do
 
   defp causation_id(%Oban.Job{} = job),
     do: "join-advance-worker:job:#{job.id}:attempt:#{job.attempt}"
+
+  defp close_barrier_and_advance(barrier_id, barrier, lifecycle_multi, now, job, started_at) do
+    barrier_id
+    |> ParallelBarrier.close_ready_multi(now: now)
+    |> Multi.merge(fn %{parallel_barrier_close: progress} ->
+      if progress.duplicate? do
+        Multi.new()
+      else
+        lifecycle_multi
+      end
+    end)
+    |> Repo.transaction()
+    |> handle_join_advance_transaction(barrier, job, started_at)
+  end
+
+  defp handle_join_advance_transaction(
+         {:ok, %{parallel_barrier_close: progress}},
+         barrier,
+         job,
+         started_at
+       ) do
+    emit_join_advance(progress, barrier, job, started_at)
+    :ok
+  end
+
+  defp handle_join_advance_transaction(
+         {:error, _step, error, _changes},
+         _barrier,
+         _job,
+         _started_at
+       ) do
+    {:error, error}
+  end
 
   defp emit_join_advance(progress, barrier, job, started_at) do
     metadata =
