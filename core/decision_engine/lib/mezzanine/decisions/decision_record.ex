@@ -20,6 +20,7 @@ defmodule Mezzanine.Decisions.DecisionRecord do
       index([:causation_id])
       index([:subject_id, :lifecycle_state])
       index([:installation_id, :required_by])
+      index([:expiry_job_id])
       index([:installation_id, :subject_id, :decision_kind, :execution_id], unique: true)
     end
   end
@@ -91,7 +92,6 @@ defmodule Mezzanine.Decisions.DecisionRecord do
       change(set_attribute(:decision_value, arg(:decision_value)))
       change(set_attribute(:reason, arg(:reason)))
       change(set_attribute(:resolved_at, &DateTime.utc_now/0))
-      change(set_attribute(:trace_id, arg(:trace_id)))
       change(set_attribute(:causation_id, arg(:causation_id)))
 
       change(
@@ -129,7 +129,6 @@ defmodule Mezzanine.Decisions.DecisionRecord do
       change(set_attribute(:decision_value, "waive"))
       change(set_attribute(:reason, arg(:reason)))
       change(set_attribute(:resolved_at, &DateTime.utc_now/0))
-      change(set_attribute(:trace_id, arg(:trace_id)))
       change(set_attribute(:causation_id, arg(:causation_id)))
 
       change(
@@ -165,7 +164,6 @@ defmodule Mezzanine.Decisions.DecisionRecord do
       change(optimistic_lock(:row_version))
       change(set_attribute(:lifecycle_state, "escalated"))
       change(set_attribute(:reason, arg(:reason)))
-      change(set_attribute(:trace_id, arg(:trace_id)))
       change(set_attribute(:causation_id, arg(:causation_id)))
 
       change(
@@ -202,7 +200,6 @@ defmodule Mezzanine.Decisions.DecisionRecord do
       change(set_attribute(:decision_value, "expired"))
       change(set_attribute(:reason, arg(:reason)))
       change(set_attribute(:resolved_at, &DateTime.utc_now/0))
-      change(set_attribute(:trace_id, arg(:trace_id)))
       change(set_attribute(:causation_id, arg(:causation_id)))
 
       change(
@@ -292,6 +289,10 @@ defmodule Mezzanine.Decisions.DecisionRecord do
     end
 
     attribute :required_by, :utc_datetime_usec do
+      public?(true)
+    end
+
+    attribute :expiry_job_id, :integer do
       public?(true)
     end
 

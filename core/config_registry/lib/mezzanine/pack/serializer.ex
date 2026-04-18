@@ -10,6 +10,7 @@ defmodule Mezzanine.Pack.Serializer do
   alias Mezzanine.Pack.{
     CompiledPack,
     Compiler,
+    ContextSourceSpec,
     DecisionSpec,
     EvidenceSpec,
     ExecutionRecipeSpec,
@@ -52,8 +53,11 @@ defmodule Mezzanine.Pack.Serializer do
       "version" => manifest.version,
       "description" => manifest.description,
       "migration_strategy" => Atom.to_string(manifest.migration_strategy),
+      "max_supersession_depth" => manifest.max_supersession_depth,
       "subject_kind_specs" => Enum.map(manifest.subject_kind_specs, &serialize_subject_kind/1),
       "source_kind_specs" => Enum.map(manifest.source_kind_specs, &serialize_source_kind/1),
+      "context_source_specs" =>
+        Enum.map(manifest.context_source_specs, &serialize_context_source/1),
       "lifecycle_specs" => Enum.map(manifest.lifecycle_specs, &serialize_lifecycle/1),
       "execution_recipe_specs" =>
         Enum.map(manifest.execution_recipe_specs, &serialize_execution_recipe/1),
@@ -109,6 +113,35 @@ defmodule Mezzanine.Pack.Serializer do
     }
   end
 
+  defp serialize_context_source(%ContextSourceSpec{} = spec) do
+    %{
+      "source_ref" => serialize_identifier(spec.source_ref),
+      "description" => spec.description,
+      "binding_key" => serialize_identifier(spec.binding_key),
+      "usage_phase" => Atom.to_string(spec.usage_phase),
+      "required?" => spec.required?,
+      "timeout_ms" => spec.timeout_ms,
+      "schema_ref" => spec.schema_ref,
+      "max_fragments" => spec.max_fragments,
+      "merge_strategy" => Atom.to_string(spec.merge_strategy)
+    }
+  end
+
+  defp deserialize_context_source(payload) do
+    %ContextSourceSpec{
+      source_ref: payload["source_ref"],
+      description: payload["description"],
+      binding_key: payload["binding_key"],
+      usage_phase: deserialize_atom(payload["usage_phase"], [:preprocess, :retrieval, :repair]),
+      required?: Map.get(payload, "required?", false),
+      timeout_ms: Map.get(payload, "timeout_ms", 1_000),
+      schema_ref: payload["schema_ref"],
+      max_fragments: Map.get(payload, "max_fragments", 5),
+      merge_strategy:
+        deserialize_atom(payload["merge_strategy"], [:append, :ranked_append, :replace_slot])
+    }
+  end
+
   defp serialize_lifecycle(%LifecycleSpec{} = spec) do
     %{
       "subject_kind" => serialize_identifier(spec.subject_kind),
@@ -155,6 +188,8 @@ defmodule Mezzanine.Pack.Serializer do
       "description" => spec.description,
       "runtime_class" => Atom.to_string(spec.runtime_class),
       "placement_ref" => serialize_identifier(spec.placement_ref),
+      "required_lifecycle_hints" =>
+        Enum.map(spec.required_lifecycle_hints, &serialize_identifier/1),
       "grant_spec" => serialize_map(spec.grant_spec),
       "retry_config" => serialize_map(spec.retry_config),
       "workspace_policy" => serialize_map(spec.workspace_policy),
@@ -176,6 +211,7 @@ defmodule Mezzanine.Pack.Serializer do
           :inference
         ]),
       placement_ref: payload["placement_ref"],
+      required_lifecycle_hints: payload["required_lifecycle_hints"] || [],
       grant_spec: deserialize_map(payload["grant_spec"] || %{}),
       retry_config: deserialize_retry_config(payload["retry_config"] || %{}),
       workspace_policy: deserialize_workspace_policy(payload["workspace_policy"] || %{}),
@@ -319,6 +355,13 @@ defmodule Mezzanine.Pack.Serializer do
     }
   end
 
+  defp serialize_trigger({:join_completed, join_step_ref}) do
+    %{
+      "kind" => "join_completed",
+      "join_step_ref" => serialize_identifier(join_step_ref)
+    }
+  end
+
   defp serialize_trigger({:decision_made, decision_kind, decision_value}) do
     %{
       "kind" => "decision_made",
@@ -353,6 +396,10 @@ defmodule Mezzanine.Pack.Serializer do
 
   defp deserialize_trigger(%{"kind" => "execution_failed", "recipe_ref" => recipe_ref}) do
     {:execution_failed, recipe_ref}
+  end
+
+  defp deserialize_trigger(%{"kind" => "join_completed", "join_step_ref" => join_step_ref}) do
+    {:join_completed, join_step_ref}
   end
 
   defp deserialize_trigger(%{
@@ -572,6 +619,9 @@ defmodule Mezzanine.Pack.Serializer do
     |> Map.update(:retry_on, [], fn retry_on ->
       Enum.map(retry_on, &deserialize_runtime_failure_kind/1)
     end)
+    |> Map.update(:rekey_on, [], fn rekey_on ->
+      Enum.map(rekey_on, &deserialize_runtime_failure_kind/1)
+    end)
   end
 
   defp deserialize_workspace_policy(payload) do
@@ -603,10 +653,17 @@ defmodule Mezzanine.Pack.Serializer do
         payload
         |> Map.fetch!("migration_strategy")
         |> deserialize_atom([:additive, :force]),
+      max_supersession_depth: Map.get(payload, "max_supersession_depth", 8),
       subject_kind_specs:
         deserialize_manifest_entries(payload, "subject_kind_specs", &deserialize_subject_kind/1),
       source_kind_specs:
         deserialize_manifest_entries(payload, "source_kind_specs", &deserialize_source_kind/1),
+      context_source_specs:
+        deserialize_manifest_entries(
+          payload,
+          "context_source_specs",
+          &deserialize_context_source/1
+        ),
       lifecycle_specs:
         deserialize_manifest_entries(payload, "lifecycle_specs", &deserialize_lifecycle/1),
       execution_recipe_specs:

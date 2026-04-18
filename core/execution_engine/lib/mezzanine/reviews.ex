@@ -13,7 +13,6 @@ defmodule Mezzanine.Reviews do
   alias Mezzanine.ServiceSupport
   alias Mezzanine.Work.WorkObject
 
-  @open_review_statuses [:pending, :in_review, :escalated]
   @terminal_run_statuses [:completed, :failed, :cancelled]
   @terminal_work_statuses [:completed, :cancelled]
   @review_due_in_seconds 86_400
@@ -536,8 +535,7 @@ defmodule Mezzanine.Reviews do
   end
 
   defp recovery_review?(%ReviewUnit{} = review_unit, run_id, execution_id) do
-    review_unit.status in @open_review_statuses and
-      review_unit.review_kind == :operator_review and
+    review_unit.review_kind == :operator_review and
       review_unit.run_id == run_id and
       ServiceSupport.map_value(review_unit.decision_profile, :recovery_kind) == "semantic_failure" and
       ServiceSupport.map_value(review_unit.decision_profile, :execution_id) == execution_id

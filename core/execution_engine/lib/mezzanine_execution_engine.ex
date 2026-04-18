@@ -1,6 +1,7 @@
 defmodule MezzanineExecutionEngine do
   @moduledoc """
-  Neutral execution-ledger contract entrypoint for the Mezzanine rebuild.
+  Neutral execution-ledger and dispatch-worker entrypoint for the Mezzanine
+  rebuild.
   """
 
   @spec components() :: [module()]
@@ -8,8 +9,9 @@ defmodule MezzanineExecutionEngine do
     [
       Mezzanine.Execution,
       Mezzanine.Execution.ExecutionRecord,
-      Mezzanine.Execution.DispatchOutboxEntry,
-      Mezzanine.Execution.Dispatcher,
+      Mezzanine.JobOutbox,
+      Mezzanine.LowerGateway,
+      Mezzanine.ExecutionDispatchWorker,
       Mezzanine.Installations,
       Mezzanine.WorkControl,
       Mezzanine.WorkQueries,

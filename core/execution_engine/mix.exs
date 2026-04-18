@@ -13,7 +13,7 @@ defmodule MezzanineExecutionEngine.MixProject do
       deps: deps(),
       aliases: aliases(),
       dialyzer: [plt_add_deps: :apps_tree],
-      description: "Durable execution ledger and dispatch outbox for Mezzanine",
+      description: "Durable execution ledger and JobOutbox-backed dispatch workers for Mezzanine",
       docs: [main: "readme", extras: ["README.md"]],
       name: "Mezzanine Execution Engine",
       source_url: @source_url,
@@ -43,6 +43,7 @@ defmodule MezzanineExecutionEngine.MixProject do
         "audit.migrate",
         "object.migrate",
         "ops_domain.migrate",
+        "leasing.migrate",
         "ecto.migrate"
       ],
       "ecto.setup": [
@@ -50,6 +51,7 @@ defmodule MezzanineExecutionEngine.MixProject do
         "audit.migrate",
         "object.migrate",
         "ops_domain.migrate",
+        "leasing.migrate",
         "ecto.migrate"
       ],
       "ecto.reset": ["ecto.drop", "ecto.setup"],
@@ -62,11 +64,15 @@ defmodule MezzanineExecutionEngine.MixProject do
       "ops_domain.migrate": [
         "ecto.migrate -r Mezzanine.OpsDomain.Repo --migrations-path ../ops_domain/priv/repo/migrations"
       ],
+      "leasing.migrate": [
+        "ecto.migrate -r Mezzanine.Execution.Repo --migrations-path ../leasing/priv/repo/migrations"
+      ],
       test: [
         "ash.setup --quiet",
         "audit.migrate",
         "object.migrate",
         "ops_domain.migrate",
+        "leasing.migrate",
         "ecto.migrate",
         "test"
       ],
@@ -75,7 +81,7 @@ defmodule MezzanineExecutionEngine.MixProject do
         "compile --warnings-as-errors",
         "cmd env MIX_ENV=test mix test",
         "credo --strict",
-        "cmd env MIX_ENV=dev mix dialyzer",
+        "cmd env MIX_ENV=dev mix dialyzer --force-check",
         "cmd env MIX_ENV=dev mix docs --warnings-as-errors"
       ]
     ]
@@ -84,10 +90,14 @@ defmodule MezzanineExecutionEngine.MixProject do
   defp deps do
     [
       {:mezzanine_audit_engine, path: "../audit_engine"},
+      {:mezzanine_leasing, path: "../leasing"},
+      {:mezzanine_core, path: "../mezzanine_core"},
       {:mezzanine_object_engine, path: "../object_engine"},
       {:mezzanine_ops_domain, path: "../ops_domain"},
       {:ash, "~> 3.24"},
       {:ash_postgres, "~> 2.6"},
+      {:telemetry, "~> 1.3"},
+      {:oban, "~> 2.17"},
       {:ecto_sql, "~> 3.13"},
       {:postgrex, ">= 0.0.0"},
       {:jason, "~> 1.4"},

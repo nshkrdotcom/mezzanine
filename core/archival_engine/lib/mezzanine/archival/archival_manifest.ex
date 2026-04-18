@@ -1,14 +1,10 @@
 defmodule Mezzanine.Archival.ArchivalManifest do
   @moduledoc """
-  Durable archival manifest carrying the terminal hot-graph snapshot and
-  cold-storage completion metadata.
+  Durable archival manifest carrying one archived subject graph plus its
+  cold-storage and hot-row lifecycle.
   """
 
-  use Ash.Resource,
-    domain: Mezzanine.Archival,
-    data_layer: AshPostgres.DataLayer
-
-  alias Mezzanine.Archival.{CountdownPolicy, Graph, OffloadPlan}
+  use Ash.Resource, domain: Mezzanine.Archival, data_layer: AshPostgres.DataLayer
 
   postgres do
     table("archival_manifests")
@@ -22,25 +18,22 @@ defmodule Mezzanine.Archival.ArchivalManifest do
   end
 
   code_interface do
-    define(:plan, action: :plan)
-    define(:complete, action: :complete)
+    define(:stage, action: :stage)
+    define(:mark_verified, action: :mark_verified)
+    define(:mark_archived, action: :mark_archived)
+    define(:mark_failed, action: :mark_failed)
     define(:by_manifest_ref, action: :by_manifest_ref, args: [:manifest_ref])
 
     define(:for_subject,
       action: :for_subject,
       args: [:installation_id, :subject_id]
     )
-
-    define(:due_for_installation,
-      action: :due_for_installation,
-      args: [:installation_id, :now]
-    )
   end
 
   actions do
     defaults([:read])
 
-    create :plan do
+    create :stage do
       accept([
         :manifest_ref,
         :installation_id,
@@ -79,23 +72,54 @@ defmodule Mezzanine.Archival.ArchivalManifest do
         :metadata
       ])
 
-      change(set_attribute(:status, "pending"))
+      change(set_attribute(:status, "staging"))
+      change(set_attribute(:storage_uri, nil))
+      change(set_attribute(:checksum, nil))
+      change(set_attribute(:verified_at, nil))
+      change(set_attribute(:archived_at, nil))
+      change(set_attribute(:failure_reason, nil))
     end
 
-    update :complete do
+    update :mark_verified do
       accept([])
       require_atomic?(false)
 
       argument(:storage_uri, :string, allow_nil?: false)
       argument(:checksum, :string, allow_nil?: false)
-      argument(:completed_at, :utc_datetime_usec, allow_nil?: false)
+      argument(:verified_at, :utc_datetime_usec, allow_nil?: false)
       argument(:metadata, :map, default: %{})
 
       change(optimistic_lock(:row_version))
-      change(set_attribute(:status, "completed"))
+      change(set_attribute(:status, "verified"))
       change(set_attribute(:storage_uri, arg(:storage_uri)))
       change(set_attribute(:checksum, arg(:checksum)))
-      change(set_attribute(:completed_at, arg(:completed_at)))
+      change(set_attribute(:verified_at, arg(:verified_at)))
+      change(set_attribute(:metadata, arg(:metadata)))
+      change(set_attribute(:failure_reason, nil))
+    end
+
+    update :mark_archived do
+      accept([])
+      require_atomic?(false)
+
+      argument(:archived_at, :utc_datetime_usec, allow_nil?: false)
+
+      change(optimistic_lock(:row_version))
+      change(set_attribute(:status, "archived"))
+      change(set_attribute(:archived_at, arg(:archived_at)))
+      change(set_attribute(:failure_reason, nil))
+    end
+
+    update :mark_failed do
+      accept([])
+      require_atomic?(false)
+
+      argument(:reason, :string, allow_nil?: false)
+      argument(:metadata, :map, default: %{})
+
+      change(optimistic_lock(:row_version))
+      change(set_attribute(:status, "failed"))
+      change(set_attribute(:failure_reason, arg(:reason)))
       change(set_attribute(:metadata, arg(:metadata)))
     end
 
@@ -110,22 +134,7 @@ defmodule Mezzanine.Archival.ArchivalManifest do
       argument(:subject_id, :uuid, allow_nil?: false)
 
       filter(expr(installation_id == ^arg(:installation_id) and subject_id == ^arg(:subject_id)))
-
       prepare(build(sort: [terminal_at: :desc, inserted_at: :desc]))
-    end
-
-    read :due_for_installation do
-      argument(:installation_id, :string, allow_nil?: false)
-      argument(:now, :utc_datetime_usec, allow_nil?: false)
-
-      filter(
-        expr(
-          installation_id == ^arg(:installation_id) and status == "pending" and
-            due_at <= ^arg(:now)
-        )
-      )
-
-      prepare(build(sort: [due_at: :asc, terminal_at: :asc]))
     end
   end
 
@@ -216,7 +225,8 @@ defmodule Mezzanine.Archival.ArchivalManifest do
 
     attribute :status, :string do
       allow_nil?(false)
-      default("pending")
+      default("staging")
+      constraints(match: ~r/^(staging|verified|archived|failed)$/)
       public?(true)
     end
 
@@ -228,7 +238,15 @@ defmodule Mezzanine.Archival.ArchivalManifest do
       public?(true)
     end
 
-    attribute :completed_at, :utc_datetime_usec do
+    attribute :verified_at, :utc_datetime_usec do
+      public?(true)
+    end
+
+    attribute :archived_at, :utc_datetime_usec do
+      public?(true)
+    end
+
+    attribute :failure_reason, :string do
       public?(true)
     end
 
@@ -249,41 +267,5 @@ defmodule Mezzanine.Archival.ArchivalManifest do
 
   identities do
     identity(:unique_manifest_ref, [:manifest_ref])
-  end
-
-  @spec plan_from_graph(Graph.t(), CountdownPolicy.t(), map()) :: {:ok, map()} | {:error, term()}
-  def plan_from_graph(%Graph{} = graph, %CountdownPolicy{} = policy, attrs \\ %{})
-      when is_map(attrs) do
-    with {:ok, %OffloadPlan{} = plan} <- OffloadPlan.build(graph, policy) do
-      plan(%{
-        manifest_ref: build_manifest_ref(graph),
-        installation_id: graph.installation_id,
-        subject_id: graph.subject_id,
-        subject_state: Atom.to_string(graph.subject_state),
-        execution_states: Enum.map(graph.execution_states, &Atom.to_string/1),
-        trace_ids: graph.trace_ids,
-        execution_ids: graph.execution_ids,
-        decision_ids: graph.decision_ids,
-        evidence_ids: graph.evidence_ids,
-        audit_fact_ids: graph.audit_fact_ids,
-        projection_names: Map.get(attrs, :projection_names, []),
-        terminal_at: graph.terminal_at,
-        due_at: plan.due_at,
-        retention_seconds: policy.hot_retention_seconds,
-        storage_kind: Atom.to_string(policy.cold_storage_kind),
-        metadata: Map.get(attrs, :metadata, %{})
-      })
-    end
-  end
-
-  @spec hot_deletion_allowed?(map(), DateTime.t()) :: boolean()
-  def hot_deletion_allowed?(manifest, %DateTime{} = now) when is_map(manifest) do
-    Map.get(manifest, :status) == "completed" and not is_nil(Map.get(manifest, :completed_at)) and
-      DateTime.compare(now, Map.fetch!(manifest, :due_at)) != :lt
-  end
-
-  defp build_manifest_ref(%Graph{} = graph) do
-    terminal_at_us = DateTime.to_unix(graph.terminal_at, :microsecond)
-    "archive/#{graph.installation_id}/#{graph.subject_id}/#{terminal_at_us}"
   end
 end

@@ -18,28 +18,27 @@ defmodule Mezzanine.Execution.RuntimeStack do
   alias Mezzanine.Execution
   alias Mezzanine.Execution.Repo, as: ExecutionRepo
   alias Mezzanine.Objects
+  alias Mezzanine.Objects.Repo, as: ObjectsRepo
   alias Mezzanine.OpsDomain.Repo, as: OpsDomainRepo
   alias Mezzanine.Programs
   alias Mezzanine.Review
   alias Mezzanine.Runs
   alias Mezzanine.Work
 
-  @repo_modules [
-    AuditRepo,
-    ConfigRegistryRepo,
-    DecisionsRepo,
-    EvidenceRepo,
-    ExecutionRepo,
-    OpsDomainRepo
-  ]
   @migration_components [
     {AuditRepo, "audit_engine"},
     {ConfigRegistryRepo, "config_registry"},
     {DecisionsRepo, "decision_engine"},
     {EvidenceRepo, "evidence_engine"},
     {ExecutionRepo, "execution_engine"},
+    {ExecutionRepo, "barriers"},
+    {ExecutionRepo, "leasing"},
+    {ObjectsRepo, "object_engine"},
     {OpsDomainRepo, "ops_domain"}
   ]
+  @repo_modules @migration_components
+                |> Enum.map(&elem(&1, 0))
+                |> Enum.uniq()
   @ash_domains [
     Audit,
     ConfigRegistry,

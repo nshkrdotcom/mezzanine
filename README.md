@@ -30,6 +30,7 @@ mezzanine/
   core/mezzanine_core  # projected artifact shell over the neutral rebuild
   core/pack_model      # neutral pack definitions and shared structs
   core/pack_compiler   # neutral pack compilation and validation
+  core/lifecycle_engine # durable lifecycle coordinator over explicit execution requests
   core/config_registry # deployment/install registry seam
   core/object_engine   # subject/object lifecycle engine scaffold
   core/execution_engine
@@ -40,7 +41,7 @@ mezzanine/
   core/operator_engine
   core/audit_engine
   core/archival_engine
-  core/ops_*           # [DEPRECATED-PENDING-MIGRATION] legacy ontology packages
+  core/ops_*           # live semantic hosts pending later neutral rename
   bridges/citadel_bridge
   bridges/integration_bridge
   docs/                # repo-level architecture and publication docs
@@ -56,12 +57,11 @@ mezzanine/
 
 ## Status
 
-The repo is in the bounded coexistence phase from the v3 packet.
-
 The active buildout in this repo is the neutral core scaffold:
 
 - `core/pack_model`
 - `core/pack_compiler`
+- `core/lifecycle_engine`
 - `core/config_registry`
 - `core/object_engine`
 - `core/execution_engine`
@@ -73,19 +73,17 @@ The active buildout in this repo is the neutral core scaffold:
 - `core/audit_engine`
 - `core/archival_engine`
 
-The legacy `ops_*` packages remain buildable only as migration scaffolding and
-are `[DEPRECATED-PENDING-MIGRATION]`.
+The `ops_*` packages still host live semantic domains.
+They remain frozen to current consumers while later phases move those semantics
+into neutral packages with current naming.
 
-Named coexistence gates:
+Current posture:
 
-- `NO_NEW_PRODUCT_DEP_ON_OLD_MEZZANINE`
-- `MEZZANINE_NEUTRAL_CORE_CUTOVER`
-
-During this phase:
-
-- no new product dependency may widen the deprecated ontology
-- the remaining legacy `ops_*` packages stay frozen
-- the neutral packages are the only place new reusable substrate work may land
+- new reusable substrate work lands in the neutral package graph
+- dispatch ownership now belongs to `Mezzanine.JobOutbox` plus lower-gateway
+  workers, not to a bespoke SQL outbox
+- the remaining `ops_*` packages are explicit semantic-host carryovers, not a
+  reusable extension surface
 
 ## Development
 

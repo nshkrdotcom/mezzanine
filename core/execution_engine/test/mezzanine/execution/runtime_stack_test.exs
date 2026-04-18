@@ -12,6 +12,7 @@ defmodule Mezzanine.Execution.RuntimeStackTest do
              Mezzanine.Decisions.Repo,
              Mezzanine.EvidenceLedger.Repo,
              Mezzanine.Execution.Repo,
+             Mezzanine.Objects.Repo,
              Mezzanine.OpsDomain.Repo
            ]
 
@@ -41,7 +42,11 @@ defmodule Mezzanine.Execution.RuntimeStackTest do
   end
 
   test "keeps migration inventory aligned with the repo inventory" do
-    assert Enum.map(RuntimeStack.migration_components(), &elem(&1, 0)) ==
+    assert RuntimeStack.migration_components()
+           |> Enum.map(&elem(&1, 0))
+           |> Enum.uniq() ==
              RuntimeStack.repo_modules()
+
+    assert {Mezzanine.Execution.Repo, "barriers"} in RuntimeStack.migration_components()
   end
 end

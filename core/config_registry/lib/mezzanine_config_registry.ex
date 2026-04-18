@@ -3,7 +3,9 @@ defmodule MezzanineConfigRegistry do
   Durable neutral pack-registration and installation registry facade.
   """
 
-  alias Mezzanine.ConfigRegistry.{Installation, PackRegistration}
+  alias Mezzanine.ConfigRegistry.{Installation, LifecycleHintContract, PackRegistration}
+  alias Mezzanine.Execution.Repo, as: ExecutionRepo
+  alias Mezzanine.Leasing
   alias Mezzanine.Pack.{CompiledPack, Registry, Serializer}
 
   @spec components() :: [module()]
@@ -48,7 +50,8 @@ defmodule MezzanineConfigRegistry do
 
   @spec activate_installation(Installation.t()) :: {:ok, Installation.t()} | {:error, term()}
   def activate_installation(%Installation{} = installation) do
-    with {:ok, updated_installation} <- Installation.activate_installation(installation) do
+    with :ok <- LifecycleHintContract.validate(installation),
+         {:ok, updated_installation} <- Installation.activate_installation(installation) do
       :ok =
         Registry.reload_installation(
           updated_installation.id,
@@ -62,6 +65,15 @@ defmodule MezzanineConfigRegistry do
   @spec suspend_installation(Installation.t()) :: {:ok, Installation.t()} | {:error, term()}
   def suspend_installation(%Installation{} = installation) do
     with {:ok, updated_installation} <- Installation.suspend_installation(installation) do
+      {:ok, _invalidations} =
+        Leasing.invalidate_installation_leases(
+          updated_installation.id,
+          "installation_suspended",
+          now: DateTime.utc_now() |> DateTime.truncate(:microsecond),
+          repo: ExecutionRepo,
+          trace_id: "installation-suspended:#{updated_installation.id}"
+        )
+
       :ok = Registry.forget_installation(updated_installation.id)
       {:ok, updated_installation}
     end
@@ -69,7 +81,8 @@ defmodule MezzanineConfigRegistry do
 
   @spec reactivate_installation(Installation.t()) :: {:ok, Installation.t()} | {:error, term()}
   def reactivate_installation(%Installation{} = installation) do
-    with {:ok, updated_installation} <- Installation.reactivate_installation(installation) do
+    with :ok <- LifecycleHintContract.validate(installation),
+         {:ok, updated_installation} <- Installation.reactivate_installation(installation) do
       :ok =
         Registry.reload_installation(
           updated_installation.id,
@@ -83,7 +96,8 @@ defmodule MezzanineConfigRegistry do
   @spec update_bindings(Installation.t(), map()) :: {:ok, Installation.t()} | {:error, term()}
   def update_bindings(%Installation{} = installation, binding_config)
       when is_map(binding_config) do
-    with {:ok, updated_installation} <-
+    with :ok <- LifecycleHintContract.validate(installation, binding_config),
+         {:ok, updated_installation} <-
            Installation.update_bindings(installation, %{binding_config: binding_config}) do
       :ok =
         Registry.reload_installation(

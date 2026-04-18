@@ -72,7 +72,7 @@ defmodule MezzanineRuntimeScheduler.MixProject do
         "compile --warnings-as-errors",
         "cmd env MIX_ENV=test mix test",
         "credo --strict",
-        "cmd env MIX_ENV=dev mix dialyzer",
+        "cmd env MIX_ENV=dev mix dialyzer --force-check",
         "cmd env MIX_ENV=dev mix docs --warnings-as-errors"
       ]
     ]
@@ -81,10 +81,13 @@ defmodule MezzanineRuntimeScheduler.MixProject do
   defp deps do
     [
       {:mezzanine_audit_engine, path: "../audit_engine"},
+      {:mezzanine_core, path: "../mezzanine_core"},
       {:mezzanine_object_engine, path: "../object_engine"},
       {:mezzanine_execution_engine, path: "../execution_engine"},
+      {:mezzanine_lifecycle_engine, path: "../lifecycle_engine"},
       {:ash, "~> 3.24"},
       {:ash_postgres, "~> 2.6"},
+      {:telemetry, "~> 1.3"},
       {:ecto_sql, "~> 3.13"},
       {:postgrex, ">= 0.0.0"},
       {:jason, "~> 1.4"},

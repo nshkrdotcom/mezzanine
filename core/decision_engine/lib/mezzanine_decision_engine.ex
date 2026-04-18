@@ -7,7 +7,9 @@ defmodule MezzanineDecisionEngine do
   def components do
     [
       Mezzanine.Decisions,
-      Mezzanine.Decisions.DecisionRecord
+      Mezzanine.Decisions.DecisionRecord,
+      Mezzanine.DecisionCommands,
+      Mezzanine.DecisionExpiryWorker
     ]
   end
 end

@@ -17,6 +17,7 @@ defmodule Mezzanine.Objects.SubjectRecord do
       index([:installation_id, :source_ref], unique: true)
       index([:installation_id, :lifecycle_state])
       index([:installation_id, :subject_kind])
+      index([:installation_id, :status])
     end
   end
 
@@ -31,6 +32,9 @@ defmodule Mezzanine.Objects.SubjectRecord do
     define(:advance_lifecycle, action: :advance_lifecycle)
     define(:block, action: :block)
     define(:unblock, action: :unblock)
+    define(:pause, action: :pause)
+    define(:resume, action: :resume)
+    define(:cancel, action: :cancel)
   end
 
   actions do
@@ -42,6 +46,7 @@ defmodule Mezzanine.Objects.SubjectRecord do
         :source_ref,
         :subject_kind,
         :lifecycle_state,
+        :status,
         :title,
         :description,
         :schema_ref,
@@ -55,6 +60,8 @@ defmodule Mezzanine.Objects.SubjectRecord do
       argument(:actor_ref, :map, allow_nil?: false)
 
       change(set_attribute(:opened_at, &DateTime.utc_now/0, set_when_nil?: false))
+      change(set_attribute(:status, "active", set_when_nil?: false))
+      change(set_attribute(:status_updated_at, &DateTime.utc_now/0, set_when_nil?: false))
 
       change(
         after_action(fn changeset, subject, _context ->
@@ -68,6 +75,7 @@ defmodule Mezzanine.Objects.SubjectRecord do
             payload: %{
               subject_kind: subject.subject_kind,
               lifecycle_state: subject.lifecycle_state,
+              status: subject.status,
               source_ref: subject.source_ref
             },
             occurred_at: DateTime.utc_now()
@@ -194,6 +202,69 @@ defmodule Mezzanine.Objects.SubjectRecord do
         end)
       )
     end
+
+    update :pause do
+      accept([])
+      require_atomic?(false)
+
+      argument(:reason, :string)
+      argument(:trace_id, :string, allow_nil?: false)
+      argument(:causation_id, :string, allow_nil?: false)
+      argument(:actor_ref, :map, allow_nil?: false)
+
+      change(optimistic_lock(:row_version))
+      change(set_attribute(:status, "paused"))
+      change(set_attribute(:status_reason, arg(:reason)))
+      change(set_attribute(:status_updated_at, &DateTime.utc_now/0))
+
+      change(
+        after_action(fn changeset, subject, _context ->
+          record_status_audit(changeset, subject, :subject_paused)
+        end)
+      )
+    end
+
+    update :resume do
+      accept([])
+      require_atomic?(false)
+
+      argument(:trace_id, :string, allow_nil?: false)
+      argument(:causation_id, :string, allow_nil?: false)
+      argument(:actor_ref, :map, allow_nil?: false)
+
+      change(optimistic_lock(:row_version))
+      change(set_attribute(:status, "active"))
+      change(set_attribute(:status_reason, nil))
+      change(set_attribute(:status_updated_at, &DateTime.utc_now/0))
+
+      change(
+        after_action(fn changeset, subject, _context ->
+          record_status_audit(changeset, subject, :subject_resumed)
+        end)
+      )
+    end
+
+    update :cancel do
+      accept([])
+      require_atomic?(false)
+
+      argument(:reason, :string)
+      argument(:trace_id, :string, allow_nil?: false)
+      argument(:causation_id, :string, allow_nil?: false)
+      argument(:actor_ref, :map, allow_nil?: false)
+
+      change(optimistic_lock(:row_version))
+      change(set_attribute(:status, "cancelled"))
+      change(set_attribute(:status_reason, arg(:reason)))
+      change(set_attribute(:status_updated_at, &DateTime.utc_now/0))
+      change(set_attribute(:terminal_at, &DateTime.utc_now/0, set_when_nil?: false))
+
+      change(
+        after_action(fn changeset, subject, _context ->
+          record_status_audit(changeset, subject, :subject_cancelled)
+        end)
+      )
+    end
   end
 
   attributes do
@@ -215,6 +286,25 @@ defmodule Mezzanine.Objects.SubjectRecord do
 
     attribute :lifecycle_state, :string do
       allow_nil?(false)
+      public?(true)
+    end
+
+    attribute :status, :string do
+      allow_nil?(false)
+      default("active")
+      constraints(match: ~r/^(active|paused|cancelled)$/)
+      public?(true)
+    end
+
+    attribute :status_reason, :string do
+      public?(true)
+    end
+
+    attribute :status_updated_at, :utc_datetime_usec do
+      public?(true)
+    end
+
+    attribute :terminal_at, :utc_datetime_usec do
       public?(true)
     end
 
@@ -266,5 +356,27 @@ defmodule Mezzanine.Objects.SubjectRecord do
 
   identities do
     identity(:unique_installation_source_ref, [:installation_id, :source_ref])
+  end
+
+  defp record_status_audit(changeset, subject, fact_kind) do
+    AuditFact.record(%{
+      installation_id: subject.installation_id,
+      subject_id: subject.id,
+      fact_kind: fact_kind,
+      actor_ref: Ash.Changeset.get_argument(changeset, :actor_ref),
+      trace_id: Ash.Changeset.get_argument(changeset, :trace_id),
+      causation_id: Ash.Changeset.get_argument(changeset, :causation_id),
+      payload: %{
+        lifecycle_state: subject.lifecycle_state,
+        status: subject.status,
+        status_reason: subject.status_reason,
+        terminal_at: subject.terminal_at
+      },
+      occurred_at: DateTime.utc_now()
+    })
+    |> case do
+      {:ok, _fact} -> {:ok, subject}
+      {:error, error} -> {:error, error}
+    end
   end
 end

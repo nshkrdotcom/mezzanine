@@ -31,7 +31,6 @@ defmodule Mezzanine.Audit.OperationalContractTest do
         installation_id: "inst-1",
         subject_id: "subject-1",
         execution_id: "exec-1",
-        dispatch_outbox_entry_id: "outbox-1",
         citadel_request_id: "citadel-req-1",
         citadel_submission_id: "citadel-sub-1",
         ji_submission_key: "ji-sub-1",

@@ -6,6 +6,7 @@ This projected package boundary now sits above the neutral rebuild packages:
 
 - `core/pack_model`
 - `core/pack_compiler`
+- `core/lifecycle_engine`
 - `core/config_registry`
 - `core/object_engine`
 - `core/execution_engine`
@@ -17,11 +18,11 @@ This projected package boundary now sits above the neutral rebuild packages:
 - `core/audit_engine`
 - `core/archival_engine`
 
-The legacy `ops_*` packages remain outside this projected artifact and are
-`[DEPRECATED-PENDING-MIGRATION]` migration scaffolding only.
+The `ops_*` packages remain outside this projected artifact while later phases
+move their still-live semantics behind neutral package names and boundaries.
 
 `mezzanine_core` continues to project the reusable neutral substrate rather than
-the legacy product-shaped ontology.
+the older product-shaped ontology.
 
 It also owns the neutral lower-intent seam shared by the active lower bridges:
 

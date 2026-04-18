@@ -3,6 +3,7 @@ import Config
 config :ash,
   domains: [
     Mezzanine.Archival,
+    Mezzanine.ConfigRegistry,
     Mezzanine.EvidenceLedger,
     Mezzanine.Decisions,
     Mezzanine.Execution,
@@ -12,7 +13,20 @@ config :ash,
 
 config :mezzanine_archival_engine,
   ecto_repos: [Mezzanine.Archival.Repo],
-  ash_domains: [Mezzanine.Archival]
+  ash_domains: [Mezzanine.Archival],
+  start_runtime_children?: true,
+  cold_store: [
+    module: Mezzanine.Archival.FileSystemColdStore,
+    root: Path.expand("../tmp/archival_store", __DIR__)
+  ],
+  scheduler: [
+    enabled?: false,
+    interval_ms: :timer.minutes(5)
+  ]
+
+config :mezzanine_config_registry,
+  ecto_repos: [Mezzanine.ConfigRegistry.Repo],
+  ash_domains: [Mezzanine.ConfigRegistry]
 
 config :mezzanine_evidence_engine,
   ecto_repos: [Mezzanine.EvidenceLedger.Repo],
@@ -25,6 +39,15 @@ config :mezzanine_decision_engine,
 config :mezzanine_execution_engine,
   ecto_repos: [Mezzanine.Execution.Repo],
   ash_domains: [Mezzanine.Execution]
+
+config :mezzanine_execution_engine, Oban,
+  name: Mezzanine.Execution.Oban,
+  repo: Mezzanine.Execution.Repo,
+  engine: Oban.Engines.Basic,
+  notifier: Oban.Notifiers.Postgres,
+  peer: false,
+  queues: [dispatch: 10],
+  plugins: []
 
 config :mezzanine_object_engine,
   ecto_repos: [Mezzanine.Objects.Repo],

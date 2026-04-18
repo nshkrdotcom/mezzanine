@@ -3,10 +3,14 @@ defmodule MezzanineConfigRegistryTest do
 
   alias Ash.Error.Invalid
   alias Mezzanine.ConfigRegistry.{Installation, PackRegistration}
+  alias Mezzanine.Execution.Repo, as: ExecutionRepo
+  alias Mezzanine.LeaseInvalidation
+  alias Mezzanine.Leasing
 
   alias Mezzanine.Pack.{
     CompiledPack,
     Compiler,
+    ContextSourceSpec,
     ExecutionRecipeSpec,
     LifecycleSpec,
     Manifest,
@@ -91,6 +95,31 @@ defmodule MezzanineConfigRegistryTest do
            end) == 0
   end
 
+  test "installation suspension invalidates active installation leases in the runtime lease store" do
+    registration = register_fixture_pack!()
+
+    assert {:ok, %Installation{} = installation} =
+             MezzanineConfigRegistry.create_installation(%{
+               tenant_id: "tenant-suspended",
+               environment: "prod",
+               pack_registration_id: registration.id
+             })
+
+    assert {:ok, %Installation{} = active_installation} =
+             MezzanineConfigRegistry.activate_installation(installation)
+
+    %{read_lease: read_lease, stream_lease: stream_lease} =
+      issue_installation_leases!(active_installation, "suspended")
+
+    assert {:ok, %Installation{} = suspended_installation} =
+             MezzanineConfigRegistry.suspend_installation(active_installation)
+
+    assert suspended_installation.status == :suspended
+
+    assert Enum.map(installation_invalidations("installation_suspended"), & &1.lease_id)
+           |> Enum.sort() == Enum.sort([read_lease.lease_id, stream_lease.lease_id])
+  end
+
   test "pack activation rejects overlapping canonical subject kinds and allows distinct active packs" do
     first_registration =
       fixture_pack(pack_slug: :expense_approval, version: "1.0.0", subject_kind: :expense_request)
@@ -116,6 +145,39 @@ defmodule MezzanineConfigRegistryTest do
 
     assert {:ok, %PackRegistration{status: :active}} =
              PackRegistration.activate(distinct_registration)
+  end
+
+  test "installation activation rejects bindings whose connector capability misses required lifecycle hints" do
+    registration =
+      fixture_pack(required_lifecycle_hints: [:ticket_status])
+      |> MezzanineConfigRegistry.register_pack!()
+
+    assert {:ok, %Installation{} = installation} =
+             MezzanineConfigRegistry.create_installation(%{
+               tenant_id: "tenant-hint-contract",
+               environment: "prod",
+               pack_registration_id: registration.id,
+               binding_config: %{
+                 "execution_bindings" => %{
+                   "expense_request_capture" => %{
+                     "placement_ref" => "local_runner",
+                     "connector_capability" => %{
+                       "capability_id" => "expense.capture",
+                       "version" => "2026.04",
+                       "produces_lifecycle_hints" => []
+                     }
+                   }
+                 }
+               }
+             })
+
+    assert {:error, {:lifecycle_hint_contract_violation, [violation]}} =
+             MezzanineConfigRegistry.activate_installation(installation)
+
+    assert violation.recipe_ref == "expense_request_capture"
+    assert violation.missing_hints == ["ticket_status"]
+    assert violation.capability_id == "expense.capture"
+    assert violation.capability_version == "2026.04"
   end
 
   test "serializer reload keeps projection field identifiers neutral and preserves booleans" do
@@ -149,12 +211,55 @@ defmodule MezzanineConfigRegistryTest do
     assert projection.default_filters == %{projection_field => true}
     assert projection.sort == [{projection_field, :asc}]
     assert projection.included_fields == [projection_field]
+    assert compiled.manifest.max_supersession_depth == 12
     assert recipe.workspace_policy[:reuse] == true
+    assert recipe.retry_config[:rekey_on] == [:semantic_failure]
+    assert recipe.required_lifecycle_hints == []
+    assert compiled.context_sources_by_ref["workspace_memory"].binding_key == "shared_memory"
   end
 
   defp register_fixture_pack! do
     fixture_pack()
     |> MezzanineConfigRegistry.register_pack!()
+  end
+
+  defp issue_installation_leases!(installation, suffix) do
+    {:ok, read_lease} =
+      Leasing.issue_read_lease(
+        %{
+          trace_id: "trace-installation-#{suffix}",
+          tenant_id: installation.tenant_id,
+          installation_id: installation.id,
+          subject_id: Ecto.UUID.generate(),
+          lineage_anchor: %{"installation_id" => installation.id},
+          allowed_family: "unified_trace",
+          allowed_operations: [:fetch_run],
+          scope: %{}
+        },
+        repo: ExecutionRepo
+      )
+
+    {:ok, stream_lease} =
+      Leasing.issue_stream_attach_lease(
+        %{
+          trace_id: "trace-installation-#{suffix}",
+          tenant_id: installation.tenant_id,
+          installation_id: installation.id,
+          subject_id: Ecto.UUID.generate(),
+          lineage_anchor: %{"installation_id" => installation.id},
+          allowed_family: "runtime_stream",
+          scope: %{}
+        },
+        repo: ExecutionRepo
+      )
+
+    %{read_lease: read_lease, stream_lease: stream_lease}
+  end
+
+  defp installation_invalidations(reason) do
+    ExecutionRepo.all(LeaseInvalidation)
+    |> Enum.filter(&(&1.reason == reason))
+    |> Enum.sort_by(& &1.sequence_number)
   end
 
   defp fixture_pack(opts \\ []) do
@@ -164,12 +269,26 @@ defmodule MezzanineConfigRegistryTest do
     recipe_ref = Keyword.get(opts, :recipe_ref, :"#{subject_kind}_capture")
     terminal_state = Keyword.get(opts, :terminal_state, :"#{subject_kind}_done")
     projection_name = Keyword.get(opts, :projection_name, :"active_#{subject_kind}")
+    required_lifecycle_hints = Keyword.get(opts, :required_lifecycle_hints, [])
 
     manifest = %Manifest{
       pack_slug: pack_slug,
       version: version,
+      max_supersession_depth: 12,
       subject_kind_specs: [
         %SubjectKindSpec{name: subject_kind}
+      ],
+      context_source_specs: [
+        %ContextSourceSpec{
+          source_ref: :workspace_memory,
+          binding_key: :shared_memory,
+          usage_phase: :retrieval,
+          required?: false,
+          timeout_ms: 500,
+          schema_ref: "context/workspace_memory",
+          max_fragments: 3,
+          merge_strategy: :append
+        }
       ],
       lifecycle_specs: [
         %LifecycleSpec{
@@ -191,7 +310,13 @@ defmodule MezzanineConfigRegistryTest do
           recipe_ref: recipe_ref,
           runtime_class: :session,
           placement_ref: :local_runner,
-          workspace_policy: %{strategy: :per_subject, reuse: true, cleanup: :on_terminal}
+          required_lifecycle_hints: required_lifecycle_hints,
+          workspace_policy: %{strategy: :per_subject, reuse: true, cleanup: :on_terminal},
+          retry_config: %{
+            max_attempts: 3,
+            backoff: :exponential,
+            rekey_on: [:semantic_failure]
+          }
         }
       ],
       projection_specs: [

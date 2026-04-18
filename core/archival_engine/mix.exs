@@ -40,9 +40,11 @@ defmodule MezzanineArchivalEngine.MixProject do
       setup: ["deps.get", "ecto.setup"],
       "ecto.setup": [
         "ecto.create",
+        "config_registry.migrate",
         "audit.migrate",
         "object.migrate",
         "execution.migrate",
+        "barriers.migrate",
         "decision.migrate",
         "evidence.migrate",
         "ecto.migrate"
@@ -56,6 +58,12 @@ defmodule MezzanineArchivalEngine.MixProject do
       ],
       "execution.migrate": [
         "ecto.migrate -r Mezzanine.Execution.Repo --migrations-path ../execution_engine/priv/repo/migrations"
+      ],
+      "barriers.migrate": [
+        "ecto.migrate -r Mezzanine.Execution.Repo --migrations-path ../barriers/priv/repo/migrations"
+      ],
+      "config_registry.migrate": [
+        "ecto.migrate -r Mezzanine.ConfigRegistry.Repo --migrations-path ../config_registry/priv/repo/migrations"
       ],
       "object.migrate": [
         "ecto.migrate -r Mezzanine.Objects.Repo --migrations-path ../object_engine/priv/repo/migrations"
@@ -86,6 +94,8 @@ defmodule MezzanineArchivalEngine.MixProject do
 
   defp deps do
     [
+      {:mezzanine_core, path: "../mezzanine_core"},
+      {:mezzanine_config_registry, path: "../config_registry"},
       {:mezzanine_audit_engine, path: "../audit_engine"},
       {:mezzanine_object_engine, path: "../object_engine"},
       {:mezzanine_execution_engine, path: "../execution_engine"},
@@ -95,6 +105,7 @@ defmodule MezzanineArchivalEngine.MixProject do
       {:ash_postgres, "~> 2.6"},
       {:ecto_sql, "~> 3.13"},
       {:postgrex, ">= 0.0.0"},
+      {:telemetry, "~> 1.3"},
       {:jason, "~> 1.4"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},

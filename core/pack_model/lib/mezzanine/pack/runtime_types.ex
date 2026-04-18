@@ -106,6 +106,7 @@ defmodule Mezzanine.Pack.CompiledPack do
   """
 
   alias Mezzanine.Pack.{
+    ContextSourceSpec,
     DecisionSpec,
     EvidenceSpec,
     ExecutionRecipeSpec,
@@ -123,6 +124,7 @@ defmodule Mezzanine.Pack.CompiledPack do
           | {:execution_completed, String.t()}
           | {:execution_failed, String.t()}
           | {:execution_failed, String.t(), atom()}
+          | {:join_completed, String.t()}
           | {:decision_made, String.t(), atom()}
           | {:operator_action, String.t()}
           | {:subject_entered_state, String.t()}
@@ -135,6 +137,7 @@ defmodule Mezzanine.Pack.CompiledPack do
           manifest: Manifest.t(),
           subject_kinds: %{String.t() => SubjectKindSpec.t()},
           source_kinds: %{String.t() => SourceKindSpec.t()},
+          context_sources_by_ref: %{String.t() => ContextSourceSpec.t()},
           lifecycle_by_kind: %{String.t() => LifecycleSpec.t()},
           transitions_by_state: %{state_key() => %{trigger_key() => LifecycleSpec.transition()}},
           terminal_states_by_kind: %{String.t() => MapSet.t(String.t())},
@@ -154,6 +157,7 @@ defmodule Mezzanine.Pack.CompiledPack do
     :manifest,
     subject_kinds: %{},
     source_kinds: %{},
+    context_sources_by_ref: %{},
     lifecycle_by_kind: %{},
     transitions_by_state: %{},
     terminal_states_by_kind: %{},

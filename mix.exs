@@ -1,4 +1,5 @@
 Code.require_file("build_support/workspace_contract.exs", __DIR__)
+Code.require_file("build_support/internal_modularity_contract.exs", __DIR__)
 
 defmodule Mezzanine.Workspace.MixProject do
   use Mix.Project
@@ -36,6 +37,7 @@ defmodule Mezzanine.Workspace.MixProject do
   def cli do
     [
       preferred_envs: [
+        "boundary.check": :test,
         ci: :test,
         "monorepo.test": :test,
         "monorepo.credo": :test,
@@ -74,11 +76,13 @@ defmodule Mezzanine.Workspace.MixProject do
     ]
 
     [
+      "boundary.check": ["cmd elixir build_support/internal_modularity_check.exs"],
       ci: [
         "deps.get",
         "monorepo.deps.get",
         "monorepo.format --check-formatted",
         "monorepo.compile",
+        "boundary.check",
         "monorepo.test",
         "monorepo.credo --strict",
         "monorepo.dialyzer",

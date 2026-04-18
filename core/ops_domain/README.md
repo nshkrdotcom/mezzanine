@@ -1,10 +1,10 @@
 # Mezzanine Ops Domain
 
-Status: `[DEPRECATED-PENDING-MIGRATION]`
+Status: `Current semantic host pending neutral rename`
 
-This package is part of the legacy `ops_*` ontology. It remains buildable only
-during the coexistence window guarded by `NO_NEW_PRODUCT_DEP_ON_OLD_MEZZANINE`
-and `MEZZANINE_NEUTRAL_CORE_CUTOVER`.
+This package still owns live program, work, run, review, evidence, and control
+domains while later phases migrate those semantics into neutral package names
+and boundaries.
 
 Postgres-backed durable business domains for the Mezzanine workspace.
 

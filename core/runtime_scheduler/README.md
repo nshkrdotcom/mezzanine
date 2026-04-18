@@ -7,8 +7,10 @@ This package now owns the first real Phase `2.7.3` runtime-scheduler slice:
 
 - installation-scoped lease and fence ownership
 - reconcile-on-start for dispatches stranded in `:dispatching`
-- installation-scoped recovery summaries for restart orchestration
-- durable replay handoff back into the execution-engine dispatcher
+- startup reconcile enqueue for executions stranded in `:awaiting_receipt`
+- installation-scoped recovery summaries for restart orchestration across both
+  dispatch and accepted-without-receipt recovery
+- durable replay handoff back into the execution-engine dispatch worker
 
 Primary modules:
 

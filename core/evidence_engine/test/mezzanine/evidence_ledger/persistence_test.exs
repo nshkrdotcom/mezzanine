@@ -129,6 +129,7 @@ defmodule Mezzanine.EvidenceLedger.PersistenceTest do
 
   defp dispatch_execution(subject, suffix) do
     ExecutionRecord.dispatch(%{
+      tenant_id: "tenant-1",
       installation_id: "inst-1",
       subject_id: subject.id,
       recipe_ref: "triage_ticket",

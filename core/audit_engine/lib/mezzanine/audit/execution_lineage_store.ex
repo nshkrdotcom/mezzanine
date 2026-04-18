@@ -18,9 +18,12 @@ defmodule Mezzanine.Audit.ExecutionLineageStore do
 
   @spec fetch(String.t()) :: {:ok, ExecutionLineage.t()} | {:error, term()}
   def fetch(execution_id) when is_binary(execution_id) do
-    with {:ok, %ExecutionLineageRecord{} = record} <-
-           ExecutionLineageRecord.by_execution_id(execution_id) do
-      {:ok, to_contract(record)}
+    case ExecutionLineageRecord.by_execution_id(execution_id) do
+      {:ok, %ExecutionLineageRecord{} = record} ->
+        {:ok, to_contract(record)}
+
+      {:error, error} ->
+        {:error, error}
     end
   end
 
@@ -40,7 +43,6 @@ defmodule Mezzanine.Audit.ExecutionLineageStore do
       :installation_id,
       :subject_id,
       :execution_id,
-      :dispatch_outbox_entry_id,
       :citadel_request_id,
       :citadel_submission_id,
       :ji_submission_key,

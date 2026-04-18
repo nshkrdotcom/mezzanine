@@ -12,6 +12,9 @@ defmodule Mezzanine.Workspace do
   @neutral_package_paths [
     "core/pack_model",
     "core/pack_compiler",
+    "core/barriers",
+    "core/leasing",
+    "core/lifecycle_engine",
     "core/config_registry",
     "core/object_engine",
     "core/execution_engine",
@@ -24,37 +27,27 @@ defmodule Mezzanine.Workspace do
     "core/archival_engine"
   ]
 
-  @deprecated_packages [
+  @semantic_host_packages [
     %{
       path: "core/ops_model",
-      delete_ready?: false,
-      blocking_consumers: ["core/ops_domain"],
-      cutover_edge:
-        "shared lower intent structs now live at Mezzanine.Intent.*; residual internal planning still uses MezzanineOpsModel through core/ops_domain"
+      current_role:
+        "typed semantic structs still consumed by core/ops_domain while the later neutral migration is pending"
     },
     %{
       path: "core/ops_domain",
-      delete_ready?: false,
-      blocking_consumers: ["core/execution_engine"],
-      cutover_edge:
-        "execution_engine still hosts the deprecated repo wiring and legacy resources that back the new neutral lower facades; residual policy/planner helpers now live inside core/ops_domain"
+      current_role:
+        "live program, work, run, review, evidence, and control domains still consumed by app_kit, extravaganza, and stack_lab"
     }
   ]
-  @deprecated_package_paths Enum.map(@deprecated_packages, & &1.path)
-  @package_paths [@kept_package_paths, @neutral_package_paths, @deprecated_package_paths]
+  @semantic_host_package_paths Enum.map(@semantic_host_packages, & &1.path)
+  @package_paths [@kept_package_paths, @neutral_package_paths, @semantic_host_package_paths]
                  |> List.flatten()
 
   @active_project_globs [".", "core/*", "apps/*", "bridges/*"]
-  @coexistence_gates [
-    "NO_NEW_PRODUCT_DEP_ON_OLD_MEZZANINE",
-    "MEZZANINE_NEUTRAL_CORE_CUTOVER"
-  ]
 
-  @type deprecated_package :: %{
+  @type semantic_host_package :: %{
           path: String.t(),
-          delete_ready?: boolean(),
-          blocking_consumers: [String.t()],
-          cutover_edge: String.t()
+          current_role: String.t()
         }
 
   @spec package_paths() :: [String.t()]
@@ -66,27 +59,12 @@ defmodule Mezzanine.Workspace do
   @spec neutral_package_paths() :: [String.t()]
   def neutral_package_paths, do: @neutral_package_paths
 
-  @spec deprecated_packages() :: [deprecated_package()]
-  def deprecated_packages, do: @deprecated_packages
+  @spec semantic_host_packages() :: [semantic_host_package()]
+  def semantic_host_packages, do: @semantic_host_packages
 
-  @spec deprecated_package_paths() :: [String.t()]
-  def deprecated_package_paths, do: @deprecated_package_paths
-
-  @spec delete_ready_deprecated_package_paths() :: [String.t()]
-  def delete_ready_deprecated_package_paths do
-    @deprecated_packages
-    |> Enum.filter(& &1.delete_ready?)
-    |> Enum.map(& &1.path)
-  end
-
-  @spec blocked_deprecated_packages() :: [deprecated_package()]
-  def blocked_deprecated_packages do
-    Enum.reject(@deprecated_packages, & &1.delete_ready?)
-  end
+  @spec semantic_host_package_paths() :: [String.t()]
+  def semantic_host_package_paths, do: @semantic_host_package_paths
 
   @spec active_project_globs() :: [String.t()]
   def active_project_globs, do: @active_project_globs
-
-  @spec coexistence_gates() :: [String.t()]
-  def coexistence_gates, do: @coexistence_gates
 end

@@ -2,7 +2,7 @@ defmodule MezzaninePackModelTest do
   use ExUnit.Case
 
   alias Mezzanine.Lifecycle.SubjectSnapshot
-  alias Mezzanine.Pack.CompiledPack
+  alias Mezzanine.Pack.{CompiledPack, ContextSourceSpec}
   alias Mezzanine.Pack.SubjectContext
 
   test "subject snapshots canonicalize pack identifiers to strings" do
@@ -40,6 +40,15 @@ defmodule MezzaninePackModelTest do
 
   test "compiled packs namespace transition lookup by subject kind and state" do
     compiled = %CompiledPack{
+      context_sources_by_ref: %{
+        "workspace_memory" => %ContextSourceSpec{
+          source_ref: "workspace_memory",
+          binding_key: "memory_adapter",
+          usage_phase: :retrieval,
+          timeout_ms: 750,
+          max_fragments: 3
+        }
+      },
       transitions_by_state: %{
         {"expense_request", "submitted"} => %{
           {:execution_completed, "policy_check"} => %{to: "review"}
@@ -50,5 +59,7 @@ defmodule MezzaninePackModelTest do
     assert CompiledPack.transitions_for(compiled, :expense_request, :submitted) == %{
              {:execution_completed, "policy_check"} => %{to: "review"}
            }
+
+    assert compiled.context_sources_by_ref["workspace_memory"].binding_key == "memory_adapter"
   end
 end

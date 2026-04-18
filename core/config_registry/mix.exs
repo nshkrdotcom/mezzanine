@@ -37,10 +37,17 @@ defmodule MezzanineConfigRegistry.MixProject do
 
   defp aliases do
     [
-      setup: ["deps.get", "ash.setup"],
+      setup: ["deps.get", "ash.setup", "execution.setup"],
       "ecto.setup": ["ecto.create", "ecto.migrate"],
+      "execution.setup": [
+        "ecto.create -r Mezzanine.Execution.Repo",
+        "leasing.migrate"
+      ],
       "ecto.reset": ["ecto.drop", "ecto.setup"],
-      test: ["ash.setup --quiet", "test"],
+      "leasing.migrate": [
+        "ecto.migrate -r Mezzanine.Execution.Repo --migrations-path ../leasing/priv/repo/migrations"
+      ],
+      test: ["ash.setup --quiet", "execution.setup", "test"],
       ci: [
         "format --check-formatted",
         "compile --warnings-as-errors",
@@ -54,6 +61,8 @@ defmodule MezzanineConfigRegistry.MixProject do
 
   defp deps do
     [
+      {:mezzanine_execution_engine, path: "../execution_engine"},
+      {:mezzanine_leasing, path: "../leasing"},
       {:mezzanine_pack_model, path: "../pack_model"},
       {:mezzanine_pack_compiler, path: "../pack_compiler"},
       {:ash, "~> 3.24"},

@@ -1,18 +1,13 @@
 defmodule MezzanineOperatorEngine do
   @moduledoc """
-  Documentation for `MezzanineOperatorEngine`.
+  Operator-control package entrypoint for the Mezzanine rebuild.
   """
 
-  @doc """
-  Hello world.
-
-  ## Examples
-
-      iex> MezzanineOperatorEngine.hello()
-      :world
-
-  """
-  def hello do
-    :world
+  @spec components() :: [module()]
+  def components do
+    [
+      Mezzanine.OperatorCommands,
+      Mezzanine.ExecutionCancelWorker
+    ]
   end
 end

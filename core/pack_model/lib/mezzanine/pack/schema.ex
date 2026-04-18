@@ -4,6 +4,7 @@ defmodule Mezzanine.Pack.Manifest do
   """
 
   alias Mezzanine.Pack.{
+    ContextSourceSpec,
     DecisionSpec,
     EvidenceSpec,
     ExecutionRecipeSpec,
@@ -22,8 +23,10 @@ defmodule Mezzanine.Pack.Manifest do
           version: String.t(),
           description: String.t() | nil,
           migration_strategy: migration_strategy(),
+          max_supersession_depth: pos_integer(),
           subject_kind_specs: [SubjectKindSpec.t()],
           source_kind_specs: [SourceKindSpec.t()],
+          context_source_specs: [ContextSourceSpec.t()],
           lifecycle_specs: [LifecycleSpec.t()],
           execution_recipe_specs: [ExecutionRecipeSpec.t()],
           decision_specs: [DecisionSpec.t()],
@@ -37,8 +40,10 @@ defmodule Mezzanine.Pack.Manifest do
     :version,
     :description,
     migration_strategy: :additive,
+    max_supersession_depth: 8,
     subject_kind_specs: [],
     source_kind_specs: [],
+    context_source_specs: [],
     lifecycle_specs: [],
     execution_recipe_specs: [],
     decision_specs: [],
@@ -84,6 +89,40 @@ defmodule Mezzanine.Pack.SourceKindSpec do
   defstruct [:name, :subject_kind, :description, adapter_mod: nil]
 end
 
+defmodule Mezzanine.Pack.ContextSourceSpec do
+  @moduledoc """
+  Read-only context source bound into `outer_brain` context-pack assembly.
+  """
+
+  @type pack_identifier :: atom() | String.t()
+  @type usage_phase :: :preprocess | :retrieval | :repair
+  @type merge_strategy :: :append | :ranked_append | :replace_slot
+
+  @type t :: %__MODULE__{
+          source_ref: pack_identifier(),
+          description: String.t() | nil,
+          binding_key: pack_identifier(),
+          usage_phase: usage_phase(),
+          required?: boolean(),
+          timeout_ms: pos_integer(),
+          schema_ref: String.t() | nil,
+          max_fragments: pos_integer(),
+          merge_strategy: merge_strategy()
+        }
+
+  defstruct [
+    :source_ref,
+    :description,
+    :binding_key,
+    :usage_phase,
+    :schema_ref,
+    required?: false,
+    timeout_ms: 1_000,
+    max_fragments: 5,
+    merge_strategy: :append
+  ]
+end
+
 defmodule Mezzanine.Pack.LifecycleSpec do
   @moduledoc """
   State-machine definition for a single subject kind.
@@ -99,6 +138,7 @@ defmodule Mezzanine.Pack.LifecycleSpec do
           | {:execution_completed, recipe_ref :: pack_identifier()}
           | {:execution_failed, recipe_ref :: pack_identifier()}
           | {:execution_failed, recipe_ref :: pack_identifier(), failure_kind :: atom()}
+          | {:join_completed, join_step_ref :: pack_identifier()}
           | {:decision_made, decision_kind :: pack_identifier(), decision_value :: atom()}
           | {:operator_action, action_kind :: pack_identifier()}
           | {:subject_entered_state, state()}
@@ -126,6 +166,7 @@ defmodule Mezzanine.Pack.ExecutionRecipeSpec do
   """
 
   @type pack_identifier :: atom() | String.t()
+  @type lifecycle_hint_ref :: pack_identifier()
   @type runtime_class :: :session | :workflow | :playbook | :scan | :inference
 
   @type execution_failure_kind ::
@@ -139,7 +180,8 @@ defmodule Mezzanine.Pack.ExecutionRecipeSpec do
   @type retry_config :: %{
           required(:max_attempts) => pos_integer(),
           required(:backoff) => :linear | :exponential,
-          optional(:retry_on) => [execution_failure_kind()]
+          optional(:retry_on) => [execution_failure_kind()],
+          optional(:rekey_on) => [execution_failure_kind()]
         }
 
   @type workspace_policy :: %{
@@ -160,6 +202,7 @@ defmodule Mezzanine.Pack.ExecutionRecipeSpec do
           description: String.t() | nil,
           runtime_class: runtime_class(),
           placement_ref: pack_identifier(),
+          required_lifecycle_hints: [lifecycle_hint_ref()],
           grant_spec: grant_spec(),
           retry_config: retry_config(),
           workspace_policy: workspace_policy(),
@@ -172,6 +215,7 @@ defmodule Mezzanine.Pack.ExecutionRecipeSpec do
     :description,
     :runtime_class,
     :placement_ref,
+    required_lifecycle_hints: [],
     grant_spec: %{},
     retry_config: %{max_attempts: 3, backoff: :exponential},
     workspace_policy: %{strategy: :per_subject},

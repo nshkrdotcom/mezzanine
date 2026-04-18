@@ -4,6 +4,8 @@ defmodule Mezzanine.OperatorActionsTest do
   require Ash.Query
 
   alias Mezzanine.Control.ControlSession
+  alias Mezzanine.Execution.Repo, as: ExecutionRepo
+  alias Mezzanine.Leasing
   alias Mezzanine.OperatorActions
   alias Mezzanine.Programs.{PolicyBundle, Program}
   alias Mezzanine.Runs.{Run, RunSeries}
@@ -25,6 +27,55 @@ defmodule Mezzanine.OperatorActionsTest do
              })
 
     assert resumed.current_mode == :normal
+  end
+
+  test "pause_work invalidates subject leases even without an active execution" do
+    %{tenant_id: tenant_id, work_object: work_object} = fixture_stack("tenant-c-leases")
+
+    {:ok, read_lease} =
+      Leasing.issue_read_lease(
+        %{
+          trace_id: stripped_uuid(),
+          tenant_id: tenant_id,
+          installation_id: Ecto.UUID.generate(),
+          subject_id: work_object.id,
+          lineage_anchor: %{"submission_ref" => "sub-pause"},
+          allowed_family: "unified_trace",
+          allowed_operations: [:fetch_run]
+        },
+        repo: ExecutionRepo
+      )
+
+    {:ok, stream_lease} =
+      Leasing.issue_stream_attach_lease(
+        %{
+          trace_id: stripped_uuid(),
+          tenant_id: tenant_id,
+          installation_id: Ecto.UUID.generate(),
+          subject_id: work_object.id,
+          lineage_anchor: %{"submission_ref" => "sub-pause"},
+          allowed_family: "runtime_stream"
+        },
+        repo: ExecutionRepo
+      )
+
+    assert {:ok, %{invalidated_lease_ids: invalidated_lease_ids}} =
+             OperatorActions.pause_work(tenant_id, work_object.id, "ops_lead", %{
+               "reason" => "hold"
+             })
+
+    assert Enum.sort(invalidated_lease_ids) ==
+             Enum.sort([read_lease.lease_id, stream_lease.lease_id])
+
+    assert {:error, {:lease_invalidated, "subject_paused", _sequence_number}} =
+             Leasing.authorize_read(read_lease.lease_id, read_lease.lease_token, :fetch_run,
+               repo: ExecutionRepo
+             )
+
+    assert {:error, {:lease_invalidated, "subject_paused", _sequence_number}} =
+             Leasing.authorize_stream_attach(stream_lease.lease_id, stream_lease.attach_token,
+               repo: ExecutionRepo
+             )
   end
 
   test "override_grant_profile persists the override set on the control session" do
@@ -259,5 +310,10 @@ defmodule Mezzanine.OperatorActionsTest do
     ---
     # Control prompt
     """
+  end
+
+  defp stripped_uuid do
+    Ecto.UUID.generate()
+    |> String.replace("-", "")
   end
 end

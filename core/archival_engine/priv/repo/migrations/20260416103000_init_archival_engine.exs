@@ -19,10 +19,12 @@ defmodule Mezzanine.Archival.Repo.Migrations.InitArchivalEngine do
       add(:due_at, :utc_datetime_usec, null: false)
       add(:retention_seconds, :bigint, null: false)
       add(:storage_kind, :text, null: false)
-      add(:status, :text, null: false, default: "pending")
+      add(:status, :text, null: false, default: "staging")
       add(:storage_uri, :text)
       add(:checksum, :text)
-      add(:completed_at, :utc_datetime_usec)
+      add(:verified_at, :utc_datetime_usec)
+      add(:archived_at, :utc_datetime_usec)
+      add(:failure_reason, :text)
       add(:metadata, :map, null: false, default: %{})
       add(:row_version, :bigint, null: false, default: 1)
 
@@ -38,5 +40,6 @@ defmodule Mezzanine.Archival.Repo.Migrations.InitArchivalEngine do
     create(index(:archival_manifests, [:installation_id, :status, :due_at]))
     create(index(:archival_manifests, [:installation_id, :subject_id, :terminal_at]))
     create(index(:archival_manifests, [:trace_ids], using: :gin))
+    create(index(:archival_manifests, [:execution_ids], using: :gin))
   end
 end

@@ -36,7 +36,6 @@ defmodule Mezzanine.Audit.ExecutionLineageRecord do
         :installation_id,
         :subject_id,
         :execution_id,
-        :dispatch_outbox_entry_id,
         :citadel_request_id,
         :citadel_submission_id,
         :ji_submission_key,
@@ -53,7 +52,6 @@ defmodule Mezzanine.Audit.ExecutionLineageRecord do
         :causation_id,
         :installation_id,
         :subject_id,
-        :dispatch_outbox_entry_id,
         :citadel_request_id,
         :citadel_submission_id,
         :ji_submission_key,
@@ -101,10 +99,6 @@ defmodule Mezzanine.Audit.ExecutionLineageRecord do
 
     attribute :execution_id, :string do
       allow_nil?(false)
-      public?(true)
-    end
-
-    attribute :dispatch_outbox_entry_id, :string do
       public?(true)
     end
 

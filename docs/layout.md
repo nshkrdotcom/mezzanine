@@ -8,6 +8,7 @@ Current structure:
 build_support/
 core/pack_model/
 core/pack_compiler/
+core/lifecycle_engine/
 core/config_registry/
 core/object_engine/
 core/execution_engine/
@@ -29,10 +30,10 @@ packaging/weld/mezzanine_core/
 
 The current repo layout is intentionally split into three bands:
 
-- projected neutral core packages under `core/pack_*`, `core/*_engine`, and
-  `core/config_registry/`
+- projected neutral core packages under `core/pack_*`, `core/lifecycle_engine/`,
+  `core/*_engine`, and `core/config_registry/`
 - kept lower bridges in `bridges/citadel_bridge/` and
   `bridges/integration_bridge/`
-- frozen legacy migration scaffolding in `core/ops_*/`
+- still-live semantic hosts pending neutral rename in `core/ops_*/`
 
 The root should remain a workspace owner rather than a runtime home.

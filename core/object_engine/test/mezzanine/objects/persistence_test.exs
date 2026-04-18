@@ -20,6 +20,7 @@ defmodule Mezzanine.Objects.PersistenceTest do
 
     assert subject.installation_id == "inst-1"
     assert subject.source_ref == "linear:ticket:123"
+    assert subject.status == "active"
     assert subject.row_version == 1
 
     assert {:ok, reloaded} =
@@ -34,6 +35,66 @@ defmodule Mezzanine.Objects.PersistenceTest do
     assert {:ok, [audit_fact]} = AuditFact.list_trace("inst-1", "trace-ingest")
     assert audit_fact.fact_kind == :subject_ingested
     assert audit_fact.subject_id == subject.id
+  end
+
+  test "pause, resume, and cancel mutate durable operator status without rewriting lifecycle truth" do
+    assert {:ok, subject} =
+             SubjectRecord.ingest(%{
+               installation_id: "inst-1",
+               source_ref: "linear:ticket:operator-status",
+               subject_kind: "linear_coding_ticket",
+               lifecycle_state: "awaiting_execution",
+               payload: %{},
+               trace_id: "trace-status-bootstrap",
+               causation_id: "cause-status-bootstrap",
+               actor_ref: %{kind: :intake}
+             })
+
+    assert {:ok, paused_subject} =
+             SubjectRecord.pause(subject, %{
+               reason: "operator hold",
+               trace_id: "trace-status-pause",
+               causation_id: "cause-status-pause",
+               actor_ref: %{kind: :operator}
+             })
+
+    assert paused_subject.lifecycle_state == "awaiting_execution"
+    assert paused_subject.status == "paused"
+    assert paused_subject.status_reason == "operator hold"
+    assert %DateTime{} = paused_subject.status_updated_at
+
+    assert {:ok, resumed_subject} =
+             SubjectRecord.resume(paused_subject, %{
+               trace_id: "trace-status-resume",
+               causation_id: "cause-status-resume",
+               actor_ref: %{kind: :operator}
+             })
+
+    assert resumed_subject.lifecycle_state == "awaiting_execution"
+    assert resumed_subject.status == "active"
+    assert is_nil(resumed_subject.status_reason)
+
+    assert {:ok, cancelled_subject} =
+             SubjectRecord.cancel(resumed_subject, %{
+               reason: "operator cancelled",
+               trace_id: "trace-status-cancel",
+               causation_id: "cause-status-cancel",
+               actor_ref: %{kind: :operator}
+             })
+
+    assert cancelled_subject.lifecycle_state == "awaiting_execution"
+    assert cancelled_subject.status == "cancelled"
+    assert cancelled_subject.status_reason == "operator cancelled"
+    assert %DateTime{} = cancelled_subject.terminal_at
+
+    assert {:ok, [pause_fact]} = AuditFact.list_trace("inst-1", "trace-status-pause")
+    assert pause_fact.fact_kind == :subject_paused
+
+    assert {:ok, [resume_fact]} = AuditFact.list_trace("inst-1", "trace-status-resume")
+    assert resume_fact.fact_kind == :subject_resumed
+
+    assert {:ok, [cancel_fact]} = AuditFact.list_trace("inst-1", "trace-status-cancel")
+    assert cancel_fact.fact_kind == :subject_cancelled
   end
 
   test "advance_lifecycle owns canonical business progression and rejects stale writes" do

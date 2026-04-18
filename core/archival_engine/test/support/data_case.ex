@@ -6,6 +6,7 @@ defmodule Mezzanine.Archival.DataCase do
   alias Ecto.Adapters.SQL.Sandbox
   alias Mezzanine.Archival.Repo, as: ArchivalRepo
   alias Mezzanine.Audit.Repo, as: AuditRepo
+  alias Mezzanine.ConfigRegistry.Repo, as: ConfigRegistryRepo
   alias Mezzanine.Decisions.Repo, as: DecisionsRepo
   alias Mezzanine.EvidenceLedger.Repo, as: EvidenceRepo
   alias Mezzanine.Execution.Repo, as: ExecutionRepo
@@ -31,6 +32,7 @@ defmodule Mezzanine.Archival.DataCase do
     shared? = not tags[:async]
 
     archival_owner = Sandbox.start_owner!(ArchivalRepo, shared: shared?)
+    config_registry_owner = Sandbox.start_owner!(ConfigRegistryRepo, shared: shared?)
     evidence_owner = Sandbox.start_owner!(EvidenceRepo, shared: shared?)
     decision_owner = Sandbox.start_owner!(DecisionsRepo, shared: shared?)
     execution_owner = Sandbox.start_owner!(ExecutionRepo, shared: shared?)
@@ -43,6 +45,7 @@ defmodule Mezzanine.Archival.DataCase do
       Sandbox.stop_owner(execution_owner)
       Sandbox.stop_owner(decision_owner)
       Sandbox.stop_owner(evidence_owner)
+      Sandbox.stop_owner(config_registry_owner)
       Sandbox.stop_owner(archival_owner)
     end)
   end

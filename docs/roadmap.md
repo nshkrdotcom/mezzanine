@@ -8,19 +8,15 @@ The repo is expected to grow into the neutral reusable home for:
 - reusable state models for distributed AI operations
 - product-neutral orchestration machinery above `app_kit`
 
-Current coexistence scaffold:
+Current package posture:
 
-- neutral packages exist for the v3 rebuild
-- legacy `ops_*` packages remain `[DEPRECATED-PENDING-MIGRATION]`
+- neutral packages carry new reusable substrate work
+- `ops_*` packages remain as frozen semantic hosts for still-live consumers
 - lower bridges remain buildable while the neutral engines come online
-
-Current gates:
-
-- `NO_NEW_PRODUCT_DEP_ON_OLD_MEZZANINE`
-- `MEZZANINE_NEUTRAL_CORE_CUTOVER`
 
 Next slices:
 
 - implement the neutral pack model and compiler
 - implement the neutral durable engines on the new package graph
-- retire the remaining deprecated `ops_*` northbound seams after each consumer cutover
+- migrate the remaining `ops_*` semantic hosts into neutral packages with
+  current names after each consumer cutover

@@ -14,6 +14,7 @@ defmodule Mezzanine.TestPacks.ExpenseApprovalPack do
   @behaviour Mezzanine.Pack
 
   alias Mezzanine.Pack.{
+    ContextSourceSpec,
     DecisionSpec,
     EvidenceSpec,
     ExecutionRecipeSpec,
@@ -43,6 +44,19 @@ defmodule Mezzanine.TestPacks.ExpenseApprovalPack do
           name: :expense_form,
           subject_kind: :expense_request,
           description: "Submitted expense form"
+        }
+      ],
+      context_source_specs: [
+        %ContextSourceSpec{
+          source_ref: :workspace_memory,
+          description: "Read-only workspace memory context",
+          binding_key: :shared_memory,
+          usage_phase: :retrieval,
+          required?: false,
+          timeout_ms: 750,
+          schema_ref: "context/workspace_memory",
+          max_fragments: 4,
+          merge_strategy: :ranked_append
         }
       ],
       lifecycle_specs: [
@@ -104,6 +118,7 @@ defmodule Mezzanine.TestPacks.ExpenseApprovalPack do
           description: "Evaluate the expense request",
           runtime_class: :workflow,
           placement_ref: :policy_worker,
+          required_lifecycle_hints: [:receipt_status],
           retry_config: %{
             max_attempts: 2,
             backoff: :linear,

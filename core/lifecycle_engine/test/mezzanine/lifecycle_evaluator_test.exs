@@ -1,0 +1,821 @@
+defmodule Mezzanine.LifecycleEvaluatorTest do
+  use Mezzanine.LifecycleEngine.DataCase, async: false
+
+  alias Mezzanine.Execution.ExecutionRecord
+  alias Mezzanine.LifecycleEvaluator
+
+  alias Mezzanine.Pack.{
+    Compiler,
+    ExecutionRecipeSpec,
+    LifecycleSpec,
+    Manifest,
+    ProjectionSpec,
+    Serializer,
+    SubjectKindSpec
+  }
+
+  defmodule FailingJobOutbox do
+    @behaviour Mezzanine.JobOutbox
+
+    @impl true
+    def enqueue(_queue, _worker_module, _args, _opts), do: {:error, :boom}
+
+    @impl true
+    def cancel(_job_ref), do: :ok
+
+    @impl true
+    def reschedule(_job_ref, _scheduled_at), do: :ok
+
+    @impl true
+    def unique_declaration(_worker_module), do: nil
+
+    @impl true
+    def snooze_response(cooldown_ms), do: {:snooze, cooldown_ms}
+  end
+
+  setup do
+    original_job_outbox_impl = Application.get_env(:mezzanine_execution_engine, :job_outbox_impl)
+
+    on_exit(fn ->
+      restore_job_outbox_impl(original_job_outbox_impl)
+    end)
+
+    :ok
+  end
+
+  test "advance/1 moves the subject through an explicit execution request and queues durable work" do
+    installation = active_installation_fixture()
+
+    subject =
+      subject_fixture(%{
+        installation_id: installation.id,
+        source_ref: "expense:request:lifecycle-evaluator",
+        subject_kind: "expense_request",
+        lifecycle_state: "submitted",
+        payload: %{"amount_cents" => 12_500},
+        trace_id: "trace-lifecycle-subject",
+        causation_id: "cause-lifecycle-subject"
+      })
+
+    assert {:ok, result} = LifecycleEvaluator.advance(subject.id)
+    assert result.action == :queued_execution
+    assert result.subject_id == subject.id
+    assert result.recipe_ref == "expense_capture"
+    assert result.to_state == "processing"
+    assert is_binary(result.execution_id)
+    assert is_binary(result.submission_dedupe_key)
+    assert is_binary(result.trace_id)
+
+    assert %{lifecycle_state: "processing"} = fetch_subject(subject.id)
+
+    assert {:ok, execution} = Ash.get(ExecutionRecord, result.execution_id)
+    assert execution.installation_id == installation.id
+    assert execution.subject_id == subject.id
+    assert execution.recipe_ref == "expense_capture"
+    assert execution.compiled_pack_revision == installation.compiled_pack_revision
+    assert execution.dispatch_state == :pending_dispatch
+    assert execution.submission_dedupe_key == result.submission_dedupe_key
+    assert execution.trace_id == result.trace_id
+
+    assert execution.binding_snapshot == %{
+             "placement_ref" => "local_runner",
+             "execution_params" => %{"timeout_ms" => 300_000},
+             "connector_bindings" => %{
+               "expense_system" => %{"connector_key" => "expense_system_api"}
+             },
+             "actor_bindings" => %{},
+             "evidence_bindings" => %{}
+           }
+
+    assert execution.dispatch_envelope == %{
+             "recipe_ref" => "expense_capture",
+             "runtime_class" => "session",
+             "placement_ref" => "local_runner",
+             "execution_params" => %{"timeout_ms" => 300_000},
+             "grant_spec" => %{}
+           }
+
+    assert execution.intent_snapshot == %{
+             "recipe_ref" => "expense_capture",
+             "runtime_class" => "session",
+             "required_lifecycle_hints" => [],
+             "binding_snapshot" => execution.binding_snapshot,
+             "dispatch_envelope" => execution.dispatch_envelope
+           }
+
+    [job] =
+      Repo.all(Oban.Job)
+      |> Enum.filter(fn job ->
+        job.worker == Oban.Worker.to_string(Mezzanine.ExecutionDispatchWorker) and
+          job.args["execution_id"] == result.execution_id
+      end)
+
+    assert job.queue == "dispatch"
+
+    assert list_trace_fact_kinds(subject.id, result.trace_id) == [
+             "subject_ingested",
+             "lifecycle_advanced",
+             "execution_dispatched"
+           ]
+  end
+
+  test "advance/1 rolls back the subject transition when dispatch enqueue fails" do
+    Application.put_env(:mezzanine_execution_engine, :job_outbox_impl, FailingJobOutbox)
+
+    installation = active_installation_fixture()
+
+    subject =
+      subject_fixture(%{
+        installation_id: installation.id,
+        source_ref: "expense:request:lifecycle-evaluator-failure",
+        subject_kind: "expense_request",
+        lifecycle_state: "submitted",
+        payload: %{"amount_cents" => 12_500},
+        trace_id: "trace-lifecycle-failure",
+        causation_id: "cause-lifecycle-failure"
+      })
+
+    assert {:error, {:job_outbox_enqueue_failed, :boom}} =
+             LifecycleEvaluator.advance(subject.id)
+
+    assert %{lifecycle_state: "submitted"} = fetch_subject(subject.id)
+
+    assert Repo.aggregate(Oban.Job, :count, :id) == 0
+
+    assert {:ok, executions} = Ash.read(ExecutionRecord)
+    assert executions == []
+  end
+
+  test "advance/1 captures required lifecycle hints inside the execution intent snapshot" do
+    installation =
+      active_installation_fixture(
+        required_lifecycle_hints: [:ticket_status],
+        produced_lifecycle_hints: [:ticket_status]
+      )
+
+    subject =
+      subject_fixture(%{
+        installation_id: installation.id,
+        source_ref: "expense:request:lifecycle-hints",
+        subject_kind: "expense_request",
+        lifecycle_state: "submitted",
+        payload: %{"amount_cents" => 12_500},
+        trace_id: "trace-lifecycle-hints",
+        causation_id: "cause-lifecycle-hints"
+      })
+
+    assert {:ok, result} = LifecycleEvaluator.advance(subject.id)
+    assert {:ok, execution} = Ash.get(ExecutionRecord, result.execution_id)
+
+    assert execution.intent_snapshot["required_lifecycle_hints"] == ["ticket_status"]
+
+    assert execution.binding_snapshot["connector_capability"] == %{
+             "capability_id" => "expense.capture",
+             "produces_lifecycle_hints" => ["ticket_status"],
+             "version" => "2026.04"
+           }
+  end
+
+  test "advance/1 refuses to infer executable work when no explicit execution request exists" do
+    installation = active_installation_fixture(no_execution_request?: true)
+
+    subject =
+      subject_fixture(%{
+        installation_id: installation.id,
+        source_ref: "expense:request:no-execution-request",
+        subject_kind: "expense_request",
+        lifecycle_state: "submitted",
+        payload: %{"amount_cents" => 12_500},
+        trace_id: "trace-lifecycle-noop",
+        causation_id: "cause-lifecycle-noop"
+      })
+
+    assert {:ok, %{action: :noop, reason: :no_execution_requested_transition}} =
+             LifecycleEvaluator.advance(subject.id)
+
+    assert %{lifecycle_state: "submitted"} = fetch_subject(subject.id)
+
+    assert {:ok, executions} = Ash.read(ExecutionRecord)
+    assert executions == []
+  end
+
+  test "advance/2 applies an execution-completed trigger and advances subject state" do
+    installation = active_installation_fixture()
+
+    subject =
+      subject_fixture(%{
+        installation_id: installation.id,
+        source_ref: "expense:request:execution-completed",
+        subject_kind: "expense_request",
+        lifecycle_state: "processing",
+        payload: %{"amount_cents" => 12_500},
+        trace_id: "trace-lifecycle-completed",
+        causation_id: "cause-lifecycle-completed"
+      })
+
+    assert {:ok, result} =
+             LifecycleEvaluator.advance(
+               subject.id,
+               trigger: {:execution_completed, "expense_capture"},
+               execution_id: Ecto.UUID.generate(),
+               causation_id: "cause-execution-completed"
+             )
+
+    assert result.action == :advanced_state
+    assert result.from_state == "processing"
+    assert result.to_state == "paid"
+    assert result.trigger == %{"kind" => "execution_completed", "recipe_ref" => "expense_capture"}
+
+    assert %{lifecycle_state: "paid"} = fetch_subject(subject.id)
+  end
+
+  test "advance/2 applies execution-failed transitions with specific failure kinds" do
+    installation = active_installation_fixture(execution_failure_transition?: true)
+
+    subject =
+      subject_fixture(%{
+        installation_id: installation.id,
+        source_ref: "expense:request:execution-failed",
+        subject_kind: "expense_request",
+        lifecycle_state: "processing",
+        payload: %{"amount_cents" => 12_500},
+        trace_id: "trace-lifecycle-failed",
+        causation_id: "cause-lifecycle-failed"
+      })
+
+    assert {:ok, result} =
+             LifecycleEvaluator.advance(
+               subject.id,
+               trigger: {:execution_failed, "expense_capture", :semantic_failure},
+               execution_id: Ecto.UUID.generate(),
+               causation_id: "cause-execution-failed"
+             )
+
+    assert result.action == :advanced_state
+    assert result.to_state == "needs_correction"
+
+    assert result.trigger == %{
+             "kind" => "execution_failed",
+             "recipe_ref" => "expense_capture",
+             "failure_kind" => "semantic_failure"
+           }
+
+    assert %{lifecycle_state: "needs_correction"} = fetch_subject(subject.id)
+  end
+
+  test "advance/2 applies join-completed transitions through the explicit join trigger" do
+    installation = active_installation_fixture(join_transition?: true)
+
+    subject =
+      subject_fixture(%{
+        installation_id: installation.id,
+        source_ref: "expense:request:join-completed",
+        subject_kind: "expense_request",
+        lifecycle_state: "awaiting_join",
+        payload: %{"amount_cents" => 12_500},
+        trace_id: "trace-lifecycle-join",
+        causation_id: "cause-lifecycle-join"
+      })
+
+    assert {:ok, result} =
+             LifecycleEvaluator.advance(
+               subject.id,
+               trigger: {:join_completed, "triage_join"},
+               execution_id: Ecto.UUID.generate(),
+               causation_id: "cause-join-completed"
+             )
+
+    assert result.action == :advanced_state
+    assert result.from_state == "awaiting_join"
+    assert result.to_state == "paid"
+
+    assert result.trigger == %{
+             "kind" => "join_completed",
+             "join_step_ref" => "triage_join"
+           }
+
+    assert %{lifecycle_state: "paid"} = fetch_subject(subject.id)
+  end
+
+  test "advance/2 creates a fresh linked execution for manual retry" do
+    installation =
+      active_installation_fixture(
+        execution_failure_transition?: true,
+        manual_retry_transition?: true
+      )
+
+    subject =
+      subject_fixture(%{
+        installation_id: installation.id,
+        source_ref: "expense:request:manual-retry",
+        subject_kind: "expense_request",
+        lifecycle_state: "needs_correction",
+        payload: %{"amount_cents" => 12_500},
+        trace_id: "trace-manual-retry",
+        causation_id: "cause-manual-retry"
+      })
+
+    prior_execution =
+      failed_execution_fixture(subject, installation, "trace-manual-retry", %{
+        submission_dedupe_key: "manual-retry-prior",
+        supersession_depth: 0
+      })
+
+    assert {:ok, result} =
+             LifecycleEvaluator.advance(
+               subject.id,
+               supersedes_execution_id: prior_execution.id,
+               supersession_reason: :manual_retry,
+               causation_id: "cause-manual-retry:advance"
+             )
+
+    assert result.action == :queued_execution
+    assert result.to_state == "processing"
+
+    assert {:ok, execution} = Ash.get(ExecutionRecord, result.execution_id)
+    assert execution.supersedes_execution_id == prior_execution.id
+    assert execution.supersession_reason == :manual_retry
+    assert execution.supersession_depth == 1
+    assert execution.submission_dedupe_key != prior_execution.submission_dedupe_key
+
+    assert %{lifecycle_state: "processing"} = fetch_subject(subject.id)
+  end
+
+  test "advance/2 blocks the subject when supersession depth exceeds the pack bound" do
+    installation =
+      active_installation_fixture(
+        execution_failure_transition?: true,
+        manual_retry_transition?: true,
+        max_supersession_depth: 1
+      )
+
+    subject =
+      subject_fixture(%{
+        installation_id: installation.id,
+        source_ref: "expense:request:cycle-bound",
+        subject_kind: "expense_request",
+        lifecycle_state: "needs_correction",
+        payload: %{"amount_cents" => 12_500},
+        trace_id: "trace-cycle-bound",
+        causation_id: "cause-cycle-bound"
+      })
+
+    prior_execution =
+      failed_execution_fixture(subject, installation, "trace-cycle-bound", %{
+        submission_dedupe_key: "cycle-bound-prior",
+        supersession_depth: 1
+      })
+
+    assert {:ok, result} =
+             LifecycleEvaluator.advance(
+               subject.id,
+               supersedes_execution_id: prior_execution.id,
+               supersession_reason: :manual_retry,
+               causation_id: "cause-cycle-bound:advance"
+             )
+
+    assert result.action == :advanced_state
+    assert result.to_state == "blocked_on_cycle"
+    assert %{lifecycle_state: "blocked_on_cycle"} = fetch_subject(subject.id)
+    assert execution_count(subject.id) == 1
+
+    assert list_trace_fact_kinds(subject.id, "trace-cycle-bound") == [
+             "subject_ingested",
+             "lifecycle_advanced",
+             "cycle_bound_reached"
+           ]
+  end
+
+  defp active_installation_fixture(opts \\ []) do
+    no_execution_request? = Keyword.get(opts, :no_execution_request?, false)
+    execution_failure_transition? = Keyword.get(opts, :execution_failure_transition?, false)
+    manual_retry_transition? = Keyword.get(opts, :manual_retry_transition?, false)
+    join_transition? = Keyword.get(opts, :join_transition?, false)
+    max_supersession_depth = Keyword.get(opts, :max_supersession_depth, 8)
+    required_lifecycle_hints = Keyword.get(opts, :required_lifecycle_hints, [])
+    produced_lifecycle_hints = Keyword.get(opts, :produced_lifecycle_hints, [])
+
+    compiled_pack =
+      fixture_compiled_pack(
+        no_execution_request?: no_execution_request?,
+        execution_failure_transition?: execution_failure_transition?,
+        manual_retry_transition?: manual_retry_transition?,
+        join_transition?: join_transition?,
+        max_supersession_depth: max_supersession_depth,
+        required_lifecycle_hints: required_lifecycle_hints
+      )
+
+    now = DateTime.utc_now() |> DateTime.truncate(:microsecond)
+    registration_id = Ecto.UUID.generate()
+    installation_id = Ecto.UUID.generate()
+
+    Repo.query!(
+      """
+      INSERT INTO pack_registrations (
+        id,
+        status,
+        version,
+        inserted_at,
+        updated_at,
+        compiled_manifest,
+        pack_slug,
+        canonical_subject_kinds,
+        serializer_version,
+        migration_strategy
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      """,
+      [
+        dump_uuid!(registration_id),
+        "active",
+        compiled_pack.version,
+        now,
+        now,
+        Serializer.serialize_compiled(compiled_pack),
+        to_string(compiled_pack.pack_slug),
+        Map.keys(compiled_pack.subject_kinds),
+        1,
+        "additive"
+      ]
+    )
+
+    Repo.query!(
+      """
+      INSERT INTO installations (
+        id,
+        status,
+        metadata,
+        inserted_at,
+        updated_at,
+        compiled_pack_revision,
+        tenant_id,
+        binding_config,
+        pack_slug,
+        environment,
+        pack_registration_id
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      """,
+      [
+        dump_uuid!(installation_id),
+        "active",
+        %{},
+        now,
+        now,
+        1,
+        "tenant-lifecycle-engine",
+        %{
+          "execution_bindings" => %{
+            "expense_capture" => %{
+              "placement_ref" => "local_runner",
+              "execution_params" => %{"timeout_ms" => 300_000},
+              "connector_capability" => connector_capability_fixture(produced_lifecycle_hints),
+              "connector_bindings" => %{
+                "expense_system" => %{"connector_key" => "expense_system_api"}
+              }
+            }
+          }
+        },
+        to_string(compiled_pack.pack_slug),
+        "stage9",
+        dump_uuid!(registration_id)
+      ]
+    )
+
+    %{
+      id: installation_id,
+      compiled_pack_revision: 1
+    }
+  end
+
+  defp fixture_compiled_pack(opts) do
+    no_execution_request? = Keyword.get(opts, :no_execution_request?, false)
+    execution_failure_transition? = Keyword.get(opts, :execution_failure_transition?, false)
+    manual_retry_transition? = Keyword.get(opts, :manual_retry_transition?, false)
+    join_transition? = Keyword.get(opts, :join_transition?, false)
+    max_supersession_depth = Keyword.get(opts, :max_supersession_depth, 8)
+    required_lifecycle_hints = Keyword.get(opts, :required_lifecycle_hints, [])
+
+    transitions =
+      no_execution_request?
+      |> base_transitions()
+      |> maybe_add_failure_transitions(execution_failure_transition?, manual_retry_transition?)
+      |> maybe_add_join_transition(join_transition?)
+
+    manifest = %Manifest{
+      pack_slug: :expense_approval,
+      version: "1.0.0",
+      max_supersession_depth: max_supersession_depth,
+      subject_kind_specs: [
+        %SubjectKindSpec{name: :expense_request}
+      ],
+      lifecycle_specs: [
+        %LifecycleSpec{
+          subject_kind: :expense_request,
+          initial_state: :submitted,
+          terminal_states:
+            terminal_states(
+              execution_failure_transition?,
+              manual_retry_transition?,
+              join_transition?
+            ),
+          transitions: transitions
+        }
+      ],
+      execution_recipe_specs: [
+        %ExecutionRecipeSpec{
+          recipe_ref: :expense_capture,
+          runtime_class: :session,
+          placement_ref: :local_runner,
+          required_lifecycle_hints: required_lifecycle_hints,
+          execution_params: %{timeout_ms: 300_000},
+          retry_config: %{
+            max_attempts: 3,
+            backoff: :exponential,
+            rekey_on: if(execution_failure_transition?, do: [:semantic_failure], else: [])
+          }
+        }
+      ],
+      projection_specs: [
+        %ProjectionSpec{name: :active_expenses, subject_kinds: [:expense_request]}
+      ]
+    }
+
+    {:ok, compiled_pack} = Compiler.compile(manifest)
+    compiled_pack
+  end
+
+  defp connector_capability_fixture([]), do: nil
+
+  defp connector_capability_fixture(produced_lifecycle_hints) do
+    %{
+      "capability_id" => "expense.capture",
+      "version" => "2026.04",
+      "produces_lifecycle_hints" => Enum.map(produced_lifecycle_hints, &to_string/1)
+    }
+  end
+
+  defp base_transitions(true) do
+    [
+      %{from: :submitted, to: :submitted, trigger: :auto},
+      %{from: :processing, to: :paid, trigger: {:execution_completed, :expense_capture}}
+    ]
+  end
+
+  defp base_transitions(false) do
+    [
+      %{from: :submitted, to: :processing, trigger: {:execution_requested, :expense_capture}},
+      %{from: :processing, to: :paid, trigger: {:execution_completed, :expense_capture}}
+    ]
+  end
+
+  defp maybe_add_failure_transitions(transitions, false, _manual_retry_transition?),
+    do: transitions
+
+  defp maybe_add_failure_transitions(transitions, true, manual_retry_transition?) do
+    transitions ++ failure_transitions(manual_retry_transition?)
+  end
+
+  defp failure_transitions(false) do
+    [
+      %{
+        from: :processing,
+        to: :needs_correction,
+        trigger: {:execution_failed, :expense_capture, :semantic_failure}
+      }
+    ]
+  end
+
+  defp failure_transitions(true) do
+    failure_transitions(false) ++
+      [
+        %{
+          from: :needs_correction,
+          to: :processing,
+          trigger: {:execution_requested, :expense_capture}
+        }
+      ]
+  end
+
+  defp maybe_add_join_transition(transitions, false), do: transitions
+
+  defp maybe_add_join_transition(transitions, true) do
+    transitions ++
+      [
+        %{from: :awaiting_join, to: :paid, trigger: {:join_completed, :triage_join}}
+      ]
+  end
+
+  defp terminal_states(execution_failure_transition?, manual_retry_transition?, _join_transition?) do
+    if execution_failure_transition? and not manual_retry_transition? do
+      [:paid, :needs_correction]
+    else
+      [:paid]
+    end
+  end
+
+  defp subject_fixture(attrs) do
+    now = DateTime.utc_now() |> DateTime.truncate(:microsecond)
+    subject_id = Ecto.UUID.generate()
+    trace_id = Map.fetch!(attrs, :trace_id)
+    causation_id = Map.fetch!(attrs, :causation_id)
+
+    Repo.query!(
+      """
+      INSERT INTO subject_records (
+        id,
+        payload,
+        installation_id,
+        source_ref,
+        subject_kind,
+        lifecycle_state,
+        schema_version,
+        opened_at,
+        row_version,
+        inserted_at,
+        updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      """,
+      [
+        dump_uuid!(subject_id),
+        Map.fetch!(attrs, :payload),
+        Map.fetch!(attrs, :installation_id),
+        Map.fetch!(attrs, :source_ref),
+        Map.fetch!(attrs, :subject_kind),
+        Map.fetch!(attrs, :lifecycle_state),
+        1,
+        now,
+        1,
+        now,
+        now
+      ]
+    )
+
+    Repo.query!(
+      """
+      INSERT INTO audit_facts (
+        id,
+        installation_id,
+        subject_id,
+        execution_id,
+        trace_id,
+        causation_id,
+        fact_kind,
+        actor_ref,
+        payload,
+        occurred_at,
+        inserted_at,
+        updated_at
+      )
+      VALUES ($1, $2, $3, NULL, $4, $5, $6, $7, $8, $9, $10, $11)
+      """,
+      [
+        dump_uuid!(Ecto.UUID.generate()),
+        Map.fetch!(attrs, :installation_id),
+        subject_id,
+        trace_id,
+        causation_id,
+        "subject_ingested",
+        %{"kind" => "intake"},
+        %{
+          "source_ref" => Map.fetch!(attrs, :source_ref),
+          "subject_kind" => Map.fetch!(attrs, :subject_kind),
+          "lifecycle_state" => Map.fetch!(attrs, :lifecycle_state)
+        },
+        now,
+        now,
+        now
+      ]
+    )
+
+    %{id: subject_id}
+  end
+
+  defp fetch_subject(subject_id) do
+    %{
+      rows: [[id, lifecycle_state, row_version]]
+    } =
+      Repo.query!(
+        """
+        SELECT id, lifecycle_state, row_version
+        FROM subject_records
+        WHERE id = $1::uuid
+        """,
+        [dump_uuid!(subject_id)]
+      )
+
+    %{
+      id: id,
+      lifecycle_state: lifecycle_state,
+      row_version: row_version
+    }
+  end
+
+  defp list_trace_fact_kinds(subject_id, trace_id) do
+    %{
+      rows: rows
+    } =
+      Repo.query!(
+        """
+        SELECT fact_kind
+        FROM audit_facts
+        WHERE subject_id = $1
+          AND trace_id = $2
+        ORDER BY occurred_at ASC, inserted_at ASC
+        """,
+        [subject_id, trace_id]
+      )
+
+    Enum.map(rows, fn [fact_kind] -> fact_kind end)
+  end
+
+  defp failed_execution_fixture(subject, installation, trace_id, attrs) do
+    now = DateTime.utc_now() |> DateTime.truncate(:microsecond)
+    execution_id = Ecto.UUID.generate()
+
+    Repo.query!(
+      """
+      INSERT INTO execution_records (
+        id,
+        tenant_id,
+        installation_id,
+        subject_id,
+        recipe_ref,
+        compiled_pack_revision,
+        binding_snapshot,
+        dispatch_envelope,
+        intent_snapshot,
+        submission_dedupe_key,
+        trace_id,
+        causation_id,
+        dispatch_state,
+        dispatch_attempt_count,
+        next_dispatch_at,
+        submission_ref,
+        lower_receipt,
+        last_dispatch_error_kind,
+        last_dispatch_error_payload,
+        failure_kind,
+        supersedes_execution_id,
+        supersession_reason,
+        supersession_depth,
+        row_version,
+        inserted_at,
+        updated_at
+      )
+      VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'failed', 1, NULL, $13, $14, $15,
+        $16, 'semantic_failure', NULL, NULL, $17, 1, $18, $18
+      )
+      """,
+      [
+        dump_uuid!(execution_id),
+        "tenant-lifecycle-engine",
+        installation.id,
+        dump_uuid!(subject.id),
+        "expense_capture",
+        installation.compiled_pack_revision,
+        %{},
+        %{"recipe_ref" => "expense_capture"},
+        %{},
+        Map.fetch!(attrs, :submission_dedupe_key),
+        trace_id,
+        "cause:#{Map.fetch!(attrs, :submission_dedupe_key)}",
+        %{"id" => "submission:#{Map.fetch!(attrs, :submission_dedupe_key)}"},
+        %{"state" => "failed", "run_id" => "run:#{Map.fetch!(attrs, :submission_dedupe_key)}"},
+        "execution_failed",
+        %{"error" => %{"kind" => "semantic_failure"}},
+        Map.fetch!(attrs, :supersession_depth),
+        now
+      ]
+    )
+
+    %{
+      id: execution_id,
+      submission_dedupe_key: Map.fetch!(attrs, :submission_dedupe_key)
+    }
+  end
+
+  defp execution_count(subject_id) do
+    %{rows: [[count]]} =
+      Repo.query!(
+        """
+        SELECT count(*)
+        FROM execution_records
+        WHERE subject_id = $1::uuid
+        """,
+        [dump_uuid!(subject_id)]
+      )
+
+    count
+  end
+
+  defp restore_job_outbox_impl(nil),
+    do: Application.delete_env(:mezzanine_execution_engine, :job_outbox_impl)
+
+  defp restore_job_outbox_impl(value),
+    do: Application.put_env(:mezzanine_execution_engine, :job_outbox_impl, value)
+
+  defp dump_uuid!(value), do: Ecto.UUID.dump!(value)
+end

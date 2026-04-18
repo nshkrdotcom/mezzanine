@@ -1,57 +1,137 @@
 defmodule Mezzanine.RuntimeScheduler.ReconcileOnStart do
   @moduledoc """
-  Requeues dispatches that were claimed but not durably classified before the
-  runtime restarted.
+  Requeues dispatch workers for executions stranded in `:dispatching` when the
+  runtime restarts and enqueues reconciliation for executions already awaiting
+  lower receipts.
   """
 
   alias Ecto.Adapters.SQL
   alias Mezzanine.Execution.{ExecutionRecord, Repo}
+  alias Mezzanine.ExecutionReconcileWorker
+  alias Mezzanine.JobOutbox
+  alias Mezzanine.Telemetry
 
   @default_actor_ref %{kind: :runtime_scheduler, phase: :reconcile_on_start}
 
   @type summary :: %{
-          recovered_count: non_neg_integer(),
-          recovered_execution_ids: [Ecto.UUID.t()]
+          dispatch_recovered_count: non_neg_integer(),
+          dispatch_recovered_execution_ids: [Ecto.UUID.t()],
+          reconcile_enqueued_count: non_neg_integer(),
+          reconcile_execution_ids: [Ecto.UUID.t()]
         }
+
+  @claim_reconcile_wave_sql """
+  UPDATE execution_records
+  SET last_reconcile_wave_id = $2,
+      updated_at = $3
+  WHERE id = $1::uuid
+    AND dispatch_state = 'awaiting_receipt'
+    AND COALESCE(last_reconcile_wave_id, '') <> $2
+  RETURNING id
+  """
 
   @spec reconcile(String.t(), DateTime.t(), keyword()) :: {:ok, summary()} | {:error, term()}
   def reconcile(installation_id, now \\ DateTime.utc_now(), opts \\ [])
       when is_binary(installation_id) do
     actor_ref = Keyword.get(opts, :actor_ref, @default_actor_ref)
+    wave_id = Keyword.get(opts, :wave_id, startup_wave_id(now))
 
-    with {:ok, execution_ids} <- candidate_execution_ids(installation_id),
-         {:ok, recovered} <- recover_candidates(execution_ids, now, actor_ref) do
-      {:ok,
-       %{
-         recovered_count: length(recovered),
-         recovered_execution_ids: Enum.map(recovered, & &1.id)
-       }}
+    with {:ok, candidates} <- candidate_executions(installation_id) do
+      recover_candidates(candidates, now, actor_ref, wave_id)
     end
   end
 
-  defp recover_candidates(execution_ids, now, actor_ref) do
-    Enum.reduce_while(execution_ids, {:ok, []}, fn execution_id, {:ok, recovered} ->
+  defp recover_candidates(candidates, now, actor_ref, wave_id) do
+    summary = %{
+      dispatch_recovered_count: 0,
+      dispatch_recovered_execution_ids: [],
+      reconcile_enqueued_count: 0,
+      reconcile_execution_ids: []
+    }
+
+    Enum.reduce_while(candidates, {:ok, summary}, fn candidate, {:ok, summary} ->
+      execution_id = candidate.id
+
       with {:ok, execution} <- Ash.get(ExecutionRecord, execution_id),
-           {:ok, updated_execution} <-
-             ExecutionRecord.record_restart_recovery(
+           {:ok, updated_summary} <-
+             recover_candidate(
                execution,
-               restart_recovery_attrs(execution, now, actor_ref)
+               candidate.dispatch_state,
+               now,
+               actor_ref,
+               wave_id,
+               summary
              ) do
-        {:cont, {:ok, [updated_execution | recovered]}}
+        {:cont, {:ok, updated_summary}}
       else
         {:error, error} -> {:halt, {:error, error}}
       end
     end)
     |> case do
-      {:ok, recovered} -> {:ok, Enum.reverse(recovered)}
-      {:error, error} -> {:error, error}
+      {:ok, recovered_summary} ->
+        {:ok,
+         %{
+           recovered_summary
+           | dispatch_recovered_execution_ids:
+               Enum.reverse(recovered_summary.dispatch_recovered_execution_ids),
+             reconcile_execution_ids: Enum.reverse(recovered_summary.reconcile_execution_ids)
+         }}
+
+      {:error, error} ->
+        {:error, error}
     end
   end
 
-  defp candidate_execution_ids(installation_id) do
+  defp recover_candidate(execution, "dispatching", now, actor_ref, _wave_id, summary) do
+    with {:ok, updated_execution} <-
+           ExecutionRecord.record_restart_recovery(
+             execution,
+             restart_recovery_attrs(execution, now, actor_ref)
+           ),
+         {:ok, _job_ref} <-
+           ExecutionRecord.enqueue_dispatch(updated_execution, scheduled_at: now) do
+      Telemetry.emit(
+        [:dispatch, :ambiguous],
+        %{count: 1},
+        %{
+          trace_id: updated_execution.trace_id,
+          subject_id: updated_execution.subject_id,
+          execution_id: updated_execution.id,
+          submission_dedupe_key: updated_execution.submission_dedupe_key,
+          tenant_id: updated_execution.tenant_id,
+          installation_id: updated_execution.installation_id,
+          previous_dispatch_state: execution.dispatch_state
+        }
+      )
+
+      {:ok,
+       %{
+         summary
+         | dispatch_recovered_count: summary.dispatch_recovered_count + 1,
+           dispatch_recovered_execution_ids: [
+             updated_execution.id | summary.dispatch_recovered_execution_ids
+           ]
+       }}
+    end
+  end
+
+  defp recover_candidate(execution, "awaiting_receipt", now, _actor_ref, wave_id, summary) do
+    with {:ok, claimed?} <- claim_and_enqueue_reconcile(execution.id, wave_id, now) do
+      emit_startup_reconcile(execution, wave_id, claimed?)
+      {:ok, reconcile_summary(summary, execution.id, claimed?)}
+    end
+  end
+
+  defp candidate_executions(installation_id) do
     case SQL.query(Repo, candidate_query(), [installation_id]) do
-      {:ok, %{rows: rows}} -> {:ok, Enum.map(rows, fn [execution_id] -> execution_id end)}
-      {:error, error} -> {:error, error}
+      {:ok, %{rows: rows}} ->
+        {:ok,
+         Enum.map(rows, fn [execution_id, dispatch_state] ->
+           %{id: execution_id, dispatch_state: dispatch_state}
+         end)}
+
+      {:error, error} ->
+        {:error, error}
     end
   end
 
@@ -59,7 +139,7 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStart do
     %{
       next_dispatch_at: now,
       last_dispatch_error_payload: %{
-        "reason" => "dispatcher_restarted",
+        "reason" => "dispatch_worker_restarted",
         "recovered_at" => DateTime.to_iso8601(now),
         "previous_dispatch_state" => Atom.to_string(execution.dispatch_state)
       },
@@ -69,15 +149,84 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStart do
     }
   end
 
+  defp claim_and_enqueue_reconcile(execution_id, wave_id, now) do
+    dumped_execution_id = Ecto.UUID.dump!(execution_id)
+
+    Repo.transaction(fn ->
+      case SQL.query(Repo, @claim_reconcile_wave_sql, [dumped_execution_id, wave_id, now]) do
+        {:ok, %{rows: [[_claimed_execution_id]]}} ->
+          case JobOutbox.enqueue(
+                 :reconcile,
+                 ExecutionReconcileWorker,
+                 %{execution_id: execution_id},
+                 scheduled_at: now
+               ) do
+            {:ok, _job_ref} -> true
+            {:error, error} -> Repo.rollback(error)
+          end
+
+        {:ok, %{rows: []}} ->
+          false
+
+        {:error, error} ->
+          Repo.rollback(error)
+      end
+    end)
+  end
+
+  defp reconcile_summary(summary, execution_id, claimed?) do
+    %{
+      summary
+      | reconcile_enqueued_count: summary.reconcile_enqueued_count + if(claimed?, do: 1, else: 0),
+        reconcile_execution_ids: [execution_id | summary.reconcile_execution_ids]
+    }
+  end
+
+  defp startup_wave_id(%DateTime{} = now) do
+    now
+    |> DateTime.truncate(:second)
+    |> DateTime.to_iso8601()
+  end
+
   defp candidate_query do
     """
-    SELECT e.id
-    FROM execution_records AS e
-    INNER JOIN dispatch_outbox_entries AS o ON o.execution_id = e.id
-    WHERE e.installation_id = $1
-      AND e.dispatch_state = 'dispatching'
-      AND o.status = 'dispatching'
-    ORDER BY o.available_at ASC, o.inserted_at ASC, o.id ASC
+    SELECT id, dispatch_state
+    FROM execution_records
+    WHERE installation_id = $1
+      AND dispatch_state IN ('dispatching', 'awaiting_receipt')
+    ORDER BY inserted_at ASC, id ASC
     """
+  end
+
+  defp emit_startup_reconcile(%ExecutionRecord{} = execution, wave_id, true) do
+    Telemetry.emit(
+      [:startup, :reconcile, :enqueued],
+      %{count: 1},
+      %{
+        trace_id: execution.trace_id,
+        subject_id: execution.subject_id,
+        execution_id: execution.id,
+        submission_dedupe_key: execution.submission_dedupe_key,
+        tenant_id: execution.tenant_id,
+        installation_id: execution.installation_id,
+        wave_id: wave_id
+      }
+    )
+  end
+
+  defp emit_startup_reconcile(%ExecutionRecord{} = execution, wave_id, false) do
+    Telemetry.emit(
+      [:startup, :reconcile, :unique_drop],
+      %{count: 1},
+      %{
+        trace_id: execution.trace_id,
+        subject_id: execution.subject_id,
+        execution_id: execution.id,
+        submission_dedupe_key: execution.submission_dedupe_key,
+        tenant_id: execution.tenant_id,
+        installation_id: execution.installation_id,
+        wave_id: wave_id
+      }
+    )
   end
 end

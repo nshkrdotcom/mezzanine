@@ -6,10 +6,12 @@ defmodule Mezzanine.WorkQueries do
   require Ash.Query
 
   alias Mezzanine.Audit.WorkAudit
+  alias Mezzanine.Execution.ExecutionRecord
   alias Mezzanine.Review.{Escalation, ReviewUnit}
   alias Mezzanine.Reviews
   alias Mezzanine.Runs.{Run, RunSeries}
   alias Mezzanine.ServiceSupport
+  alias Mezzanine.WorkProjectionFacts
   alias Mezzanine.Work.WorkObject
   alias Mezzanine.Work.WorkPlan
   alias Mezzanine.WorkControl
@@ -50,10 +52,22 @@ defmodule Mezzanine.WorkQueries do
          {:ok, current_plan} <- fetch_current_plan(tenant_id, work_object.current_plan_id),
          {:ok, run_series} <- list_run_series(tenant_id, work_object.id),
          {:ok, active_run} <- fetch_active_run(tenant_id, run_series),
+         {:ok, active_execution} <- fetch_active_execution(work_object.id),
+         {:ok, latest_execution} <- fetch_latest_execution(work_object.id),
          {:ok, pending_reviews} <- list_pending_reviews_for_work(tenant_id, work_object.id),
          {:ok, control_session} <- fetch_control_session(tenant_id, work_object.id),
          {:ok, audit_report} <- WorkAudit.work_report(tenant_id, work_object.id),
          {:ok, gate_status} <- Reviews.gate_status(tenant_id, work_object.id) do
+      projection_facts =
+        WorkProjectionFacts.build(
+          work_object,
+          current_plan,
+          active_run,
+          pending_reviews,
+          control_session,
+          gate_status
+        )
+
       {:ok,
        %{
          subject_id: work_object.id,
@@ -70,6 +84,12 @@ defmodule Mezzanine.WorkQueries do
          current_plan_status: current_plan_status(current_plan),
          active_run_id: active_run_id(active_run),
          active_run_status: active_run_status(active_run),
+         active_execution_id: active_execution_id(active_execution),
+         active_execution_dispatch_state: active_execution_dispatch_state(active_execution),
+         active_execution_trace_id: active_execution_trace_id(active_execution),
+         latest_execution_id: latest_execution_id(latest_execution),
+         latest_execution_dispatch_state: latest_execution_dispatch_state(latest_execution),
+         latest_execution_trace_id: latest_execution_trace_id(latest_execution),
          run_series_ids: Enum.map(run_series, & &1.id),
          obligation_ids: obligation_ids(current_plan),
          pending_review_ids: Enum.map(pending_reviews, & &1.id),
@@ -77,6 +97,9 @@ defmodule Mezzanine.WorkQueries do
          control_session_id: control_session_id(control_session),
          control_mode: control_mode(control_session),
          gate_status: gate_status,
+         pending_obligations: projection_facts.pending_obligations,
+         blocking_conditions: projection_facts.blocking_conditions,
+         next_step_preview: projection_facts.next_step_preview,
          timeline: audit_report.timeline,
          audit_events: audit_report.audit_events,
          last_event_at: last_event_at(audit_report.timeline)
@@ -91,9 +114,22 @@ defmodule Mezzanine.WorkQueries do
          {:ok, current_plan} <- fetch_current_plan(tenant_id, work_object.current_plan_id),
          {:ok, run_series} <- list_run_series(tenant_id, work_object.id),
          {:ok, active_run} <- fetch_active_run(tenant_id, run_series),
+         {:ok, active_execution} <- fetch_active_execution(work_object.id),
+         {:ok, latest_execution} <- fetch_latest_execution(work_object.id),
+         {:ok, pending_reviews} <- list_pending_reviews_for_work(tenant_id, work_object.id),
          {:ok, control_session} <- fetch_control_session(tenant_id, work_object.id),
          {:ok, gate_status} <- Reviews.gate_status(tenant_id, work_object.id),
          {:ok, timeline_projection} <- WorkAudit.timeline_for_work(tenant_id, work_object.id) do
+      projection_facts =
+        WorkProjectionFacts.build(
+          work_object,
+          current_plan,
+          active_run,
+          pending_reviews,
+          control_session,
+          gate_status
+        )
+
       {:ok,
        %{
          subject_id: work_object.id,
@@ -101,9 +137,15 @@ defmodule Mezzanine.WorkQueries do
          work_status: work_object.status,
          plan_status: current_plan_status(current_plan),
          run_status: active_run_status(active_run),
+         execution_dispatch_state: active_execution_dispatch_state(active_execution),
+         latest_execution_dispatch_state: latest_execution_dispatch_state(latest_execution),
+         latest_execution_trace_id: latest_execution_trace_id(latest_execution),
          control_mode: control_mode(control_session),
          review_status: gate_status.status,
          release_ready?: gate_status.release_ready?,
+         pending_obligations: projection_facts.pending_obligations,
+         blocking_conditions: projection_facts.blocking_conditions,
+         next_step_preview: projection_facts.next_step_preview,
          last_event_at: timeline_projection.last_event_at
        }}
     end
@@ -305,6 +347,27 @@ defmodule Mezzanine.WorkQueries do
     end
   end
 
+  defp fetch_active_execution(subject_id) do
+    case ExecutionRecord.active_for_subject(subject_id) do
+      {:ok, [execution | _]} -> {:ok, execution}
+      {:ok, []} -> {:ok, nil}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp fetch_latest_execution(subject_id) do
+    ExecutionRecord
+    |> Ash.Query.filter(subject_id == ^subject_id)
+    |> Ash.read(authorize?: false, domain: Mezzanine.Execution)
+    |> case do
+      {:ok, executions} ->
+        {:ok, Enum.max_by(executions, &execution_sort_key/1, fn -> nil end)}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
   defp fetch_run(tenant_id, run_id) do
     Run
     |> Ash.Query.set_tenant(tenant_id)
@@ -422,11 +485,33 @@ defmodule Mezzanine.WorkQueries do
   defp active_run_status(nil), do: nil
   defp active_run_status(run), do: run.status
 
+  defp active_execution_id(nil), do: nil
+  defp active_execution_id(execution), do: execution.id
+
+  defp active_execution_dispatch_state(nil), do: nil
+  defp active_execution_dispatch_state(execution), do: execution.dispatch_state
+
+  defp active_execution_trace_id(nil), do: nil
+  defp active_execution_trace_id(execution), do: execution.trace_id
+
+  defp latest_execution_id(nil), do: nil
+  defp latest_execution_id(execution), do: execution.id
+
+  defp latest_execution_dispatch_state(nil), do: nil
+  defp latest_execution_dispatch_state(execution), do: execution.dispatch_state
+
+  defp latest_execution_trace_id(nil), do: nil
+  defp latest_execution_trace_id(execution), do: execution.trace_id
+
   defp control_session_id(nil), do: nil
   defp control_session_id(control_session), do: control_session.id
 
   defp control_mode(nil), do: nil
   defp control_mode(control_session), do: control_session.current_mode
+
+  defp execution_sort_key(execution) do
+    {execution.updated_at || execution.inserted_at, execution.inserted_at, execution.id}
+  end
 
   defp fetch_string(attrs, opts, key) do
     ServiceSupport.fetch_string(attrs, opts, key, {:missing_required, key})

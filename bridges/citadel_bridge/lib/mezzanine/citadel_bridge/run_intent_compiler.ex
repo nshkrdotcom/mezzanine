@@ -52,11 +52,7 @@ defmodule Mezzanine.CitadelBridge.RunIntentCompiler do
          raw_input_hashes: Map.get(attrs, :raw_input_hashes, []),
          extensions: %{}
        },
-       extensions: %{
-         runtime_class: intent.runtime_class,
-         grant_profile: intent.grant_profile,
-         metadata: intent.metadata
-       }
+       extensions: request_extensions(intent, attrs)
      })}
   rescue
     error in ArgumentError -> {:error, {:invalid_run_intent, Exception.message(error)}}
@@ -73,5 +69,34 @@ defmodule Mezzanine.CitadelBridge.RunIntentCompiler do
 
   defp value(map, key, default) when is_map(map) do
     Map.get(map, key) || Map.get(map, Atom.to_string(key)) || default
+  end
+
+  defp request_extensions(%RunIntent{} = intent, attrs) do
+    attrs
+    |> optional_map(:extensions)
+    |> Map.merge(%{
+      runtime_class: intent.runtime_class,
+      grant_profile: intent.grant_profile,
+      metadata: intent.metadata
+    })
+    |> maybe_put_submission_dedupe_key(attrs)
+  end
+
+  defp maybe_put_submission_dedupe_key(extensions, attrs) do
+    case value(attrs, :submission_dedupe_key, value(attrs, :idempotency_key, nil)) do
+      value when is_binary(value) and value != "" ->
+        Map.put(extensions, "submission_dedupe_key", value)
+
+      _other ->
+        extensions
+    end
+  end
+
+  defp optional_map(map, key) when is_map(map) do
+    case Map.get(map, key) || Map.get(map, Atom.to_string(key)) do
+      %{} = value -> value
+      nil -> %{}
+      other -> raise ArgumentError, "expected #{inspect(key)} to be a map, got: #{inspect(other)}"
+    end
   end
 end

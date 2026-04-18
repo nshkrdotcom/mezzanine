@@ -11,6 +11,7 @@ graph:
 
 - `pack_model`
 - `pack_compiler`
+- `lifecycle_engine`
 - `config_registry`
 - `object_engine`
 - `execution_engine`
@@ -22,6 +23,6 @@ graph:
 - `audit_engine`
 - `archival_engine`
 
-The legacy `ops_*` packages remain buildable only as bounded coexistence
-scaffolding. New reusable work must land in the neutral package graph, not by
-widening the deprecated ontology.
+The `ops_*` packages still host live semantic domains. New reusable work lands
+in the neutral package graph while later phases migrate the remaining semantic
+hosts to current package names and boundaries.

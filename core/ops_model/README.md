@@ -1,10 +1,10 @@
 # Mezzanine Ops Model
 
-Status: `[DEPRECATED-PENDING-MIGRATION]`
+Status: `Current semantic host pending neutral rename`
 
-This package is part of the legacy `ops_*` ontology. It remains buildable only
-during the coexistence window guarded by `NO_NEW_PRODUCT_DEP_ON_OLD_MEZZANINE`
-and `MEZZANINE_NEUTRAL_CORE_CUTOVER`.
+This package still carries typed semantic structs consumed by
+`core/ops_domain` while later phases move those types into neutral package
+names and boundaries.
 
 Pure operational vocabulary for the Mezzanine workspace.
 

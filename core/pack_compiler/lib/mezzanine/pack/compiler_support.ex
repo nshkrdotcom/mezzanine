@@ -14,10 +14,14 @@ defmodule Mezzanine.Pack.Compiler.Helpers do
   ]
 
   @decision_values [:accept, :reject, :waive, :expired]
+  @context_usage_phases [:preprocess, :retrieval, :repair]
+  @context_merge_strategies [:append, :ranked_append, :replace_slot]
 
   def runtime_class?(value), do: value in @runtime_classes
   def failure_kind?(value), do: value in @failure_kinds
   def decision_value?(value), do: value in @decision_values
+  def context_usage_phase?(value), do: value in @context_usage_phases
+  def context_merge_strategy?(value), do: value in @context_merge_strategies
 
   def transition_field(transition, key) do
     Map.get(transition, key) || Map.get(transition, Atom.to_string(key))
@@ -65,6 +69,12 @@ defmodule Mezzanine.Pack.Compiler.Helpers do
   def canonicalize_trigger({:execution_failed, recipe_ref, failure_kind}) do
     with {:ok, recipe_ref} <- canonicalize_identifier(recipe_ref) do
       {:ok, {:execution_failed, recipe_ref, failure_kind}}
+    end
+  end
+
+  def canonicalize_trigger({:join_completed, join_step_ref}) do
+    with {:ok, join_step_ref} <- canonicalize_identifier(join_step_ref) do
+      {:ok, {:join_completed, join_step_ref}}
     end
   end
 
@@ -239,6 +249,7 @@ defmodule Mezzanine.Pack.Validator do
   @moduledoc false
 
   alias Mezzanine.Pack.{
+    ContextSourceSpec,
     DecisionSpec,
     EvidenceSpec,
     ExecutionRecipeSpec,
@@ -258,6 +269,7 @@ defmodule Mezzanine.Pack.Validator do
     validate_manifest(manifest) ++
       validate_subject_kind_specs(manifest.subject_kind_specs) ++
       validate_source_kind_specs(manifest.source_kind_specs) ++
+      validate_context_source_specs(manifest.context_source_specs) ++
       validate_lifecycle_specs(manifest.lifecycle_specs) ++
       validate_recipe_specs(manifest.execution_recipe_specs) ++
       validate_decision_specs(manifest.decision_specs) ++
@@ -272,6 +284,7 @@ defmodule Mezzanine.Pack.Validator do
     |> append(identifier_issue(manifest.pack_slug, [:pack_slug], "pack slug"))
     |> append(version_issue(manifest.version))
     |> append(migration_strategy_issue(manifest.migration_strategy))
+    |> append(max_supersession_depth_issue(manifest.max_supersession_depth))
   end
 
   defp validate_subject_kind_specs(specs) do
@@ -312,6 +325,64 @@ defmodule Mezzanine.Pack.Validator do
              spec.adapter_mod,
              [:source_kind_specs, index, :adapter_mod],
              "adapter_mod"
+           )
+         )
+       end))
+  end
+
+  defp validate_context_source_specs(specs) do
+    duplicate_identifier_issues(specs, :source_ref, [:context_source_specs], "context source") ++
+      (Enum.with_index(specs)
+       |> Enum.flat_map(fn {%ContextSourceSpec{} = spec, index} ->
+         []
+         |> append(
+           identifier_issue(
+             spec.source_ref,
+             [:context_source_specs, index, :source_ref],
+             "context source ref"
+           )
+         )
+         |> append(
+           identifier_issue(
+             spec.binding_key,
+             [:context_source_specs, index, :binding_key],
+             "context binding key"
+           )
+         )
+         |> append(
+           context_usage_phase_issue(
+             spec.usage_phase,
+             [:context_source_specs, index, :usage_phase]
+           )
+         )
+         |> append(
+           boolean_issue(spec.required?, [:context_source_specs, index, :required?], "required?")
+         )
+         |> append(
+           positive_integer_issue(
+             spec.timeout_ms,
+             [:context_source_specs, index, :timeout_ms],
+             "timeout_ms"
+           )
+         )
+         |> append(
+           optional_identifier_issue(
+             spec.schema_ref,
+             [:context_source_specs, index, :schema_ref],
+             "schema_ref"
+           )
+         )
+         |> append(
+           positive_integer_issue(
+             spec.max_fragments,
+             [:context_source_specs, index, :max_fragments],
+             "max_fragments"
+           )
+         )
+         |> append(
+           context_merge_strategy_issue(
+             spec.merge_strategy,
+             [:context_source_specs, index, :merge_strategy]
            )
          )
        end))
@@ -428,6 +499,20 @@ defmodule Mezzanine.Pack.Validator do
              spec.placement_ref,
              [:execution_recipe_specs, index, :placement_ref],
              "placement ref"
+           )
+         )
+         |> append(
+           identifier_list_issues(
+             spec.required_lifecycle_hints,
+             [:execution_recipe_specs, index, :required_lifecycle_hints],
+             "required lifecycle hint"
+           )
+         )
+         |> append(
+           duplicate_identifier_list_issues(
+             spec.required_lifecycle_hints,
+             [:execution_recipe_specs, index, :required_lifecycle_hints],
+             "required lifecycle hint"
            )
          )
          |> append(
@@ -867,11 +952,54 @@ defmodule Mezzanine.Pack.Validator do
     |> Enum.flat_map(fn {value, index} -> identifier_issue(value, path ++ [index], label) end)
   end
 
+  defp duplicate_identifier_list_issues(values, path_root, label) do
+    values
+    |> Enum.with_index()
+    |> Enum.reduce({MapSet.new(), []}, fn {value, index}, {seen, issues} ->
+      case H.canonicalize_identifier(value) do
+        {:ok, identifier} ->
+          duplicate_identifier_issue(identifier, seen, issues, path_root, index, label)
+
+        {:error, _message} ->
+          {seen, issues}
+      end
+    end)
+    |> elem(1)
+    |> Enum.reverse()
+  end
+
+  defp duplicate_identifier_issue(identifier, seen, issues, path_root, index, label) do
+    if MapSet.member?(seen, identifier) do
+      issue =
+        ValidationError.error(
+          path_root ++ [index],
+          "#{label} #{inspect(identifier)} must be unique"
+        )
+
+      {seen, [issue | issues]}
+    else
+      {MapSet.put(seen, identifier), issues}
+    end
+  end
+
   defp optional_module_issue(nil, _path, _label), do: []
   defp optional_module_issue(value, _path, _label) when is_atom(value), do: []
 
   defp optional_module_issue(_value, path, label),
     do: [ValidationError.error(path, "#{label} must be a module when present")]
+
+  defp optional_identifier_issue(nil, _path, _label), do: []
+  defp optional_identifier_issue(value, path, label), do: identifier_issue(value, path, label)
+
+  defp boolean_issue(value, _path, _label) when is_boolean(value), do: []
+
+  defp boolean_issue(_value, path, label),
+    do: [ValidationError.error(path, "#{label} must be a boolean")]
+
+  defp positive_integer_issue(value, _path, _label) when is_integer(value) and value > 0, do: []
+
+  defp positive_integer_issue(_value, path, label),
+    do: [ValidationError.error(path, "#{label} must be a positive integer")]
 
   defp trigger_issue(trigger, path) do
     case H.canonicalize_trigger(trigger) do
@@ -926,11 +1054,38 @@ defmodule Mezzanine.Pack.Validator do
     end
   end
 
+  defp context_usage_phase_issue(value, path) do
+    if H.context_usage_phase?(value) do
+      []
+    else
+      [
+        ValidationError.error(
+          path,
+          "usage_phase must be :preprocess, :retrieval, or :repair"
+        )
+      ]
+    end
+  end
+
+  defp context_merge_strategy_issue(value, path) do
+    if H.context_merge_strategy?(value) do
+      []
+    else
+      [
+        ValidationError.error(
+          path,
+          "merge_strategy must be :append, :ranked_append, or :replace_slot"
+        )
+      ]
+    end
+  end
+
   defp retry_config_issue(retry_config, path) when is_map(retry_config) do
     []
     |> append(max_attempts_issue(retry_config[:max_attempts], path ++ [:max_attempts]))
     |> append(backoff_issue(retry_config[:backoff], path ++ [:backoff]))
     |> append(retry_on_issue(retry_config[:retry_on] || [], path ++ [:retry_on]))
+    |> append(rekey_on_issue(retry_config[:rekey_on] || [], path ++ [:rekey_on]))
   end
 
   defp retry_config_issue(_retry_config, path),
@@ -951,6 +1106,8 @@ defmodule Mezzanine.Pack.Validator do
     |> Enum.with_index()
     |> Enum.flat_map(fn {value, index} -> failure_kind_issue(value, path ++ [index]) end)
   end
+
+  defp rekey_on_issue(values, path), do: retry_on_issue(values, path)
 
   defp workspace_policy_issue(policy, path) when is_map(policy) do
     strategy = policy[:strategy]
@@ -1052,6 +1209,19 @@ defmodule Mezzanine.Pack.Validator do
         "migration_strategy must be :additive or :force"
       )
     ]
+
+  defp max_supersession_depth_issue(value)
+       when is_integer(value) and value > 0 and value <= 32,
+       do: []
+
+  defp max_supersession_depth_issue(_value) do
+    [
+      ValidationError.error(
+        [:max_supersession_depth],
+        "max_supersession_depth must be a positive integer not greater than 32"
+      )
+    ]
+  end
 
   defp failure_kind_issue(value, path) do
     if H.failure_kind?(value) do
@@ -1231,6 +1401,16 @@ defmodule Mezzanine.Pack.Validator do
            failure_kind_issue(failure_kind, path)
 
   defp transition_trigger_reference_issue_resolved(
+         {:join_completed, _join_step_ref},
+         _lifecycle_states,
+         _recipe_refs,
+         _decision_kinds,
+         _action_kinds,
+         _path
+       ),
+       do: []
+
+  defp transition_trigger_reference_issue_resolved(
          {:decision_made, decision_kind, decision_value},
          _lifecycle_states,
          _recipe_refs,
@@ -1322,6 +1502,7 @@ defmodule Mezzanine.Pack.Normalizer do
   @moduledoc false
 
   alias Mezzanine.Pack.{
+    ContextSourceSpec,
     DecisionSpec,
     EvidenceSpec,
     ExecutionRecipeSpec,
@@ -1342,6 +1523,7 @@ defmodule Mezzanine.Pack.Normalizer do
       version: manifest.version,
       description: manifest.description,
       migration_strategy: manifest.migration_strategy,
+      max_supersession_depth: manifest.max_supersession_depth,
       subject_kind_specs:
         manifest.subject_kind_specs
         |> Enum.map(&normalize_subject_kind/1)
@@ -1350,6 +1532,10 @@ defmodule Mezzanine.Pack.Normalizer do
         manifest.source_kind_specs
         |> Enum.map(&normalize_source_kind/1)
         |> Enum.sort_by(& &1.name),
+      context_source_specs:
+        manifest.context_source_specs
+        |> Enum.map(&normalize_context_source/1)
+        |> Enum.sort_by(& &1.source_ref),
       lifecycle_specs:
         manifest.lifecycle_specs
         |> Enum.map(&normalize_lifecycle/1)
@@ -1375,10 +1561,12 @@ defmodule Mezzanine.Pack.Normalizer do
     }
   end
 
+  @spec normalize_subject_kind(SubjectKindSpec.t()) :: SubjectKindSpec.t()
   defp normalize_subject_kind(%SubjectKindSpec{} = spec) do
     %SubjectKindSpec{spec | name: H.canonicalize_identifier!(spec.name)}
   end
 
+  @spec normalize_source_kind(SourceKindSpec.t()) :: SourceKindSpec.t()
   defp normalize_source_kind(%SourceKindSpec{} = spec) do
     %SourceKindSpec{
       spec
@@ -1387,6 +1575,16 @@ defmodule Mezzanine.Pack.Normalizer do
     }
   end
 
+  @spec normalize_context_source(ContextSourceSpec.t()) :: ContextSourceSpec.t()
+  defp normalize_context_source(%ContextSourceSpec{} = spec) do
+    %ContextSourceSpec{
+      spec
+      | source_ref: H.canonicalize_identifier!(spec.source_ref),
+        binding_key: H.canonicalize_identifier!(spec.binding_key)
+    }
+  end
+
+  @spec normalize_lifecycle(LifecycleSpec.t()) :: LifecycleSpec.t()
   defp normalize_lifecycle(%LifecycleSpec{} = spec) do
     %LifecycleSpec{
       spec
@@ -1404,6 +1602,7 @@ defmodule Mezzanine.Pack.Normalizer do
     }
   end
 
+  @spec normalize_transition(LifecycleSpec.transition()) :: LifecycleSpec.transition()
   defp normalize_transition(transition) do
     base = %{
       from: H.canonicalize_identifier!(H.transition_field(transition, :from)),
@@ -1417,22 +1616,33 @@ defmodule Mezzanine.Pack.Normalizer do
     end
   end
 
+  @spec normalize_recipe(ExecutionRecipeSpec.t()) :: ExecutionRecipeSpec.t()
   defp normalize_recipe(%ExecutionRecipeSpec{} = spec) do
     retry_on = spec.retry_config[:retry_on] || []
+    rekey_on = spec.retry_config[:rekey_on] || []
 
     %ExecutionRecipeSpec{
       spec
       | recipe_ref: H.canonicalize_identifier!(spec.recipe_ref),
         placement_ref: H.canonicalize_identifier!(spec.placement_ref),
+        required_lifecycle_hints:
+          spec.required_lifecycle_hints
+          |> Enum.map(&H.canonicalize_identifier!/1)
+          |> Enum.uniq()
+          |> Enum.sort(),
         applicable_to:
           spec.applicable_to
           |> Enum.map(&H.canonicalize_identifier!/1)
           |> Enum.uniq()
           |> Enum.sort(),
-        retry_config: Map.put(spec.retry_config, :retry_on, Enum.uniq(retry_on))
+        retry_config:
+          spec.retry_config
+          |> Map.put(:retry_on, Enum.uniq(retry_on))
+          |> Map.put(:rekey_on, Enum.uniq(rekey_on))
     }
   end
 
+  @spec normalize_decision(DecisionSpec.t()) :: DecisionSpec.t()
   defp normalize_decision(%DecisionSpec{} = spec) do
     %DecisionSpec{
       spec
@@ -1452,6 +1662,7 @@ defmodule Mezzanine.Pack.Normalizer do
     }
   end
 
+  @spec normalize_evidence(EvidenceSpec.t()) :: EvidenceSpec.t()
   defp normalize_evidence(%EvidenceSpec{} = spec) do
     %EvidenceSpec{
       spec
@@ -1461,6 +1672,7 @@ defmodule Mezzanine.Pack.Normalizer do
     }
   end
 
+  @spec normalize_operator_action(OperatorActionSpec.t()) :: OperatorActionSpec.t()
   defp normalize_operator_action(%OperatorActionSpec{} = spec) do
     %OperatorActionSpec{
       spec
@@ -1479,6 +1691,7 @@ defmodule Mezzanine.Pack.Normalizer do
     }
   end
 
+  @spec normalize_projection(ProjectionSpec.t()) :: ProjectionSpec.t()
   defp normalize_projection(%ProjectionSpec{} = spec) do
     %ProjectionSpec{
       spec
@@ -1498,6 +1711,7 @@ defmodule Mezzanine.Pack.Builder do
 
   alias Mezzanine.Pack.{
     CompiledPack,
+    ContextSourceSpec,
     DecisionSpec,
     EvidenceSpec,
     ExecutionRecipeSpec,
@@ -1517,6 +1731,10 @@ defmodule Mezzanine.Pack.Builder do
       manifest: manifest,
       subject_kinds: subject_kinds,
       source_kinds: Map.new(manifest.source_kind_specs, &{&1.name, &1}),
+      context_sources_by_ref:
+        Map.new(manifest.context_source_specs, fn %ContextSourceSpec{} = spec ->
+          {spec.source_ref, spec}
+        end),
       lifecycle_by_kind: Map.new(manifest.lifecycle_specs, &{&1.subject_kind, &1}),
       transitions_by_state: build_transition_index(manifest.lifecycle_specs),
       terminal_states_by_kind:
@@ -1535,10 +1753,18 @@ defmodule Mezzanine.Pack.Builder do
     }
   end
 
+  @spec build_transition_index([LifecycleSpec.t()]) ::
+          %{
+            CompiledPack.state_key() => %{
+              CompiledPack.trigger_key() => LifecycleSpec.transition()
+            }
+          }
   defp build_transition_index(lifecycle_specs) do
     Enum.reduce(lifecycle_specs, %{}, &put_lifecycle_transitions/2)
   end
 
+  @spec build_recipe_subject_index([ExecutionRecipeSpec.t()], [String.t()]) ::
+          %{String.t() => [ExecutionRecipeSpec.t()]}
   defp build_recipe_subject_index(recipes, subject_kinds) do
     initial = Map.new(subject_kinds, &{&1, []})
 
@@ -1556,24 +1782,55 @@ defmodule Mezzanine.Pack.Builder do
     end)
   end
 
+  @spec build_decision_event_index([DecisionSpec.t()]) ::
+          %{CompiledPack.trigger_key() => [DecisionSpec.t()]}
   defp build_decision_event_index(decision_specs) do
     Enum.reduce(decision_specs, %{}, fn %DecisionSpec{} = spec, acc ->
       Map.update(acc, H.decision_event_key!(spec.trigger), [spec], &[spec | &1])
     end)
   end
 
+  @spec build_evidence_event_index([EvidenceSpec.t()]) ::
+          %{CompiledPack.trigger_key() => [EvidenceSpec.t()]}
   defp build_evidence_event_index(evidence_specs) do
     Enum.reduce(evidence_specs, %{}, fn %EvidenceSpec{} = spec, acc ->
       Map.update(acc, H.evidence_event_key!(spec.collected_on), [spec], &[spec | &1])
     end)
   end
 
+  @spec put_lifecycle_transitions(
+          LifecycleSpec.t(),
+          %{
+            CompiledPack.state_key() => %{
+              CompiledPack.trigger_key() => LifecycleSpec.transition()
+            }
+          }
+        ) ::
+          %{
+            CompiledPack.state_key() => %{
+              CompiledPack.trigger_key() => LifecycleSpec.transition()
+            }
+          }
   defp put_lifecycle_transitions(%LifecycleSpec{} = lifecycle, acc) do
     Enum.reduce(lifecycle.transitions, acc, fn transition, inner_acc ->
       put_transition(inner_acc, lifecycle.subject_kind, transition)
     end)
   end
 
+  @spec put_transition(
+          %{
+            CompiledPack.state_key() => %{
+              CompiledPack.trigger_key() => LifecycleSpec.transition()
+            }
+          },
+          String.t(),
+          LifecycleSpec.transition()
+        ) ::
+          %{
+            CompiledPack.state_key() => %{
+              CompiledPack.trigger_key() => LifecycleSpec.transition()
+            }
+          }
   defp put_transition(acc, subject_kind, transition) do
     key = H.state_lookup_key(subject_kind, transition.from)
     transition_map = %{transition.trigger => transition}

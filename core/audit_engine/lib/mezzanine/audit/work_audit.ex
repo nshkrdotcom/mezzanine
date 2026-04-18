@@ -44,10 +44,32 @@ defmodule Mezzanine.Audit.WorkAudit do
           {:ok, timeline_projection()} | {:error, term()}
   def timeline_for_work(tenant_id, work_object_id)
       when is_binary(tenant_id) and is_binary(work_object_id) do
-    case projection_for_work(tenant_id, work_object_id) do
-      {:ok, projection} -> {:ok, normalize_projection(projection)}
-      {:error, :not_found} -> refresh_timeline(tenant_id, work_object_id)
-      error -> error
+    with {:ok, events} <- list_events_for_work(tenant_id, work_object_id) do
+      timeline = project_timeline(events)
+      last_event_at = timeline |> List.last() |> value_or_nil(:occurred_at)
+
+      case projection_for_work(tenant_id, work_object_id) do
+        {:ok, projection} ->
+          maybe_refresh_projection(
+            tenant_id,
+            work_object_id,
+            normalize_projection(projection),
+            timeline,
+            last_event_at
+          )
+
+        {:error, :not_found} ->
+          persist_projection(
+            tenant_id,
+            work_object_id,
+            timeline,
+            last_event_at,
+            DateTime.utc_now()
+          )
+
+        error ->
+          error
+      end
     end
   end
 
@@ -58,32 +80,7 @@ defmodule Mezzanine.Audit.WorkAudit do
     with {:ok, events} <- list_events_for_work(tenant_id, work_object_id) do
       timeline = project_timeline(events)
       last_event_at = timeline |> List.last() |> value_or_nil(:occurred_at)
-
-      attrs = %{
-        work_object_id: work_object_id,
-        timeline: timeline,
-        last_event_at: last_event_at,
-        projected_at: now
-      }
-
-      case projection_for_work(tenant_id, work_object_id) do
-        {:ok, projection} ->
-          projection
-          |> Ash.Changeset.for_update(:refresh, Map.delete(attrs, :work_object_id))
-          |> Ash.Changeset.set_tenant(tenant_id)
-          |> Ash.update(actor: actor(tenant_id), authorize?: false, domain: Mezzanine.Evidence)
-          |> normalize_projection_result()
-
-        {:error, :not_found} ->
-          TimelineProjection
-          |> Ash.Changeset.for_create(:project, attrs)
-          |> Ash.Changeset.set_tenant(tenant_id)
-          |> Ash.create(actor: actor(tenant_id), authorize?: false, domain: Mezzanine.Evidence)
-          |> normalize_projection_result()
-
-        {:error, reason} ->
-          {:error, reason}
-      end
+      persist_projection(tenant_id, work_object_id, timeline, last_event_at, now)
     end
   end
 
@@ -259,6 +256,76 @@ defmodule Mezzanine.Audit.WorkAudit do
   defp presence(_count), do: :present
 
   defp actor(tenant_id), do: %{tenant_id: tenant_id}
+
+  defp maybe_refresh_projection(
+         tenant_id,
+         work_object_id,
+         projection,
+         timeline,
+         last_event_at
+       ) do
+    if projection_current?(projection, timeline, last_event_at) do
+      {:ok, projection}
+    else
+      persist_projection(
+        tenant_id,
+        work_object_id,
+        timeline,
+        last_event_at,
+        DateTime.utc_now(),
+        projection
+      )
+    end
+  end
+
+  defp projection_current?(projection, timeline, last_event_at) do
+    projection.timeline == timeline and projection.last_event_at == last_event_at
+  end
+
+  defp persist_projection(
+         tenant_id,
+         work_object_id,
+         timeline,
+         last_event_at,
+         now,
+         projection \\ nil
+       ) do
+    attrs = %{
+      work_object_id: work_object_id,
+      timeline: timeline,
+      last_event_at: last_event_at,
+      projected_at: now
+    }
+
+    case projection || projection_for_work(tenant_id, work_object_id) do
+      %{id: _id} = existing_projection ->
+        existing_projection
+        |> Ash.Changeset.for_update(:refresh, Map.delete(attrs, :work_object_id))
+        |> Ash.Changeset.set_tenant(tenant_id)
+        |> Ash.update(actor: actor(tenant_id), authorize?: false, domain: Mezzanine.Evidence)
+        |> normalize_projection_result()
+
+      {:ok, existing_projection} ->
+        persist_projection(
+          tenant_id,
+          work_object_id,
+          timeline,
+          last_event_at,
+          now,
+          normalize_projection(existing_projection)
+        )
+
+      {:error, :not_found} ->
+        TimelineProjection
+        |> Ash.Changeset.for_create(:project, attrs)
+        |> Ash.Changeset.set_tenant(tenant_id)
+        |> Ash.create(actor: actor(tenant_id), authorize?: false, domain: Mezzanine.Evidence)
+        |> normalize_projection_result()
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
 
   defp normalize_projection_result({:ok, projection}), do: {:ok, normalize_projection(projection)}
   defp normalize_projection_result(error), do: error

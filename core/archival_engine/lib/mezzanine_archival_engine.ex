@@ -1,17 +1,18 @@
 defmodule MezzanineArchivalEngine do
   @moduledoc """
-  Durable archival manifest persistence plus pure countdown/offload contracts for
-  the neutral Mezzanine runtime.
+  Durable archival scheduler, cold-store, and manifest surface for the neutral
+  Mezzanine runtime.
   """
 
   @spec contract_modules() :: [module()]
   def contract_modules do
     [
-      Mezzanine.Archival.CountdownPolicy,
-      Mezzanine.Archival.Graph,
-      Mezzanine.Archival.Manifest,
-      Mezzanine.Archival.OffloadPlan,
-      Mezzanine.Archival.ArchivalManifest
+      Mezzanine.Archival.ArchivalManifest,
+      Mezzanine.Archival.ColdStore,
+      Mezzanine.Archival.FileSystemColdStore,
+      Mezzanine.Archival.Query,
+      Mezzanine.Archival.Scheduler,
+      Mezzanine.Archival.Snapshot
     ]
   end
 end

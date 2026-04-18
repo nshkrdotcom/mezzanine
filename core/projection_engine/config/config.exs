@@ -26,6 +26,15 @@ config :mezzanine_execution_engine,
   ecto_repos: [Mezzanine.Execution.Repo],
   ash_domains: [Mezzanine.Execution]
 
+config :mezzanine_execution_engine, Oban,
+  name: Mezzanine.Execution.Oban,
+  repo: Mezzanine.Execution.Repo,
+  engine: Oban.Engines.Basic,
+  notifier: Oban.Notifiers.Postgres,
+  peer: false,
+  queues: [dispatch: 10],
+  plugins: []
+
 config :mezzanine_object_engine,
   ecto_repos: [Mezzanine.Objects.Repo],
   ash_domains: [Mezzanine.Objects]

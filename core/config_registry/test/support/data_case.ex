@@ -4,6 +4,7 @@ defmodule Mezzanine.ConfigRegistry.DataCase do
 
   alias Ecto.Adapters.SQL.Sandbox
   alias Mezzanine.ConfigRegistry.Repo
+  alias Mezzanine.Execution.Repo, as: ExecutionRepo
 
   using do
     quote do
@@ -17,8 +18,15 @@ defmodule Mezzanine.ConfigRegistry.DataCase do
   end
 
   setup tags do
-    pid = Sandbox.start_owner!(Repo, shared: not tags[:async])
-    on_exit(fn -> Sandbox.stop_owner(pid) end)
+    shared? = not tags[:async]
+    execution_owner = Sandbox.start_owner!(ExecutionRepo, shared: shared?)
+    pid = Sandbox.start_owner!(Repo, shared: shared?)
+
+    on_exit(fn ->
+      Sandbox.stop_owner(pid)
+      Sandbox.stop_owner(execution_owner)
+    end)
+
     :ok
   end
 end

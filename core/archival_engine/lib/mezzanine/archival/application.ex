@@ -5,10 +5,24 @@ defmodule Mezzanine.Archival.Application do
 
   @impl true
   def start(_type, _args) do
-    children = [
-      Mezzanine.Archival.Repo
-    ]
+    Supervisor.start_link(children(),
+      strategy: :one_for_one,
+      name: Mezzanine.Archival.Supervisor
+    )
+  end
 
-    Supervisor.start_link(children, strategy: :one_for_one, name: Mezzanine.Archival.Supervisor)
+  defp children do
+    if Application.get_env(:mezzanine_archival_engine, :start_runtime_children?, true) do
+      [
+        Mezzanine.Archival.Repo,
+        {Mezzanine.RepoTelemetryBridge,
+         repo: Mezzanine.Archival.Repo,
+         repo_name: "archival",
+         query_event: [:mezzanine_archival_engine, :repo, :query]},
+        Mezzanine.Archival.Scheduler
+      ]
+    else
+      []
+    end
   end
 end

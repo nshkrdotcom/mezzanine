@@ -1,6 +1,6 @@
 defmodule Mezzanine.CitadelBridge.EventMapper do
   @moduledoc """
-  Maps lower Citadel or Spine lifecycle events back into Mezzanine audit attrs.
+  Maps lower Citadel lifecycle events back into Mezzanine audit attrs.
   """
 
   @spec to_audit_attrs(map(), map()) :: map()

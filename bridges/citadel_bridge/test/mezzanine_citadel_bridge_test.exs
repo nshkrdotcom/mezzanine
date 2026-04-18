@@ -45,6 +45,21 @@ defmodule Mezzanine.CitadelBridgeTest do
     assert request.execution.execution_intent["extensions"]["source"] == "test"
   end
 
+  test "compile_run_request propagates durable submission identity into request extensions" do
+    intent = run_intent()
+
+    assert {:ok, %RunRequest{} = request} =
+             CitadelBridge.compile_run_request(intent, %{
+               target_id: "linear-default",
+               service_id: "linear",
+               allowed_operations: ["linear.issue.execute"],
+               submission_dedupe_key: "tenant-cb:work-1:expense_capture:1",
+               objective: "Execute Linear work"
+             })
+
+    assert request.extensions["submission_dedupe_key"] == "tenant-cb:work-1:expense_capture:1"
+  end
+
   test "build_request_context emits a valid host-ingress request context" do
     intent = run_intent()
 
