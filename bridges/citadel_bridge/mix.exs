@@ -9,7 +9,7 @@ defmodule MezzanineCitadelBridge.MixProject do
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       aliases: aliases(),
-      description: "Citadel lowering bridge for Mezzanine run intents",
+      description: "Substrate-origin Citadel governance bridge for Mezzanine run intents",
       docs: [main: "readme", extras: ["README.md"]],
       name: "Mezzanine Citadel Bridge",
       source_url: "https://github.com/nshkrdotcom/mezzanine",
@@ -42,7 +42,7 @@ defmodule MezzanineCitadelBridge.MixProject do
   defp deps do
     [
       {:mezzanine_core, path: "../../core/mezzanine_core"},
-      {:citadel_host_ingress_bridge, path: "../../../citadel/bridges/host_ingress_bridge"},
+      {:citadel_governance, path: "../../../citadel/core/citadel_governance"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.40.1", only: :dev, runtime: false}

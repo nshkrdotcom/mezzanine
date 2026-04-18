@@ -60,45 +60,46 @@ defmodule Mezzanine.StreamAttachHost do
 
   @impl true
   def handle_continue(:attach, state) do
-    with {:ok, lease} <-
-           Leasing.authorize_stream_attach(state.lease_id, state.token, repo: state.repo),
-         cursor <- lease.last_invalidation_cursor || lease.issued_invalidation_cursor || 0,
-         lease_context = lease_context(lease) do
-      case Leasing.list_invalidations_after(
-             cursor,
-             Keyword.merge(
-               poll_target_opts(state),
-               lease_id: state.lease_id,
-               lease_kind: :stream
-             )
-           ) do
-        {:ok, []} ->
-          emit_stream_attach_active(lease_context, state, cursor)
-          send(state.notify, {:stream_attached, state.lease_id, cursor})
-          schedule_poll(state.poll_interval_ms)
-          {:noreply, %{state | cursor: cursor, lease_context: lease_context}}
+    case Leasing.authorize_stream_attach(state.lease_id, state.token, repo: state.repo) do
+      {:ok, lease} ->
+        cursor = lease.last_invalidation_cursor || lease.issued_invalidation_cursor || 0
+        lease_context = lease_context(lease)
 
-        {:ok, [invalidation | _rest] = invalidations} ->
-          emit_gap_detected(lease_context, invalidations, cursor)
-          emit_stream_terminated(lease_context, invalidation, cursor)
+        case Leasing.list_invalidations_after(
+               cursor,
+               Keyword.merge(
+                 poll_target_opts(state),
+                 lease_id: state.lease_id,
+                 lease_kind: :stream
+               )
+             ) do
+          {:ok, []} ->
+            emit_stream_attach_active(lease_context, state, cursor)
+            send(state.notify, {:stream_attached, state.lease_id, cursor})
+            schedule_poll(state.poll_interval_ms)
+            {:noreply, %{state | cursor: cursor, lease_context: lease_context}}
 
-          :ok =
-            Leasing.advance_stream_cursor(
-              state.lease_id,
-              invalidation.sequence_number,
-              poll_target_opts(state)
+          {:ok, [invalidation | _rest] = invalidations} ->
+            emit_gap_detected(lease_context, invalidations, cursor)
+            emit_stream_terminated(lease_context, invalidation, cursor)
+
+            :ok =
+              Leasing.advance_stream_cursor(
+                state.lease_id,
+                invalidation.sequence_number,
+                poll_target_opts(state)
+              )
+
+            send(
+              state.notify,
+              {:stream_invalidated, state.lease_id, invalidation.reason,
+               invalidation.sequence_number}
             )
 
-          send(
-            state.notify,
-            {:stream_invalidated, state.lease_id, invalidation.reason,
-             invalidation.sequence_number}
-          )
+            {:stop, :normal,
+             %{state | cursor: invalidation.sequence_number, lease_context: lease_context}}
+        end
 
-          {:stop, :normal,
-           %{state | cursor: invalidation.sequence_number, lease_context: lease_context}}
-      end
-    else
       {:error, {:lease_invalidated, reason, sequence_number}} ->
         maybe_emit_attach_invalidation(state, reason, sequence_number)
         send(state.notify, {:stream_invalidated, state.lease_id, reason, sequence_number})

@@ -155,15 +155,7 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStart do
     Repo.transaction(fn ->
       case SQL.query(Repo, @claim_reconcile_wave_sql, [dumped_execution_id, wave_id, now]) do
         {:ok, %{rows: [[_claimed_execution_id]]}} ->
-          case JobOutbox.enqueue(
-                 :reconcile,
-                 ExecutionReconcileWorker,
-                 %{execution_id: execution_id},
-                 scheduled_at: now
-               ) do
-            {:ok, _job_ref} -> true
-            {:error, error} -> Repo.rollback(error)
-          end
+          enqueue_reconcile_job!(execution_id, now)
 
         {:ok, %{rows: []}} ->
           false
@@ -172,6 +164,18 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStart do
           Repo.rollback(error)
       end
     end)
+  end
+
+  defp enqueue_reconcile_job!(execution_id, now) do
+    case JobOutbox.enqueue(
+           :reconcile,
+           ExecutionReconcileWorker,
+           %{execution_id: execution_id},
+           scheduled_at: now
+         ) do
+      {:ok, _job_ref} -> true
+      {:error, error} -> Repo.rollback(error)
+    end
   end
 
   defp reconcile_summary(summary, execution_id, claimed?) do

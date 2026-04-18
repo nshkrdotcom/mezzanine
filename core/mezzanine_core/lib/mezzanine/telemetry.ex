@@ -8,7 +8,6 @@ defmodule Mezzanine.Telemetry do
   """
 
   @prefix [:mezzanine]
-  @telemetry_module :telemetry
   @common_metadata_keys [
     :trace_id,
     :subject_id,
@@ -34,11 +33,11 @@ defmodule Mezzanine.Telemetry do
       |> normalize_metadata()
       |> Map.put_new(:event_name, dotted_event_name(normalized_event))
 
-    apply(@telemetry_module, :execute, [
+    :telemetry.execute(
       prefixed_event_name(normalized_event),
       normalized_measurements,
       normalized_metadata
-    ])
+    )
   end
 
   @spec prefixed_event_name(event_name()) :: [atom()]
@@ -48,8 +47,7 @@ defmodule Mezzanine.Telemetry do
   def dotted_event_name(event) when is_list(event) do
     event
     |> normalize_event()
-    |> Enum.map(&Atom.to_string/1)
-    |> Enum.join(".")
+    |> Enum.map_join(".", &Atom.to_string/1)
   end
 
   @spec monotonic_duration_ms(integer(), integer()) :: non_neg_integer()

@@ -3,10 +3,10 @@ defmodule Mezzanine.OperatorCommandsTest do
 
   alias Mezzanine.Execution.ExecutionRecord
   alias Mezzanine.Execution.Repo
-  alias Mezzanine.LeaseInvalidation
-  alias Mezzanine.Leasing
   alias Mezzanine.ExecutionCancelWorker
   alias Mezzanine.ExecutionDispatchWorker
+  alias Mezzanine.LeaseInvalidation
+  alias Mezzanine.Leasing
   alias Mezzanine.OperatorCommands
 
   @reconcile_worker "Mezzanine.ExecutionReconcileWorker"

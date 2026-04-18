@@ -11,10 +11,10 @@ defmodule Mezzanine.WorkQueries do
   alias Mezzanine.Reviews
   alias Mezzanine.Runs.{Run, RunSeries}
   alias Mezzanine.ServiceSupport
-  alias Mezzanine.WorkProjectionFacts
   alias Mezzanine.Work.WorkObject
   alias Mezzanine.Work.WorkPlan
   alias Mezzanine.WorkControl
+  alias Mezzanine.WorkProjectionFacts
 
   @active_statuses [:pending, :planning, :planned, :running, :awaiting_review, :blocked]
 

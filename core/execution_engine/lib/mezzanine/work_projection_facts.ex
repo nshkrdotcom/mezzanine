@@ -244,19 +244,33 @@ defmodule Mezzanine.WorkProjectionFacts do
          control_session,
          gate_status
        ) do
-    blocker_kinds = Enum.map(blocking_conditions, & &1.blocker_kind)
-    obligation_ids = Enum.map(pending_obligations, & &1.obligation_id)
-    run_status = normalize_state(active_run && map_value(active_run, :status))
+    context = %{
+      work_object: work_object,
+      current_plan: current_plan,
+      pending_obligations: pending_obligations,
+      control_session: control_session,
+      gate_status: gate_status,
+      blocker_kinds: Enum.map(blocking_conditions, & &1.blocker_kind),
+      obligation_ids: Enum.map(pending_obligations, & &1.obligation_id),
+      run_status: normalize_state(active_run && map_value(active_run, :status))
+    }
 
+    blocking_step_preview(context) ||
+      terminal_step_preview(context) ||
+      run_step_preview(context) ||
+      plan_step_preview(context)
+  end
+
+  defp blocking_step_preview(%{blocker_kinds: blocker_kinds} = context) do
     cond do
       "operator_paused" in blocker_kinds ->
         step_preview(
           "resume_subject",
           "blocked",
           "Resume the paused subject before dispatch may continue.",
-          blocker_kinds,
-          obligation_ids,
-          %{control_mode: normalize_state(map_value(control_session, :current_mode))}
+          context.blocker_kinds,
+          context.obligation_ids,
+          %{control_mode: normalize_state(map_value(context.control_session, :current_mode))}
         )
 
       "dependency_blocked" in blocker_kinds ->
@@ -264,9 +278,9 @@ defmodule Mezzanine.WorkProjectionFacts do
           "resolve_dependency",
           "blocked",
           "Resolve the blocking dependency before this subject may proceed.",
-          blocker_kinds,
-          obligation_ids,
-          %{blocked_by_work_id: map_value(work_object, :blocked_by_work_id)}
+          context.blocker_kinds,
+          context.obligation_ids,
+          %{blocked_by_work_id: map_value(context.work_object, :blocked_by_work_id)}
         )
 
       "review_rejected" in blocker_kinds ->
@@ -274,9 +288,9 @@ defmodule Mezzanine.WorkProjectionFacts do
           "resolve_rejected_review",
           "blocked",
           "Resolve the rejected review outcome before execution may proceed.",
-          blocker_kinds,
-          obligation_ids,
-          %{gate_status: normalize_state(map_value(gate_status, :status))}
+          context.blocker_kinds,
+          context.obligation_ids,
+          %{gate_status: normalize_state(map_value(context.gate_status, :status))}
         )
 
       "review_escalated" in blocker_kinds ->
@@ -284,9 +298,9 @@ defmodule Mezzanine.WorkProjectionFacts do
           "resolve_escalation",
           "blocked",
           "Resolve the open escalation before execution may proceed.",
-          blocker_kinds,
-          obligation_ids,
-          %{gate_status: normalize_state(map_value(gate_status, :status))}
+          context.blocker_kinds,
+          context.obligation_ids,
+          %{gate_status: normalize_state(map_value(context.gate_status, :status))}
         )
 
       "review_pending" in blocker_kinds ->
@@ -294,28 +308,40 @@ defmodule Mezzanine.WorkProjectionFacts do
           "record_review_decision",
           "blocked",
           "Record the pending review decision before execution may proceed.",
-          blocker_kinds,
-          obligation_ids,
-          %{gate_status: normalize_state(map_value(gate_status, :status))}
+          context.blocker_kinds,
+          context.obligation_ids,
+          %{gate_status: normalize_state(map_value(context.gate_status, :status))}
         )
 
-      normalize_state(map_value(work_object, :status)) in @terminal_work_statuses ->
-        step_preview(
-          "none",
-          "complete",
-          "The subject is terminal and has no further planned work.",
-          blocker_kinds,
-          obligation_ids,
-          %{work_status: normalize_state(map_value(work_object, :status))}
-        )
+      true ->
+        nil
+    end
+  end
 
+  defp terminal_step_preview(context) do
+    work_status = normalize_state(map_value(context.work_object, :status))
+
+    if work_status in @terminal_work_statuses do
+      step_preview(
+        "none",
+        "complete",
+        "The subject is terminal and has no further planned work.",
+        context.blocker_kinds,
+        context.obligation_ids,
+        %{work_status: work_status}
+      )
+    end
+  end
+
+  defp run_step_preview(%{run_status: run_status} = context) do
+    cond do
       run_status in @queued_run_statuses ->
         step_preview(
           "dispatch_execution",
           "in_progress",
           "The current execution is queued for dispatch.",
-          blocker_kinds,
-          obligation_ids,
+          context.blocker_kinds,
+          context.obligation_ids,
           %{run_status: run_status}
         )
 
@@ -327,8 +353,8 @@ defmodule Mezzanine.WorkProjectionFacts do
             do: "Investigate the stalled execution before the subject may proceed.",
             else: "Await lower execution outcome and receipt reconciliation."
           ),
-          blocker_kinds,
-          obligation_ids,
+          context.blocker_kinds,
+          context.obligation_ids,
           %{run_status: run_status}
         )
 
@@ -337,37 +363,42 @@ defmodule Mezzanine.WorkProjectionFacts do
           "investigate_failed_run",
           "blocked",
           "Investigate the failed execution and resolve any recovery review.",
-          blocker_kinds,
-          obligation_ids,
+          context.blocker_kinds,
+          context.obligation_ids,
           %{run_status: run_status}
         )
 
-      current_plan != nil ->
-        run_intent = first_run_intent(current_plan)
-
-        step_preview(
-          "start_run",
-          "ready",
-          "Start the next governed execution for this subject.",
-          blocker_kinds,
-          obligation_ids,
-          %{
-            intent_id: map_value(run_intent, :intent_id),
-            capability: map_value(run_intent, :capability),
-            review_required: pending_obligations != []
-          }
-        )
-
       true ->
-        step_preview(
-          "compile_plan",
-          "ready",
-          "Compile a work plan before execution may proceed.",
-          blocker_kinds,
-          obligation_ids,
-          %{}
-        )
+        nil
     end
+  end
+
+  defp plan_step_preview(%{current_plan: nil} = context) do
+    step_preview(
+      "compile_plan",
+      "ready",
+      "Compile a work plan before execution may proceed.",
+      context.blocker_kinds,
+      context.obligation_ids,
+      %{}
+    )
+  end
+
+  defp plan_step_preview(context) do
+    run_intent = first_run_intent(context.current_plan)
+
+    step_preview(
+      "start_run",
+      "ready",
+      "Start the next governed execution for this subject.",
+      context.blocker_kinds,
+      context.obligation_ids,
+      %{
+        intent_id: map_value(run_intent, :intent_id),
+        capability: map_value(run_intent, :capability),
+        review_required: context.pending_obligations != []
+      }
+    )
   end
 
   defp step_preview(

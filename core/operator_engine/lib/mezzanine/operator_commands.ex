@@ -357,14 +357,16 @@ defmodule Mezzanine.OperatorCommands do
     :ok =
       record_subject_cancelled(
         updated_subject,
-        cancelled_dispatch_job_ids,
-        cancelled_execution_ids,
-        cancel_job_refs,
-        Enum.map(invalidations, & &1.lease_id),
-        trace_id,
-        causation_id,
-        actor_ref,
-        now
+        %{
+          cancelled_dispatch_job_ids: cancelled_dispatch_job_ids,
+          cancelled_execution_ids: cancelled_execution_ids,
+          cancel_job_refs: cancel_job_refs,
+          invalidated_lease_ids: Enum.map(invalidations, & &1.lease_id),
+          trace_id: trace_id,
+          causation_id: causation_id,
+          actor_ref: actor_ref,
+          occurred_at: now
+        }
       )
 
     build_result(
@@ -458,35 +460,25 @@ defmodule Mezzanine.OperatorCommands do
     :ok
   end
 
-  defp record_subject_cancelled(
-         updated_subject,
-         cancelled_dispatch_job_ids,
-         cancelled_execution_ids,
-         cancel_job_refs,
-         invalidated_lease_ids,
-         trace_id,
-         causation_id,
-         actor_ref,
-         now
-       ) do
+  defp record_subject_cancelled(updated_subject, audit_context) do
     insert_audit_fact(%{
       installation_id: updated_subject.installation_id,
       subject_id: updated_subject.id,
       execution_id: nil,
-      trace_id: trace_id,
-      causation_id: causation_id,
+      trace_id: audit_context.trace_id,
+      causation_id: audit_context.causation_id,
       fact_kind: "subject_cancelled",
-      actor_ref: actor_ref,
+      actor_ref: audit_context.actor_ref,
       payload: %{
         "lifecycle_state" => updated_subject.lifecycle_state,
         "status" => updated_subject.status,
         "status_reason" => updated_subject.status_reason,
-        "cancelled_dispatch_job_ids" => cancelled_dispatch_job_ids,
-        "cancelled_execution_ids" => cancelled_execution_ids,
-        "cancel_job_ids" => Enum.map(cancel_job_refs, & &1.job_id),
-        "invalidated_lease_ids" => invalidated_lease_ids
+        "cancelled_dispatch_job_ids" => audit_context.cancelled_dispatch_job_ids,
+        "cancelled_execution_ids" => audit_context.cancelled_execution_ids,
+        "cancel_job_ids" => Enum.map(audit_context.cancel_job_refs, & &1.job_id),
+        "invalidated_lease_ids" => audit_context.invalidated_lease_ids
       },
-      occurred_at: now
+      occurred_at: audit_context.occurred_at
     })
   end
 

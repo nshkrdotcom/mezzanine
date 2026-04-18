@@ -187,13 +187,9 @@ defmodule Mezzanine.ExecutionCancelWorker do
     Map.get(terminal_outcome, "status") || Map.get(terminal_outcome, :status)
   end
 
-  defp terminal_outcome_status(_other), do: nil
-
   defp terminal_outcome_receipt_id(terminal_outcome) when is_map(terminal_outcome) do
     Map.get(terminal_outcome, "receipt_id") || Map.get(terminal_outcome, :receipt_id)
   end
-
-  defp terminal_outcome_receipt_id(_other), do: nil
 
   defp normalize_value(%DateTime{} = datetime), do: DateTime.to_iso8601(datetime)
 
