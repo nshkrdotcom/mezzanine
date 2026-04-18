@@ -2,6 +2,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
   use ExUnit.Case, async: false
 
   alias Ecto.Adapters.SQL.Sandbox
+  alias Jido.Integration.V2.TenantScope
   alias Mezzanine.Audit.{ExecutionLineage, ExecutionLineageStore, Repo}
   alias Mezzanine.IntegrationBridge
   alias Mezzanine.Intent.{EffectIntent, ReadIntent, RunIntent}
@@ -14,44 +15,54 @@ defmodule Mezzanine.IntegrationBridgeTest do
       :fetch_attempt,
       :events,
       :fetch_artifact,
-      :run_artifacts
+      :run_artifacts,
+      :resolve_trace
     ]
 
     def operations, do: @operations
     def operation_supported?(operation), do: operation in @operations
 
-    def fetch_submission_receipt(submission_key) do
-      dispatch(:fetch_submission_receipt, [submission_key], %{submission_key: submission_key})
+    def fetch_submission_receipt(%TenantScope{} = scope, submission_key) do
+      dispatch(:fetch_submission_receipt, [scope, submission_key], %{
+        submission_key: submission_key
+      })
     end
 
-    def fetch_run(run_id) do
-      dispatch(:fetch_run, [run_id], %{run_id: run_id, status: :completed})
+    def fetch_run(%TenantScope{} = scope, run_id) do
+      dispatch(:fetch_run, [scope, run_id], %{run_id: run_id, status: :completed})
     end
 
-    def attempts(run_id) do
-      dispatch(:attempts, [run_id], [
+    def attempts(%TenantScope{} = scope, run_id) do
+      dispatch(:attempts, [scope, run_id], [
         %{attempt_id: "attempt-1", run_id: run_id, status: :completed}
       ])
     end
 
-    def fetch_attempt(attempt_id) do
-      dispatch(:fetch_attempt, [attempt_id], %{
+    def fetch_attempt(%TenantScope{} = scope, attempt_id) do
+      dispatch(:fetch_attempt, [scope, attempt_id], %{
         attempt_id: attempt_id,
         run_id: "run-1",
         status: :completed
       })
     end
 
-    def events(run_id) do
-      dispatch(:events, [run_id], [%{run_id: run_id, type: "attempt.completed"}])
+    def events(%TenantScope{} = scope, run_id) do
+      dispatch(:events, [scope, run_id], [%{run_id: run_id, type: "attempt.completed"}])
     end
 
-    def fetch_artifact(artifact_id) do
-      dispatch(:fetch_artifact, [artifact_id], %{artifact_id: artifact_id, run_id: "run-1"})
+    def fetch_artifact(%TenantScope{} = scope, artifact_id) do
+      dispatch(:fetch_artifact, [scope, artifact_id], %{artifact_id: artifact_id, run_id: "run-1"})
     end
 
-    def run_artifacts(run_id) do
-      dispatch(:run_artifacts, [run_id], [%{artifact_id: "artifact-1", run_id: run_id}])
+    def run_artifacts(%TenantScope{} = scope, run_id) do
+      dispatch(:run_artifacts, [scope, run_id], [%{artifact_id: "artifact-1", run_id: run_id}])
+    end
+
+    def resolve_trace(%TenantScope{} = scope, trace_id) do
+      dispatch(:resolve_trace, [scope, trace_id], %{
+        trace_id: trace_id,
+        run: %{run_id: "run-1"}
+      })
     end
 
     defp dispatch(operation, args, fallback) do
@@ -137,6 +148,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
         read_type: :lower_fact,
         subject: %{
           actor_id: "actor-1",
+          tenant_id: "tenant-1",
           installation_id: "inst-1",
           execution_id: "exec-1"
         },
@@ -162,7 +174,43 @@ defmodule Mezzanine.IntegrationBridgeTest do
 
     assert result.result.run_id == "run-1"
 
-    assert_received {:fetch_run, ["run-1"]}
+    assert_received {:fetch_run,
+                     [
+                       %TenantScope{tenant_id: "tenant-1", installation_id: "inst-1"},
+                       "run-1"
+                     ]}
+  end
+
+  test "dispatch_read passes tenant scope to the substrate read slice and fails closed on mismatch" do
+    store_lineage!()
+
+    Process.put(:integration_bridge_test_responses, %{
+      fetch_run: fn [%TenantScope{tenant_id: "tenant-other"}, _run_id] ->
+        {:error, :tenant_mismatch}
+      end
+    })
+
+    intent =
+      ReadIntent.new!(%{
+        intent_id: "read-tenant-mismatch",
+        read_type: :lower_fact,
+        subject: %{
+          actor_id: "actor-1",
+          tenant_id: "tenant-other",
+          installation_id: "inst-1",
+          execution_id: "exec-1"
+        },
+        query: %{operation: :fetch_run}
+      })
+
+    assert {:error, :tenant_mismatch} =
+             IntegrationBridge.dispatch_read(intent, lower_facts: LowerFactsStub)
+
+    assert_received {:fetch_run,
+                     [
+                       %TenantScope{tenant_id: "tenant-other", installation_id: "inst-1"},
+                       "run-1"
+                     ]}
   end
 
   test "dispatch_read denies lower reads when installation context does not match the stored lineage" do
@@ -174,6 +222,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
         read_type: :lower_fact,
         subject: %{
           actor_id: "actor-1",
+          tenant_id: "tenant-1",
           installation_id: "inst-2",
           execution_id: "exec-1"
         },
@@ -193,6 +242,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
         read_type: :lower_fact,
         subject: %{
           actor_id: "actor-1",
+          tenant_id: "tenant-1",
           installation_id: "inst-1",
           execution_id: "exec-1"
         },
@@ -210,7 +260,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
     store_lineage!()
 
     Process.put(:integration_bridge_test_responses, %{
-      fetch_artifact: fn [artifact_id] ->
+      fetch_artifact: fn [%TenantScope{}, artifact_id] ->
         {:ok, %{artifact_id: artifact_id, run_id: "run-other"}}
       end
     })
@@ -221,6 +271,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
         read_type: :lower_fact,
         subject: %{
           actor_id: "actor-1",
+          tenant_id: "tenant-1",
           installation_id: "inst-1",
           execution_id: "exec-1"
         },
@@ -240,7 +291,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
              }}} =
              IntegrationBridge.dispatch_read(intent, lower_facts: LowerFactsStub)
 
-    assert_received {:fetch_artifact, ["artifact-1"]}
+    assert_received {:fetch_artifact, [%TenantScope{tenant_id: "tenant-1"}, "artifact-1"]}
   end
 
   test "event translation maps direct platform outcomes to audit attrs" do

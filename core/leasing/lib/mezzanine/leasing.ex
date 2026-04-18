@@ -7,6 +7,7 @@ defmodule Mezzanine.Leasing do
   import Ecto.Query
 
   alias Mezzanine.LeaseInvalidation
+  alias Mezzanine.Leasing.AuthorizationScope
   alias Mezzanine.ReadLease
   alias Mezzanine.StreamAttachLease
   alias Mezzanine.Telemetry
@@ -103,11 +104,19 @@ defmodule Mezzanine.Leasing do
     )
   end
 
-  @spec authorize_read(Ecto.UUID.t(), String.t(), atom() | String.t(), [option()]) ::
+  @spec authorize_read(
+          AuthorizationScope.t() | map() | keyword(),
+          Ecto.UUID.t(),
+          String.t(),
+          atom() | String.t(),
+          [option()]
+        ) ::
           {:ok, ReadLease.t()} | {:error, term()}
-  def authorize_read(lease_id, token, operation, opts \\ [])
+  def authorize_read(scope, lease_id, token, operation, opts \\ [])
       when is_binary(lease_id) and is_binary(token) do
-    with {:ok, %ReadLease{} = lease} <- fetch_lease(ReadLease, lease_id, opts),
+    with {:ok, %AuthorizationScope{} = scope} <- AuthorizationScope.new(scope),
+         {:ok, %ReadLease{} = lease} <- fetch_lease(ReadLease, lease_id, opts),
+         :ok <- ensure_authorized_scope(lease, scope),
          :ok <- verify_token(lease.lease_token_digest, token),
          :ok <- ensure_not_expired(lease.expires_at, opts),
          :ok <- ensure_read_operation(lease.allowed_operations, operation),
@@ -117,11 +126,18 @@ defmodule Mezzanine.Leasing do
     end
   end
 
-  @spec authorize_stream_attach(Ecto.UUID.t(), String.t(), [option()]) ::
+  @spec authorize_stream_attach(
+          AuthorizationScope.t() | map() | keyword(),
+          Ecto.UUID.t(),
+          String.t(),
+          [option()]
+        ) ::
           {:ok, StreamAttachLease.t()} | {:error, term()}
-  def authorize_stream_attach(lease_id, token, opts \\ [])
+  def authorize_stream_attach(scope, lease_id, token, opts \\ [])
       when is_binary(lease_id) and is_binary(token) do
-    with {:ok, %StreamAttachLease{} = lease} <- fetch_lease(StreamAttachLease, lease_id, opts),
+    with {:ok, %AuthorizationScope{} = scope} <- AuthorizationScope.new(scope),
+         {:ok, %StreamAttachLease{} = lease} <- fetch_lease(StreamAttachLease, lease_id, opts),
+         :ok <- ensure_authorized_scope(lease, scope),
          :ok <- verify_token(lease.attach_token_digest, token),
          :ok <- ensure_not_expired(lease.expires_at, opts),
          cursor <- lease.issued_invalidation_cursor || 0,
@@ -253,6 +269,36 @@ defmodule Mezzanine.Leasing do
       {:error, :unauthorized_operation}
     end
   end
+
+  defp ensure_authorized_scope(lease, %AuthorizationScope{} = scope) do
+    [
+      {:tenant_mismatch, lease.tenant_id, scope.tenant_id, :required},
+      {:installation_mismatch, lease.installation_id, scope.installation_id, :optional},
+      {:trace_mismatch, lease.trace_id, scope.trace_id, :optional},
+      {:subject_mismatch, lease.subject_id, scope.subject_id, :optional},
+      {:execution_mismatch, lease.execution_id, scope.execution_id, :optional}
+    ]
+    |> Enum.reduce_while(:ok, fn check, :ok ->
+      case ensure_scope_field(check) do
+        :ok -> {:cont, :ok}
+        error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp ensure_scope_field({reason, lease_value, scope_value, :required})
+       when lease_value != scope_value,
+       do: {:error, reason}
+
+  defp ensure_scope_field({_reason, _lease_value, _scope_value, :required}), do: :ok
+  defp ensure_scope_field({_reason, _lease_value, nil, :optional}), do: :ok
+  defp ensure_scope_field({_reason, nil, _scope_value, :optional}), do: :ok
+
+  defp ensure_scope_field({reason, lease_value, scope_value, :optional})
+       when lease_value != scope_value,
+       do: {:error, reason}
+
+  defp ensure_scope_field({_reason, _lease_value, _scope_value, :optional}), do: :ok
 
   defp ensure_not_invalidated(lease_id, lease_kind, cursor, opts) do
     repo = repo(opts)

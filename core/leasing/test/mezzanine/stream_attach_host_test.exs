@@ -2,6 +2,7 @@ defmodule Mezzanine.StreamAttachHostTest do
   use Mezzanine.Leasing.DataCase, async: false
 
   alias Mezzanine.Leasing
+  alias Mezzanine.Leasing.AuthorizationScope
   alias Mezzanine.StreamAttachHost
 
   test "attaches and then terminates after durable invalidation" do
@@ -28,6 +29,7 @@ defmodule Mezzanine.StreamAttachHostTest do
         StreamAttachHost.start_link(
           lease_id: lease.lease_id,
           token: lease.attach_token,
+          authorization_scope: authorization_scope(lease),
           repo: Repo,
           notify: self(),
           poll_interval_ms: 50
@@ -96,6 +98,7 @@ defmodule Mezzanine.StreamAttachHostTest do
         StreamAttachHost.start_link(
           lease_id: lease.lease_id,
           token: lease.attach_token,
+          authorization_scope: authorization_scope(lease),
           repo: Repo,
           notify: self(),
           poll_interval_ms: 50
@@ -159,6 +162,7 @@ defmodule Mezzanine.StreamAttachHostTest do
         StreamAttachHost.start_link(
           lease_id: lease.lease_id,
           token: lease.attach_token,
+          authorization_scope: authorization_scope(lease),
           repo: Repo,
           notify: self(),
           poll_interval_ms: 50
@@ -214,6 +218,7 @@ defmodule Mezzanine.StreamAttachHostTest do
       StreamAttachHost.start_link(
         lease_id: lease.lease_id,
         token: lease.attach_token,
+        authorization_scope: authorization_scope(lease),
         repo: Repo,
         notify: self(),
         poll_interval_ms: 50
@@ -235,6 +240,7 @@ defmodule Mezzanine.StreamAttachHostTest do
       StreamAttachHost.start_link(
         lease_id: lease.lease_id,
         token: lease.attach_token,
+        authorization_scope: authorization_scope(lease),
         repo: Repo,
         notify: self(),
         poll_interval_ms: 50
@@ -256,6 +262,18 @@ defmodule Mezzanine.StreamAttachHostTest do
 
   defp detach_telemetry(handler_ids) do
     Enum.each(handler_ids, &:telemetry.detach/1)
+  end
+
+  defp authorization_scope(lease) do
+    AuthorizationScope.new!(%{
+      tenant_id: lease.tenant_id,
+      installation_id: lease.installation_id,
+      subject_id: lease.subject_id,
+      execution_id: lease.execution_id,
+      trace_id: lease.trace_id,
+      actor_ref: %{id: "stream-attach-host-test"},
+      authorized_at: DateTime.utc_now()
+    })
   end
 
   def handle_telemetry_event(event, measurements, metadata, pid) do

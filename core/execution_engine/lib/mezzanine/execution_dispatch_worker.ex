@@ -264,15 +264,17 @@ defmodule Mezzanine.ExecutionDispatchWorker do
   end
 
   defp persist_dispatch_result({:terminal, terminal_reason, error_payload}, execution, job, _opts) do
+    terminal_attrs = %{
+      terminal_rejection_reason: terminal_reason,
+      last_dispatch_error_payload: error_payload,
+      trace_id: execution.trace_id,
+      causation_id: causation_id(job),
+      actor_ref: actor_ref(job)
+    }
+
     Repo.transaction(fn ->
-      with {:ok, _execution} <-
-             ExecutionRecord.record_terminal_rejection(execution, %{
-               terminal_rejection_reason: terminal_reason,
-               last_dispatch_error_payload: error_payload,
-               trace_id: execution.trace_id,
-               causation_id: causation_id(job),
-               actor_ref: actor_ref(job)
-             }),
+      with {:ok, _execution, notifications} <-
+             record_terminal_rejection_with_notifications(execution, terminal_attrs),
            {:ok, _invalidations} <-
              Leasing.invalidate_execution_leases(
                execution.id,
@@ -281,14 +283,18 @@ defmodule Mezzanine.ExecutionDispatchWorker do
                repo: Repo,
                trace_id: execution.trace_id
              ) do
-        :discard
+        {:discard, notifications}
       else
         {:error, error} -> Repo.rollback(error)
       end
     end)
     |> case do
-      {:ok, result} -> result
-      {:error, error} -> {:error, error}
+      {:ok, {:discard, notifications}} ->
+        Ash.Notifier.notify(notifications)
+        :discard
+
+      {:error, error} ->
+        {:error, error}
     end
   end
 
@@ -308,6 +314,16 @@ defmodule Mezzanine.ExecutionDispatchWorker do
 
   defp persist_dispatch_result(result, execution, job) do
     persist_dispatch_result(result, execution, job, [])
+  end
+
+  defp record_terminal_rejection_with_notifications(%ExecutionRecord{} = execution, attrs) do
+    execution
+    |> Ash.Changeset.for_update(:record_terminal_rejection, attrs)
+    |> Ash.update(
+      authorize?: false,
+      domain: Mezzanine.Execution,
+      return_notifications?: true
+    )
   end
 
   defp record_accepted(%ExecutionRecord{} = execution, payload, job, opts) do

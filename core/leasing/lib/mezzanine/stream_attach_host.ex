@@ -6,12 +6,22 @@ defmodule Mezzanine.StreamAttachHost do
   use GenServer
 
   alias Mezzanine.Leasing
+  alias Mezzanine.Leasing.AuthorizationScope
   alias Mezzanine.StreamAttachLease
   alias Mezzanine.Telemetry
 
   @type option ::
-          {:lease_id, Ecto.UUID.t()}
+          {:lease_id, String.t()}
           | {:token, String.t()}
+          | {:authorization_scope, AuthorizationScope.t() | map() | keyword()}
+          | {:scope, AuthorizationScope.t() | map() | keyword()}
+          | {:tenant_id, String.t()}
+          | {:installation_id, String.t()}
+          | {:subject_id, String.t()}
+          | {:execution_id, String.t()}
+          | {:trace_id, String.t()}
+          | {:actor_ref, map()}
+          | {:authorized_at, DateTime.t()}
           | {:repo, module()}
           | {:poll_interval_ms, pos_integer()}
           | {:notify, pid()}
@@ -42,6 +52,7 @@ defmodule Mezzanine.StreamAttachHost do
           state = %{
             lease_id: Keyword.fetch!(opts, :lease_id),
             token: Keyword.fetch!(opts, :token),
+            authorization_scope: authorization_scope!(opts),
             repo: repo,
             poll_target: poll_target,
             notify: Keyword.get(opts, :notify, self()),
@@ -60,7 +71,12 @@ defmodule Mezzanine.StreamAttachHost do
 
   @impl true
   def handle_continue(:attach, state) do
-    case Leasing.authorize_stream_attach(state.lease_id, state.token, repo: state.repo) do
+    case Leasing.authorize_stream_attach(
+           state.authorization_scope,
+           state.lease_id,
+           state.token,
+           repo: state.repo
+         ) do
       {:ok, lease} ->
         cursor = lease.last_invalidation_cursor || lease.issued_invalidation_cursor || 0
         lease_context = lease_context(lease)
@@ -219,6 +235,24 @@ defmodule Mezzanine.StreamAttachHost do
         {:ok, connection} -> {:ok, {:connection, connection}}
         {:error, reason} -> {:error, reason}
       end
+    end
+  end
+
+  defp authorization_scope!(opts) do
+    case Keyword.get(opts, :authorization_scope) || Keyword.get(opts, :scope) do
+      nil ->
+        AuthorizationScope.new!(
+          tenant_id: Keyword.fetch!(opts, :tenant_id),
+          installation_id: Keyword.get(opts, :installation_id),
+          subject_id: Keyword.get(opts, :subject_id),
+          execution_id: Keyword.get(opts, :execution_id),
+          trace_id: Keyword.get(opts, :trace_id),
+          actor_ref: Keyword.get(opts, :actor_ref),
+          authorized_at: DateTime.utc_now()
+        )
+
+      scope ->
+        AuthorizationScope.new!(scope)
     end
   end
 

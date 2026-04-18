@@ -82,6 +82,11 @@ Current posture:
 - new reusable substrate work lands in the neutral package graph
 - dispatch ownership now belongs to `Mezzanine.JobOutbox` plus lower-gateway
   workers, not to a bespoke SQL outbox
+- lower-facts reads are tenant-scoped at both lease authorization and
+  Jido Integration substrate-read boundaries; `Mezzanine.Leasing` checks the
+  caller-carried authorization scope before token validation, and
+  `bridges/integration_bridge` forwards only typed `TenantScope` reads to the
+  lower store
 - the remaining `ops_*` packages are explicit semantic-host carryovers, not a
   reusable extension surface
 

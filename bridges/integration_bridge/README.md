@@ -11,3 +11,15 @@ It owns:
 - read dispatch via typed `Jido.Integration.V2.LowerFacts` operations keyed by
   authorized `ExecutionLineage`
 - event translation back into Mezzanine audit attrs
+
+## Tenant-Scoped Lower Reads
+
+`ReadDispatcher` is the Mezzanine substrate-facing lower-read boundary. It
+builds a typed `Jido.Integration.V2.TenantScope` from the authorized read
+intent and calls the dedicated Jido Integration substrate read slice through the
+tenant-scoped `LowerFacts` facade.
+
+Read intents that omit tenant scope or try to reuse lineage under another
+tenant fail closed before the lower store is queried. Product code should not
+call this bridge directly; northbound reads enter through AppKit surfaces and
+carry Mezzanine read leases plus authorization scope.

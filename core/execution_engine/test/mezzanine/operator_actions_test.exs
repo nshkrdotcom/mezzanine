@@ -6,6 +6,7 @@ defmodule Mezzanine.OperatorActionsTest do
   alias Mezzanine.Control.ControlSession
   alias Mezzanine.Execution.Repo, as: ExecutionRepo
   alias Mezzanine.Leasing
+  alias Mezzanine.Leasing.AuthorizationScope
   alias Mezzanine.OperatorActions
   alias Mezzanine.Programs.{PolicyBundle, Program}
   alias Mezzanine.Runs.{Run, RunSeries}
@@ -68,12 +69,19 @@ defmodule Mezzanine.OperatorActionsTest do
              Enum.sort([read_lease.lease_id, stream_lease.lease_id])
 
     assert {:error, {:lease_invalidated, "subject_paused", _sequence_number}} =
-             Leasing.authorize_read(read_lease.lease_id, read_lease.lease_token, :fetch_run,
+             Leasing.authorize_read(
+               read_authorization_scope(read_lease),
+               read_lease.lease_id,
+               read_lease.lease_token,
+               :fetch_run,
                repo: ExecutionRepo
              )
 
     assert {:error, {:lease_invalidated, "subject_paused", _sequence_number}} =
-             Leasing.authorize_stream_attach(stream_lease.lease_id, stream_lease.attach_token,
+             Leasing.authorize_stream_attach(
+               stream_authorization_scope(stream_lease),
+               stream_lease.lease_id,
+               stream_lease.attach_token,
                repo: ExecutionRepo
              )
   end
@@ -310,6 +318,30 @@ defmodule Mezzanine.OperatorActionsTest do
     ---
     # Control prompt
     """
+  end
+
+  defp read_authorization_scope(read_lease) do
+    AuthorizationScope.new!(
+      tenant_id: read_lease.tenant_id,
+      installation_id: read_lease.installation_id,
+      subject_id: read_lease.subject_id,
+      execution_id: read_lease.execution_id,
+      trace_id: read_lease.trace_id,
+      actor_ref: %{id: "ops_lead"},
+      authorized_at: DateTime.utc_now()
+    )
+  end
+
+  defp stream_authorization_scope(stream_lease) do
+    AuthorizationScope.new!(
+      tenant_id: stream_lease.tenant_id,
+      installation_id: stream_lease.installation_id,
+      subject_id: stream_lease.subject_id,
+      execution_id: stream_lease.execution_id,
+      trace_id: stream_lease.trace_id,
+      actor_ref: %{id: "ops_lead"},
+      authorized_at: DateTime.utc_now()
+    )
   end
 
   defp stripped_uuid do

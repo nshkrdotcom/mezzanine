@@ -3,6 +3,7 @@ defmodule Mezzanine.LeasingTest do
 
   alias Mezzanine.LeaseInvalidation
   alias Mezzanine.Leasing
+  alias Mezzanine.Leasing.AuthorizationScope
 
   test "issues and authorizes a scoped read lease" do
     telemetry_ids = attach_telemetry([[:mezzanine, :lease, :issued]])
@@ -29,11 +30,21 @@ defmodule Mezzanine.LeasingTest do
 
       assert lease.issued_invalidation_cursor == 0
 
+      scope = authorization_scope(lease)
+
       assert {:ok, _authorized} =
-               Leasing.authorize_read(lease.lease_id, lease.lease_token, :events)
+               Leasing.authorize_read(scope, lease.lease_id, lease.lease_token, :events)
 
       assert {:error, :unauthorized_operation} =
-               Leasing.authorize_read(lease.lease_id, lease.lease_token, :run_artifacts)
+               Leasing.authorize_read(scope, lease.lease_id, lease.lease_token, :run_artifacts)
+
+      assert {:error, :tenant_mismatch} =
+               Leasing.authorize_read(
+                 %{scope | tenant_id: "tenant-b"},
+                 lease.lease_id,
+                 lease.lease_token,
+                 :events
+               )
     after
       detach_telemetry(telemetry_ids)
     end
@@ -88,7 +99,11 @@ defmodule Mezzanine.LeasingTest do
       end)
 
       assert {:error, {:lease_invalidated, "subject_paused", sequence_number}} =
-               Leasing.authorize_stream_attach(stream_lease.lease_id, stream_lease.attach_token)
+               Leasing.authorize_stream_attach(
+                 authorization_scope(stream_lease),
+                 stream_lease.lease_id,
+                 stream_lease.attach_token
+               )
 
       assert is_integer(sequence_number)
 
@@ -151,6 +166,18 @@ defmodule Mezzanine.LeasingTest do
       assert_receive {:telemetry_event, event, measurements, metadata}
       {event, measurements, metadata}
     end)
+  end
+
+  defp authorization_scope(lease) do
+    AuthorizationScope.new!(%{
+      tenant_id: lease.tenant_id,
+      installation_id: lease.installation_id,
+      subject_id: lease.subject_id,
+      execution_id: lease.execution_id,
+      trace_id: lease.trace_id,
+      actor_ref: %{id: "lease-test"},
+      authorized_at: DateTime.utc_now()
+    })
   end
 
   def handle_telemetry_event(event, measurements, metadata, pid) do
