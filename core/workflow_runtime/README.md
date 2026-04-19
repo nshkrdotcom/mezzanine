@@ -40,3 +40,18 @@ activities acquire authority evidence through `Mezzanine.ActivityLeaseBroker`.
 The broker cache is process-local to the activity worker and never enters
 workflow history; workflow history carries only compact refs, hashes, bounded
 routing facts, validation state, and diagnostics refs.
+
+## Workflow Fan-Out/Fan-In
+
+`Mezzanine.WorkflowRuntime.WorkflowFanoutFanin` defines the M30
+`Mezzanine.WorkflowFanoutFanin.v1` contract for `Mezzanine.Workflows.JoinBarrier`.
+Fan-out uses child workflows when each branch owns an independent durable
+lifecycle. Every branch carries tenant, resource, trace, parent workflow ref,
+child workflow ref, idempotency scope, authority context, and release-manifest
+ref before the parent accepts it.
+
+Child completions enter the parent through the `child.completed`
+`child-completed.v1` signal shape. The parent closes the join barrier exactly
+once, suppresses duplicate completions by completion idempotency key, exposes a
+raw-payload-free `fanout.branch_state` query projection, and emits child cancel
+signals only for unfinished branches with the original authority context.

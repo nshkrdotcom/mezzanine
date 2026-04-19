@@ -593,7 +593,7 @@ defmodule Mezzanine.Workflows.JoinBarrier do
   @moduledoc "Phase 4 fan-in join-barrier workflow skeleton."
   @behaviour Temporalex.Workflow
 
-  alias Mezzanine.Workflows.Support
+  alias Mezzanine.WorkflowRuntime.WorkflowFanoutFanin
 
   @doc false
   def __workflow_type__, do: __MODULE__ |> Module.split() |> Enum.join(".")
@@ -602,7 +602,7 @@ defmodule Mezzanine.Workflows.JoinBarrier do
   def __workflow_defaults__, do: [task_queue: "mezzanine.agentic"]
 
   @impl Temporalex.Workflow
-  def run(input), do: {:ok, Support.compact_result(:join_barrier, input)}
+  def run(input), do: WorkflowFanoutFanin.run_join_barrier(input)
 end
 
 defmodule Mezzanine.Workflows.IncidentReconstruction do
