@@ -13,6 +13,8 @@ Primary modules:
 - `Mezzanine.ExecutionCancelWorker`
 - `Mezzanine.ControlRoom.IncidentBundle`
 - `Mezzanine.ControlRoom.IncidentExportBundle`
+- `Mezzanine.ControlRoom.QueuePressurePolicy`
+- `Mezzanine.ControlRoom.RetryPosture`
 
 `Mezzanine.ControlRoom.IncidentBundle` implements
 `Mezzanine.IncidentBundle.v1` as a compact reference envelope. It requires
@@ -27,3 +29,18 @@ It requires tenant, authority, trace, export, incident, included-reference,
 redaction-manifest, checksum, operator, format, and release-manifest evidence,
 and rejects raw workflow history, lower payloads, provider bodies, prompts,
 artifacts, and tenant-sensitive secrets.
+
+`Mezzanine.ControlRoom.QueuePressurePolicy` implements
+`Mezzanine.QueuePressurePolicy.v1` for retained local queues such as the
+workflow-start outbox, signal outbox, claim-check GC, and bounded local jobs.
+It requires tenant, installation, workspace, project, environment,
+principal-or-system-actor, resource, authority, idempotency, trace, release
+manifest, queue, budget, threshold, pressure, admission, shed decision, retry
+delay, and operator-message evidence before queue pressure can be surfaced or
+counted as deterministic shedding.
+
+`Mezzanine.ControlRoom.RetryPosture` implements `Platform.RetryPosture.v1` for
+workflow, activity, lower integration, and retained local-job failure paths. It
+requires owner repo, producer, consumer, operation, retry class, failure class,
+bounded attempts, backoff policy, idempotency scope, dead-letter ref, safe
+action, and the same enterprise scope refs as other Phase 4 contracts.
