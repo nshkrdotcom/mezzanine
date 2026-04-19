@@ -298,6 +298,211 @@ defmodule Mezzanine.WorkflowSignalReceipt do
       )
 end
 
+defmodule Mezzanine.WorkflowExecutionLifecycleInput do
+  @moduledoc "Execution lifecycle workflow input contract."
+
+  alias Mezzanine.EnterprisePrecutSupport
+
+  @fields [
+    :contract_name,
+    :tenant_ref,
+    :installation_ref,
+    :workspace_ref,
+    :project_ref,
+    :environment_ref,
+    :principal_ref,
+    :system_actor_ref,
+    :resource_ref,
+    :subject_ref,
+    :workflow_id,
+    :workflow_run_id,
+    :workflow_type,
+    :workflow_version,
+    :command_id,
+    :command_receipt_ref,
+    :workflow_input_ref,
+    :lower_submission_ref,
+    :lower_idempotency_key,
+    :activity_call_ref,
+    :authority_packet_ref,
+    :permission_decision_ref,
+    :idempotency_key,
+    :trace_id,
+    :correlation_id,
+    :release_manifest_ref,
+    :retry_policy,
+    :terminal_policy,
+    :routing_facts
+  ]
+  defstruct @fields
+
+  @type t :: %__MODULE__{}
+
+  def new(attrs),
+    do:
+      EnterprisePrecutSupport.build(
+        __MODULE__,
+        "Mezzanine.WorkflowExecutionLifecycleInput.v1",
+        @fields,
+        [
+          :tenant_ref,
+          :installation_ref,
+          :principal_ref,
+          :resource_ref,
+          :subject_ref,
+          :workflow_id,
+          :workflow_type,
+          :workflow_version,
+          :command_id,
+          :command_receipt_ref,
+          :workflow_input_ref,
+          :lower_submission_ref,
+          :lower_idempotency_key,
+          :activity_call_ref,
+          :authority_packet_ref,
+          :permission_decision_ref,
+          :idempotency_key,
+          :trace_id,
+          :correlation_id,
+          :release_manifest_ref,
+          :retry_policy,
+          :terminal_policy,
+          :routing_facts
+        ],
+        attrs,
+        map_fields: [:retry_policy, :routing_facts]
+      )
+end
+
+defmodule Mezzanine.WorkflowReceiptSignal do
+  @moduledoc "Tenant-scoped lower receipt signal delivered to an execution workflow."
+
+  alias Mezzanine.EnterprisePrecutSupport
+
+  @fields [
+    :contract_name,
+    :tenant_ref,
+    :installation_ref,
+    :workspace_ref,
+    :project_ref,
+    :environment_ref,
+    :principal_ref,
+    :system_actor_ref,
+    :resource_ref,
+    :workflow_id,
+    :workflow_run_id,
+    :signal_id,
+    :signal_name,
+    :signal_version,
+    :lower_receipt_ref,
+    :lower_run_ref,
+    :lower_attempt_ref,
+    :lower_event_ref,
+    :authority_packet_ref,
+    :permission_decision_ref,
+    :idempotency_key,
+    :trace_id,
+    :correlation_id,
+    :release_manifest_ref,
+    :receipt_state,
+    :terminal?,
+    :routing_facts
+  ]
+  defstruct @fields
+
+  @type t :: %__MODULE__{}
+
+  def new(attrs),
+    do:
+      EnterprisePrecutSupport.build(
+        __MODULE__,
+        "Mezzanine.WorkflowReceiptSignal.v1",
+        @fields,
+        [
+          :tenant_ref,
+          :installation_ref,
+          :resource_ref,
+          :workflow_id,
+          :signal_id,
+          :signal_name,
+          :signal_version,
+          :lower_receipt_ref,
+          :lower_run_ref,
+          :authority_packet_ref,
+          :permission_decision_ref,
+          :idempotency_key,
+          :trace_id,
+          :correlation_id,
+          :release_manifest_ref,
+          :receipt_state,
+          :terminal?,
+          :routing_facts
+        ],
+        attrs,
+        map_fields: [:routing_facts]
+      )
+end
+
+defmodule Mezzanine.WorkflowTerminalReceiptPolicy do
+  @moduledoc "Policy record for lower receipts that arrive after terminal workflow state."
+
+  alias Mezzanine.EnterprisePrecutSupport
+
+  @fields [
+    :contract_name,
+    :tenant_ref,
+    :installation_ref,
+    :workspace_ref,
+    :project_ref,
+    :environment_ref,
+    :principal_ref,
+    :system_actor_ref,
+    :resource_ref,
+    :workflow_id,
+    :workflow_run_id,
+    :terminal_state,
+    :terminal_event_ref,
+    :late_receipt_ref,
+    :policy_result,
+    :incident_ref,
+    :authority_packet_ref,
+    :permission_decision_ref,
+    :idempotency_key,
+    :trace_id,
+    :correlation_id,
+    :release_manifest_ref
+  ]
+  defstruct @fields
+
+  @type t :: %__MODULE__{}
+
+  def new(attrs),
+    do:
+      EnterprisePrecutSupport.build(
+        __MODULE__,
+        "Mezzanine.WorkflowTerminalReceiptPolicy.v1",
+        @fields,
+        [
+          :tenant_ref,
+          :installation_ref,
+          :resource_ref,
+          :workflow_id,
+          :terminal_state,
+          :terminal_event_ref,
+          :late_receipt_ref,
+          :policy_result,
+          :incident_ref,
+          :authority_packet_ref,
+          :permission_decision_ref,
+          :idempotency_key,
+          :trace_id,
+          :correlation_id,
+          :release_manifest_ref
+        ],
+        attrs
+      )
+end
+
 defmodule Mezzanine.EventFact do
   @moduledoc "Append-only event fact envelope contract."
 

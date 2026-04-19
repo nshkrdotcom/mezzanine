@@ -11,15 +11,21 @@ defmodule Mezzanine.EnterprisePrecutContractsTest do
     IncidentBundle,
     ProjectionSnapshot,
     ReviewTask,
+    WorkflowExecutionLifecycleInput,
+    WorkflowReceiptSignal,
     WorkflowRef,
     WorkflowSignalReceipt,
-    WorkflowStartOutboxPayload
+    WorkflowStartOutboxPayload,
+    WorkflowTerminalReceiptPolicy
   }
 
   @modules [
     CommandReceipt,
     WorkflowRef,
     WorkflowStartOutboxPayload,
+    WorkflowExecutionLifecycleInput,
+    WorkflowReceiptSignal,
+    WorkflowTerminalReceiptPolicy,
     WorkflowSignalReceipt,
     EventFact,
     ProjectionSnapshot,
@@ -138,6 +144,82 @@ defmodule Mezzanine.EnterprisePrecutContractsTest do
 
     assert receipt.dispatch_state == "queued"
     assert receipt.workflow_effect_state == "pending"
+  end
+
+  test "execution lifecycle input, receipt signal, and terminal receipt policy are explicit contracts" do
+    assert {:ok, input} = WorkflowExecutionLifecycleInput.new(lifecycle_attrs())
+
+    assert input.contract_name == "Mezzanine.WorkflowExecutionLifecycleInput.v1"
+    assert input.lower_submission_ref == "lower-submission-093"
+    assert input.routing_facts.review_required == false
+
+    assert {:ok, signal} =
+             WorkflowReceiptSignal.new(%{
+               tenant_ref: "tenant-acme",
+               installation_ref: "installation-main",
+               workspace_ref: "workspace-main",
+               project_ref: "project-main",
+               environment_ref: "env-prod",
+               principal_ref: "principal-operator",
+               system_actor_ref: "system-workflow",
+               resource_ref: "resource-work-1",
+               workflow_id: "workflow-093",
+               workflow_run_id: "run-093",
+               signal_id: "signal-094",
+               signal_name: "lower_receipt",
+               signal_version: "lower-receipt.v1",
+               lower_receipt_ref: "lower-receipt-094",
+               lower_run_ref: "lower-run-094",
+               lower_attempt_ref: "lower-attempt-1",
+               lower_event_ref: "lower-event-094",
+               authority_packet_ref: "authpkt-094",
+               permission_decision_ref: "decision-094",
+               idempotency_key: "idem-signal-094",
+               trace_id: "trace-094",
+               correlation_id: "corr-094",
+               release_manifest_ref: "phase4-v6-milestone27-execution-lifecycle-workflow",
+               receipt_state: "completed",
+               terminal?: true,
+               routing_facts: %{terminal_class: "completed"}
+             })
+
+    assert signal.contract_name == "Mezzanine.WorkflowReceiptSignal.v1"
+    assert signal.terminal? == true
+
+    assert {:ok, policy} =
+             WorkflowTerminalReceiptPolicy.new(%{
+               tenant_ref: "tenant-acme",
+               installation_ref: "installation-main",
+               workspace_ref: "workspace-main",
+               project_ref: "project-main",
+               environment_ref: "env-prod",
+               principal_ref: "principal-operator",
+               system_actor_ref: "system-workflow",
+               resource_ref: "resource-work-1",
+               workflow_id: "workflow-095",
+               workflow_run_id: "run-095",
+               terminal_state: "completed",
+               terminal_event_ref: "workflow-event-terminal",
+               late_receipt_ref: "lower-receipt-late",
+               policy_result: "quarantined_late_receipt",
+               incident_ref: "incident-095",
+               authority_packet_ref: "authpkt-095",
+               permission_decision_ref: "decision-095",
+               idempotency_key: "idem-receipt-095",
+               trace_id: "trace-095",
+               correlation_id: "corr-095",
+               release_manifest_ref: "phase4-v6-milestone27-execution-lifecycle-workflow"
+             })
+
+    assert policy.contract_name == "Mezzanine.WorkflowTerminalReceiptPolicy.v1"
+    assert policy.policy_result == "quarantined_late_receipt"
+
+    assert {:error, {:missing_required_fields, missing}} =
+             WorkflowExecutionLifecycleInput.new(
+               Map.delete(lifecycle_attrs(), :permission_decision_ref)
+             )
+
+    assert :permission_decision_ref in missing
   end
 
   test "activity and incident contracts carry lower, semantic, projection, and release refs" do
@@ -274,5 +356,38 @@ defmodule Mezzanine.EnterprisePrecutContractsTest do
                status: "pending",
                trace_id: "trace-116"
              })
+  end
+
+  defp lifecycle_attrs do
+    %{
+      tenant_ref: "tenant-acme",
+      installation_ref: "installation-main",
+      workspace_ref: "workspace-main",
+      project_ref: "project-main",
+      environment_ref: "env-prod",
+      principal_ref: "principal-operator",
+      system_actor_ref: "system-workflow",
+      resource_ref: "resource-work-1",
+      subject_ref: "subject-093",
+      workflow_id: "workflow-093",
+      workflow_run_id: "run-093",
+      workflow_type: "execution_attempt",
+      workflow_version: "execution-attempt.v1",
+      command_id: "cmd-093",
+      command_receipt_ref: "command-receipt-093",
+      workflow_input_ref: "claim://workflow-input/093",
+      lower_submission_ref: "lower-submission-093",
+      lower_idempotency_key: "lower-idem-093",
+      activity_call_ref: "activity-call-093",
+      authority_packet_ref: "authpkt-093",
+      permission_decision_ref: "decision-093",
+      idempotency_key: "idem-093",
+      trace_id: "trace-093",
+      correlation_id: "corr-093",
+      release_manifest_ref: "phase4-v6-milestone27-execution-lifecycle-workflow",
+      retry_policy: %{maximum_attempts: 3},
+      terminal_policy: "quarantine_late_receipts",
+      routing_facts: %{review_required: false, risk_band: "low"}
+    }
   end
 end

@@ -353,6 +353,8 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
         "mix.exs",
         "core/workflow_runtime/mix.exs",
         "core/workflow_runtime/lib/mezzanine/workflow_runtime/durable_orchestration_decision.ex",
+        "core/workflow_runtime/lib/mezzanine/workflow_runtime/workflow_starter_outbox.ex",
+        "core/workflow_runtime/lib/mezzanine/workflow_runtime/execution_lifecycle_workflow.ex",
         "core/workflow_runtime/test/mezzanine/workflow_runtime/durable_orchestration_decision_test.exs"
       ],
       public_dto_forbidden_fragments: Enum.map(@workflow_history_forbidden, &Atom.to_string/1)
@@ -494,7 +496,7 @@ defmodule Mezzanine.Workflows.ExecutionAttempt do
   @moduledoc "Phase 4 execution-attempt workflow skeleton."
   @behaviour Temporalex.Workflow
 
-  alias Mezzanine.Workflows.Support
+  alias Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow
 
   @doc false
   def __workflow_type__, do: __MODULE__ |> Module.split() |> Enum.join(".")
@@ -503,7 +505,7 @@ defmodule Mezzanine.Workflows.ExecutionAttempt do
   def __workflow_defaults__, do: [task_queue: "mezzanine.hazmat"]
 
   @impl Temporalex.Workflow
-  def run(input), do: {:ok, Support.compact_result(:execution_attempt, input)}
+  def run(input), do: ExecutionLifecycleWorkflow.run(input)
 end
 
 defmodule Mezzanine.Workflows.DecisionReview do
@@ -577,7 +579,7 @@ defmodule Mezzanine.Activities.StartLowerExecution do
   @moduledoc "Phase 4 lower-execution activity skeleton."
   @behaviour Temporalex.Activity
 
-  alias Mezzanine.Activities.Support
+  alias Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow
 
   @doc false
   def __activity_type__, do: __MODULE__ |> Module.split() |> Enum.join(".")
@@ -587,7 +589,7 @@ defmodule Mezzanine.Activities.StartLowerExecution do
     do: [task_queue: "mezzanine.hazmat", start_to_close_timeout: :timer.seconds(30)]
 
   @impl Temporalex.Activity
-  def perform(input), do: Support.compact_result(:start_lower_execution, input)
+  def perform(input), do: ExecutionLifecycleWorkflow.submit_jido_lower_run_activity(input)
 
   @impl Temporalex.Activity
   def perform(_ctx, input), do: perform(input)
@@ -597,7 +599,7 @@ defmodule Mezzanine.Activities.RecordEvidence do
   @moduledoc "Phase 4 evidence-recording activity skeleton."
   @behaviour Temporalex.Activity
 
-  alias Mezzanine.Activities.Support
+  alias Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow
 
   @doc false
   def __activity_type__, do: __MODULE__ |> Module.split() |> Enum.join(".")
@@ -607,7 +609,7 @@ defmodule Mezzanine.Activities.RecordEvidence do
     do: [task_queue: "mezzanine.agentic", start_to_close_timeout: :timer.seconds(10)]
 
   @impl Temporalex.Activity
-  def perform(input), do: Support.compact_result(:record_evidence, input)
+  def perform(input), do: ExecutionLifecycleWorkflow.persist_terminal_receipt_activity(input)
 
   @impl Temporalex.Activity
   def perform(_ctx, input), do: perform(input)
@@ -617,7 +619,7 @@ defmodule Mezzanine.Activities.RequestDecision do
   @moduledoc "Phase 4 Citadel decision-request activity skeleton."
   @behaviour Temporalex.Activity
 
-  alias Mezzanine.Activities.Support
+  alias Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow
 
   @doc false
   def __activity_type__, do: __MODULE__ |> Module.split() |> Enum.join(".")
@@ -627,7 +629,7 @@ defmodule Mezzanine.Activities.RequestDecision do
     do: [task_queue: "mezzanine.agentic", start_to_close_timeout: :timer.seconds(10)]
 
   @impl Temporalex.Activity
-  def perform(input), do: Support.compact_result(:request_decision, input)
+  def perform(input), do: ExecutionLifecycleWorkflow.compile_citadel_authority_activity(input)
 
   @impl Temporalex.Activity
   def perform(_ctx, input), do: perform(input)
