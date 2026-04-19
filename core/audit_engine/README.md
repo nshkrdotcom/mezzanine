@@ -12,6 +12,7 @@ the Phase `2.3` operational contract for:
 - indexed `trace_id` and `causation_id` join keys
 - substrate-owned execution lineage vs lower-owned internal identifiers
 - truth-precedence and staleness classes for enriched operator views
+- Phase 4 tenant-scoped trace-join evidence for `Platform.TenantScopedTraceJoin.v1`
 - pure unified-trace assembly for the operator-facing “3 AM query”
 
 Primary modules:
@@ -22,4 +23,5 @@ Primary modules:
 - `Mezzanine.Audit.ExecutionLineageStore`
 - `Mezzanine.Audit.WorkAudit`
 - `Mezzanine.Audit.Staleness`
+- `Mezzanine.Audit.TenantScopedTraceJoin`
 - `Mezzanine.Audit.UnifiedTrace`

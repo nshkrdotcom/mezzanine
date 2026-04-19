@@ -6,6 +6,7 @@ defmodule MezzanineAuditEngineTest do
              Mezzanine.Audit.TraceContract,
              Mezzanine.Audit.ExecutionLineage,
              Mezzanine.Audit.Staleness,
+             Mezzanine.Audit.TenantScopedTraceJoin,
              Mezzanine.Audit.UnifiedTrace
            ] == MezzanineAuditEngine.contract_modules()
   end

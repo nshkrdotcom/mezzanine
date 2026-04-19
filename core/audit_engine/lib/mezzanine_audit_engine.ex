@@ -9,6 +9,7 @@ defmodule MezzanineAuditEngine do
       Mezzanine.Audit.TraceContract,
       Mezzanine.Audit.ExecutionLineage,
       Mezzanine.Audit.Staleness,
+      Mezzanine.Audit.TenantScopedTraceJoin,
       Mezzanine.Audit.UnifiedTrace
     ]
   end

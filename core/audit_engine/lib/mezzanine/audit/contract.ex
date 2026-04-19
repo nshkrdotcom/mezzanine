@@ -241,6 +241,341 @@ defmodule Mezzanine.Audit.UnifiedTrace.Timeline do
         }
 end
 
+defmodule Mezzanine.Audit.TenantScopedTraceJoin.Ref do
+  @moduledoc """
+  One source ref considered by `Platform.TenantScopedTraceJoin.v1`.
+  """
+
+  @enforce_keys [:source_ref, :source_family, :tenant_ref, :resource_ref, :trace_id]
+  defstruct source_ref: nil,
+            source_family: nil,
+            tenant_ref: nil,
+            resource_ref: nil,
+            trace_id: nil,
+            staleness_class: nil,
+            exclusion_reason: nil
+
+  @type t :: %__MODULE__{
+          source_ref: String.t(),
+          source_family: String.t(),
+          tenant_ref: String.t(),
+          resource_ref: String.t(),
+          trace_id: String.t(),
+          staleness_class: Mezzanine.Audit.Staleness.t() | nil,
+          exclusion_reason: String.t() | nil
+        }
+end
+
+defmodule Mezzanine.Audit.TenantScopedTraceJoin do
+  @moduledoc """
+  Tenant-scoped trace reconstruction contract.
+
+  Contract: `Platform.TenantScopedTraceJoin.v1`.
+  """
+
+  alias Mezzanine.Audit.Staleness
+  alias Mezzanine.Audit.TenantScopedTraceJoin.Ref
+
+  @contract_name "Platform.TenantScopedTraceJoin.v1"
+  @base_required_binary_fields [
+    :tenant_ref,
+    :installation_ref,
+    :workspace_ref,
+    :project_ref,
+    :environment_ref,
+    :resource_ref,
+    :authority_packet_ref,
+    :permission_decision_ref,
+    :idempotency_key,
+    :trace_id,
+    :correlation_id,
+    :release_manifest_ref,
+    :trace_join_ref,
+    :scope_proof_ref
+  ]
+
+  defstruct [
+    :contract_name,
+    :tenant_ref,
+    :installation_ref,
+    :workspace_ref,
+    :project_ref,
+    :environment_ref,
+    :principal_ref,
+    :system_actor_ref,
+    :resource_ref,
+    :authority_packet_ref,
+    :permission_decision_ref,
+    :idempotency_key,
+    :trace_id,
+    :correlation_id,
+    :release_manifest_ref,
+    :trace_join_ref,
+    :resource_scope,
+    :joined_ref_set,
+    :excluded_ref_set,
+    :scope_proof_ref
+  ]
+
+  @type t :: %__MODULE__{
+          contract_name: String.t(),
+          tenant_ref: String.t(),
+          installation_ref: String.t(),
+          workspace_ref: String.t(),
+          project_ref: String.t(),
+          environment_ref: String.t(),
+          principal_ref: String.t() | nil,
+          system_actor_ref: String.t() | nil,
+          resource_ref: String.t(),
+          authority_packet_ref: String.t(),
+          permission_decision_ref: String.t(),
+          idempotency_key: String.t(),
+          trace_id: String.t(),
+          correlation_id: String.t(),
+          release_manifest_ref: String.t(),
+          trace_join_ref: String.t(),
+          resource_scope: [String.t()],
+          joined_ref_set: [Ref.t()],
+          excluded_ref_set: [Ref.t()],
+          scope_proof_ref: String.t()
+        }
+
+  @spec contract_name() :: String.t()
+  def contract_name, do: @contract_name
+
+  @spec new(map() | keyword() | t()) ::
+          {:ok, t()}
+          | {:error, {:missing_required_fields, [atom()]}}
+          | {:error, term()}
+  def new(%__MODULE__{} = join), do: join |> Map.from_struct() |> new()
+
+  def new(attrs) do
+    with {:ok, attrs} <- normalize_attrs(attrs),
+         [] <- missing_required_fields(attrs),
+         {:ok, resource_scope} <- normalize_resource_scope(attrs),
+         {:ok, joined_ref_set} <- normalize_joined_refs(attrs, resource_scope),
+         {:ok, excluded_ref_set} <- normalize_excluded_refs(attrs) do
+      {:ok, build(attrs, resource_scope, joined_ref_set, excluded_ref_set)}
+    else
+      fields when is_list(fields) -> {:error, {:missing_required_fields, fields}}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp build(attrs, resource_scope, joined_ref_set, excluded_ref_set) do
+    actors = actor_fields(attrs)
+
+    struct!(__MODULE__, %{
+      contract_name: @contract_name,
+      tenant_ref: value(attrs, :tenant_ref),
+      installation_ref: value(attrs, :installation_ref),
+      workspace_ref: value(attrs, :workspace_ref),
+      project_ref: value(attrs, :project_ref),
+      environment_ref: value(attrs, :environment_ref),
+      principal_ref: actors.principal_ref,
+      system_actor_ref: actors.system_actor_ref,
+      resource_ref: value(attrs, :resource_ref),
+      authority_packet_ref: value(attrs, :authority_packet_ref),
+      permission_decision_ref: value(attrs, :permission_decision_ref),
+      idempotency_key: value(attrs, :idempotency_key),
+      trace_id: value(attrs, :trace_id),
+      correlation_id: value(attrs, :correlation_id),
+      release_manifest_ref: value(attrs, :release_manifest_ref),
+      trace_join_ref: value(attrs, :trace_join_ref),
+      resource_scope: resource_scope,
+      joined_ref_set: joined_ref_set,
+      excluded_ref_set: excluded_ref_set,
+      scope_proof_ref: value(attrs, :scope_proof_ref)
+    })
+  end
+
+  defp normalize_attrs(attrs) when is_list(attrs), do: {:ok, Map.new(attrs)}
+
+  defp normalize_attrs(attrs) when is_map(attrs) do
+    if Map.has_key?(attrs, :__struct__) do
+      {:ok, Map.from_struct(attrs)}
+    else
+      {:ok, attrs}
+    end
+  end
+
+  defp normalize_attrs(_attrs), do: {:error, :invalid_attrs}
+
+  defp missing_required_fields(attrs) do
+    binary_missing =
+      @base_required_binary_fields
+      |> Enum.reject(fn field -> present_binary?(value(attrs, field)) end)
+
+    actor_missing =
+      if present_binary?(value(attrs, :principal_ref)) or
+           present_binary?(value(attrs, :system_actor_ref)) do
+        []
+      else
+        [:principal_ref_or_system_actor_ref]
+      end
+
+    list_missing =
+      [:resource_scope, :joined_ref_set]
+      |> Enum.reject(fn field -> non_empty_list?(value(attrs, field)) end)
+
+    excluded_missing =
+      if is_list(value(attrs, :excluded_ref_set)), do: [], else: [:excluded_ref_set]
+
+    binary_missing ++ actor_missing ++ list_missing ++ excluded_missing
+  end
+
+  defp normalize_resource_scope(attrs) do
+    attrs
+    |> value(:resource_scope)
+    |> case do
+      [_ | _] = refs ->
+        if Enum.all?(refs, &present_binary?/1) do
+          {:ok, refs}
+        else
+          {:error, :invalid_resource_scope}
+        end
+
+      _other ->
+        {:error, :invalid_resource_scope}
+    end
+  end
+
+  defp normalize_joined_refs(attrs, resource_scope) do
+    attrs
+    |> value(:joined_ref_set)
+    |> Enum.reduce_while({:ok, []}, fn ref_attrs, {:ok, acc} ->
+      ref_attrs
+      |> normalize_joined_ref(attrs, resource_scope)
+      |> reduce_normalized_ref(acc)
+    end)
+    |> case do
+      {:ok, refs} -> {:ok, Enum.reverse(refs)}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp normalize_joined_ref(ref_attrs, attrs, resource_scope) do
+    with {:ok, ref} <- normalize_ref(ref_attrs, require_staleness?: true),
+         :ok <- validate_joined_ref_scope(ref, attrs, resource_scope) do
+      {:ok, ref}
+    end
+  end
+
+  defp validate_joined_ref_scope(ref, attrs, resource_scope) do
+    cond do
+      ref.tenant_ref != value(attrs, :tenant_ref) ->
+        {:error, {:cross_tenant_join_ref, ref.source_ref}}
+
+      ref.trace_id != value(attrs, :trace_id) ->
+        {:error, {:trace_scope_violation, ref.source_ref}}
+
+      ref.resource_ref not in resource_scope ->
+        {:error, {:resource_scope_violation, ref.source_ref}}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp normalize_excluded_refs(attrs) do
+    attrs
+    |> value(:excluded_ref_set)
+    |> Enum.reduce_while({:ok, []}, fn ref_attrs, {:ok, acc} ->
+      ref_attrs
+      |> normalize_ref(require_exclusion_reason?: true)
+      |> reduce_normalized_ref(acc)
+    end)
+    |> case do
+      {:ok, refs} -> {:ok, Enum.reverse(refs)}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp reduce_normalized_ref({:ok, ref}, acc), do: {:cont, {:ok, [ref | acc]}}
+  defp reduce_normalized_ref({:error, reason}, _acc), do: {:halt, {:error, reason}}
+
+  defp normalize_ref(ref_attrs, opts) when is_map(ref_attrs) do
+    with :ok <- required_ref_fields(ref_attrs, opts),
+         {:ok, staleness_class} <- normalize_staleness(value(ref_attrs, :staleness_class), opts) do
+      {:ok,
+       %Ref{
+         source_ref: value(ref_attrs, :source_ref),
+         source_family: value(ref_attrs, :source_family),
+         tenant_ref: value(ref_attrs, :tenant_ref),
+         resource_ref: value(ref_attrs, :resource_ref),
+         trace_id: value(ref_attrs, :trace_id),
+         staleness_class: staleness_class,
+         exclusion_reason: value(ref_attrs, :exclusion_reason)
+       }}
+    end
+  end
+
+  defp normalize_ref(_ref_attrs, _opts), do: {:error, :invalid_trace_join_ref}
+
+  defp required_ref_fields(ref_attrs, opts) do
+    required =
+      [:source_ref, :source_family, :tenant_ref, :resource_ref, :trace_id]
+      |> maybe_add(:staleness_class, Keyword.get(opts, :require_staleness?, false))
+      |> maybe_add(:exclusion_reason, Keyword.get(opts, :require_exclusion_reason?, false))
+
+    missing = Enum.reject(required, fn field -> present_binary?(value(ref_attrs, field)) end)
+
+    if missing == [] do
+      :ok
+    else
+      {:error, {:missing_trace_join_ref_fields, missing}}
+    end
+  end
+
+  defp maybe_add(fields, field, true), do: [field | fields]
+  defp maybe_add(fields, _field, false), do: fields
+
+  defp normalize_staleness(nil, opts) do
+    if Keyword.get(opts, :require_staleness?, false) do
+      {:error, {:missing_trace_join_ref_fields, [:staleness_class]}}
+    else
+      {:ok, nil}
+    end
+  end
+
+  defp normalize_staleness(value, _opts) when is_atom(value) do
+    if value in Staleness.classes() do
+      {:ok, value}
+    else
+      {:error, {:invalid_staleness_class, value}}
+    end
+  end
+
+  defp normalize_staleness(value, _opts) when is_binary(value) do
+    case value do
+      "authoritative_hot" -> {:ok, :authoritative_hot}
+      "authoritative_archived" -> {:ok, :authoritative_archived}
+      "lower_fresh" -> {:ok, :lower_fresh}
+      "projection_stale" -> {:ok, :projection_stale}
+      "diagnostic_only" -> {:ok, :diagnostic_only}
+      "unavailable" -> {:ok, :unavailable}
+      _other -> {:error, {:invalid_staleness_class, value}}
+    end
+  end
+
+  defp normalize_staleness(value, _opts), do: {:error, {:invalid_staleness_class, value}}
+
+  defp actor_fields(attrs) do
+    %{
+      principal_ref: value(attrs, :principal_ref),
+      system_actor_ref: value(attrs, :system_actor_ref)
+    }
+  end
+
+  defp value(map, key) do
+    Map.get(map, key, Map.get(map, to_string(key)))
+  end
+
+  defp present_binary?(value), do: is_binary(value) and byte_size(String.trim(value)) > 0
+  defp non_empty_list?([_ | _]), do: true
+  defp non_empty_list?(_value), do: false
+end
+
 defmodule Mezzanine.Audit.UnifiedTrace do
   @moduledoc """
   Pure unified-trace assembler for the operator-facing “3 AM query”.
