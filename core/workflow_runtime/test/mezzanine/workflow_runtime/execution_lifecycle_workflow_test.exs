@@ -139,6 +139,19 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     assert late_policy.incident_ref == "incident://workflow-093/late-receipt/lower-receipt-094"
   end
 
+  test "receipt signal delivery goes only through WorkflowRuntime and records a local receipt" do
+    assert {:ok, delivered} =
+             ExecutionLifecycleWorkflow.deliver_receipt_signal(receipt_signal_attrs())
+
+    assert delivered.signal.signal_name == "lower_receipt"
+    assert delivered.runtime_receipt.dispatch_state == "delivered_to_temporal"
+    assert delivered.signal_receipt.dispatch_state == "delivered_to_temporal"
+    assert delivered.signal_receipt.workflow_effect_state == "pending_ack"
+    assert delivered.signal_receipt.projection_state == "pending"
+    refute Map.has_key?(delivered.runtime_receipt, :raw_temporalex_result)
+    refute Map.has_key?(delivered.runtime_receipt, :task_token)
+  end
+
   test "operator query goes through WorkflowRuntime and worker failover is replay-safe" do
     assert {:ok, query} = ExecutionLifecycleWorkflow.query_operator_state(lifecycle_attrs())
 

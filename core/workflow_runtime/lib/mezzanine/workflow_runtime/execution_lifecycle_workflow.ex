@@ -9,6 +9,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
 
   alias Mezzanine.WorkflowExecutionLifecycleInput
   alias Mezzanine.WorkflowReceiptSignal
+  alias Mezzanine.WorkflowSignalReceipt
   alias Mezzanine.WorkflowTerminalReceiptPolicy
 
   @release_manifest_ref "phase4-v6-milestone27-execution-lifecycle-workflow"
@@ -176,6 +177,24 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
   @spec receipt_signal(map() | keyword()) :: {:ok, WorkflowReceiptSignal.t()} | {:error, term()}
   def receipt_signal(attrs), do: attrs |> with_release_ref() |> WorkflowReceiptSignal.new()
 
+  @doc "Deliver a receipt signal through the workflow runtime and return the local receipt projection."
+  @spec deliver_receipt_signal(map() | keyword()) :: {:ok, map()} | {:error, term()}
+  def deliver_receipt_signal(attrs) do
+    normalized = attrs |> with_release_ref()
+
+    with {:ok, signal} <- WorkflowReceiptSignal.new(normalized),
+         request <- receipt_signal_request(signal),
+         {:ok, runtime_receipt} <- Mezzanine.WorkflowRuntime.signal_workflow(request),
+         {:ok, signal_receipt} <- local_signal_receipt(signal, normalized, runtime_receipt) do
+      {:ok,
+       %{
+         signal: signal,
+         runtime_receipt: sanitize_runtime_receipt(runtime_receipt),
+         signal_receipt: signal_receipt
+       }}
+    end
+  end
+
   @doc "Apply a receipt signal with signal-idempotency suppression."
   @spec apply_receipt_signal(map(), WorkflowReceiptSignal.t()) :: {:ok, map()} | {:error, term()}
   def apply_receipt_signal(state, %WorkflowReceiptSignal{} = signal) do
@@ -286,6 +305,57 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
 
   defp terminal_state(%WorkflowReceiptSignal{terminal?: true, receipt_state: state}), do: state
   defp terminal_state(_signal), do: "awaiting_receipt"
+
+  defp receipt_signal_request(%WorkflowReceiptSignal{} = signal) do
+    %{
+      workflow_id: signal.workflow_id,
+      workflow_run_id: signal.workflow_run_id,
+      signal_id: signal.signal_id,
+      signal_name: signal.signal_name,
+      signal_version: signal.signal_version,
+      signal_payload_ref: "workflow-signal://#{signal.workflow_id}/#{signal.signal_id}",
+      idempotency_key: signal.idempotency_key,
+      tenant_ref: signal.tenant_ref,
+      resource_ref: signal.resource_ref,
+      authority_packet_ref: signal.authority_packet_ref,
+      permission_decision_ref: signal.permission_decision_ref,
+      trace_id: signal.trace_id,
+      correlation_id: signal.correlation_id,
+      release_manifest_ref: signal.release_manifest_ref
+    }
+  end
+
+  defp local_signal_receipt(%WorkflowReceiptSignal{} = signal, attrs, runtime_receipt) do
+    runtime_receipt = normalize(runtime_receipt)
+
+    WorkflowSignalReceipt.new(%{
+      tenant_ref: signal.tenant_ref,
+      signal_id: signal.signal_id,
+      workflow_id: signal.workflow_id,
+      workflow_run_id: signal.workflow_run_id,
+      signal_name: signal.signal_name,
+      signal_version: signal.signal_version,
+      command_id: Map.get(attrs, :command_id, signal.signal_id),
+      authority_packet_ref: signal.authority_packet_ref,
+      permission_decision_ref: signal.permission_decision_ref,
+      idempotency_key: signal.idempotency_key,
+      trace_id: signal.trace_id,
+      payload_hash: "sha256:#{signal.idempotency_key}",
+      payload_ref: "workflow-signal://#{signal.workflow_id}/#{signal.signal_id}",
+      authority_state: "authorized",
+      local_state: "accepted",
+      dispatch_state:
+        Map.get(runtime_receipt, :dispatch_state, Map.get(runtime_receipt, :status)),
+      workflow_effect_state: "pending_ack",
+      projection_state: "pending"
+    })
+  end
+
+  defp sanitize_runtime_receipt(receipt) do
+    receipt
+    |> normalize()
+    |> Map.drop([:raw_temporalex_result, :temporalex_struct, :raw_history_event, :task_token])
+  end
 
   defp with_release_ref(attrs) do
     attrs
