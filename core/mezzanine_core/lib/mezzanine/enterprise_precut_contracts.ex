@@ -164,21 +164,39 @@ defmodule Mezzanine.WorkflowStartOutboxPayload do
 
   @fields [
     :contract_name,
+    :outbox_id,
     :tenant_ref,
+    :installation_ref,
+    :workspace_ref,
+    :project_ref,
+    :environment_ref,
+    :principal_ref,
+    :system_actor_ref,
+    :resource_ref,
+    :command_envelope_ref,
+    :command_receipt_ref,
     :command_id,
     :workflow_type,
     :workflow_id,
+    :workflow_version,
     :workflow_input_version,
+    :workflow_input_ref,
     :authority_packet_ref,
     :permission_decision_ref,
     :idempotency_key,
+    :dedupe_scope,
     :trace_id,
+    :correlation_id,
+    :release_manifest_ref,
     :payload_hash,
     :payload_ref,
-    :status,
-    :attempt_count,
+    :dispatch_state,
+    :retry_count,
     :last_error_class,
-    :started_workflow_run_id
+    :workflow_run_id,
+    :started_at,
+    :available_at,
+    :oban_job_ref
   ]
   defstruct @fields
 
@@ -191,17 +209,27 @@ defmodule Mezzanine.WorkflowStartOutboxPayload do
         "Mezzanine.WorkflowStartOutboxPayload.v1",
         @fields,
         [
+          :outbox_id,
           :tenant_ref,
+          :installation_ref,
+          :principal_ref,
+          :resource_ref,
+          :command_receipt_ref,
           :command_id,
           :workflow_type,
           :workflow_id,
+          :workflow_version,
           :workflow_input_version,
+          :workflow_input_ref,
           :authority_packet_ref,
           :permission_decision_ref,
           :idempotency_key,
+          :dedupe_scope,
           :trace_id,
+          :correlation_id,
+          :release_manifest_ref,
           :payload_hash,
-          :status
+          :dispatch_state
         ],
         attrs
       )
@@ -627,9 +655,52 @@ end
 
 defmodule Mezzanine.WorkflowStartReceipt do
   @moduledoc "Public-safe workflow start receipt."
-  defstruct [:workflow_ref, :status, :trace_id, :failure_class]
+
+  alias Mezzanine.EnterprisePrecutSupport
+
+  @fields [
+    :contract_name,
+    :workflow_ref,
+    :workflow_id,
+    :workflow_run_id,
+    :workflow_type,
+    :workflow_version,
+    :tenant_ref,
+    :resource_ref,
+    :command_id,
+    :idempotency_key,
+    :trace_id,
+    :correlation_id,
+    :release_manifest_ref,
+    :start_state,
+    :duplicate?,
+    :retry_class,
+    :failure_class
+  ]
+  defstruct @fields
 
   @type t :: %__MODULE__{}
+
+  def new(attrs),
+    do:
+      EnterprisePrecutSupport.build(
+        __MODULE__,
+        "Mezzanine.WorkflowStartReceipt.v1",
+        @fields,
+        [
+          :workflow_ref,
+          :workflow_id,
+          :workflow_type,
+          :workflow_version,
+          :tenant_ref,
+          :resource_ref,
+          :command_id,
+          :idempotency_key,
+          :trace_id,
+          :start_state
+        ],
+        attrs
+      )
 end
 
 defmodule Mezzanine.WorkflowSignalReceiptResult do
@@ -682,6 +753,61 @@ defmodule Mezzanine.WorkflowRuntime do
               {:ok, Mezzanine.WorkflowDescription.t()} | {:error, term()}
   @callback fetch_workflow_history_ref(term()) ::
               {:ok, Mezzanine.WorkflowHistoryRef.t()} | {:error, term()}
+
+  @spec start_workflow(term()) :: {:ok, Mezzanine.WorkflowStartReceipt.t()} | {:error, term()}
+  def start_workflow(request), do: implementation().start_workflow(request)
+
+  @spec signal_workflow(term()) ::
+          {:ok, Mezzanine.WorkflowSignalReceiptResult.t()} | {:error, term()}
+  def signal_workflow(request), do: implementation().signal_workflow(request)
+
+  @spec query_workflow(term()) :: {:ok, Mezzanine.WorkflowQueryResult.t()} | {:error, term()}
+  def query_workflow(request), do: implementation().query_workflow(request)
+
+  @spec cancel_workflow(term()) ::
+          {:ok, Mezzanine.WorkflowCancelReceipt.t()} | {:error, term()}
+  def cancel_workflow(request), do: implementation().cancel_workflow(request)
+
+  @spec describe_workflow(term()) ::
+          {:ok, Mezzanine.WorkflowDescription.t()} | {:error, term()}
+  def describe_workflow(request), do: implementation().describe_workflow(request)
+
+  @spec fetch_workflow_history_ref(term()) ::
+          {:ok, Mezzanine.WorkflowHistoryRef.t()} | {:error, term()}
+  def fetch_workflow_history_ref(request),
+    do: implementation().fetch_workflow_history_ref(request)
+
+  defp implementation do
+    Application.get_env(
+      :mezzanine_core,
+      :workflow_runtime_impl,
+      Mezzanine.WorkflowRuntime.Unconfigured
+    )
+  end
+end
+
+defmodule Mezzanine.WorkflowRuntime.Unconfigured do
+  @moduledoc false
+
+  @behaviour Mezzanine.WorkflowRuntime
+
+  @impl true
+  def start_workflow(_request), do: {:error, :workflow_runtime_unconfigured}
+
+  @impl true
+  def signal_workflow(_request), do: {:error, :workflow_runtime_unconfigured}
+
+  @impl true
+  def query_workflow(_request), do: {:error, :workflow_runtime_unconfigured}
+
+  @impl true
+  def cancel_workflow(_request), do: {:error, :workflow_runtime_unconfigured}
+
+  @impl true
+  def describe_workflow(_request), do: {:error, :workflow_runtime_unconfigured}
+
+  @impl true
+  def fetch_workflow_history_ref(_request), do: {:error, :workflow_runtime_unconfigured}
 end
 
 defmodule Mezzanine.ActivityLeaseBroker do

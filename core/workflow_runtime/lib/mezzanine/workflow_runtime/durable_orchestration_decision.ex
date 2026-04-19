@@ -121,7 +121,12 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
   @allowed_search_attribute_types [:keyword, :bool, :int, :double, :datetime, :keyword_list]
 
   @retained_oban_roles [
-    %{role: :workflow_start_outbox, queue: :workflow_start_outbox, classification: :valid_outbox},
+    %{
+      role: :workflow_start_outbox,
+      queue: :workflow_start_outbox,
+      worker: Mezzanine.WorkflowRuntime.WorkflowStarterOutboxWorker,
+      classification: :valid_outbox
+    },
     %{
       role: :workflow_signal_outbox,
       queue: :workflow_signal_outbox,
@@ -132,6 +137,12 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
   ]
 
   @oban_scope [
+    %{
+      worker: Mezzanine.WorkflowRuntime.WorkflowStarterOutboxWorker,
+      queue: :workflow_start_outbox,
+      classification: :valid_outbox,
+      reason: "post-commit workflow start dispatcher, not workflow business state"
+    },
     %{
       worker: Mezzanine.DecisionExpiryWorker,
       queue: :decision_expiry,

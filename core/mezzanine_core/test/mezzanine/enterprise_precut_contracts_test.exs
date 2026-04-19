@@ -59,21 +59,61 @@ defmodule Mezzanine.EnterprisePrecutContractsTest do
 
     assert {:ok, outbox} =
              WorkflowStartOutboxPayload.new(%{
+               outbox_id: "wso-110",
                tenant_ref: receipt.tenant_ref,
+               installation_ref: "installation-main",
+               workspace_ref: "workspace-main",
+               project_ref: "project-main",
+               environment_ref: "env-prod",
+               principal_ref: receipt.principal_ref,
+               resource_ref: receipt.resource_ref,
+               command_envelope_ref: "command-envelope-105",
+               command_receipt_ref: "command-receipt-105",
                command_id: receipt.command_id,
                workflow_type: "agentic_workflow",
                workflow_id: "wf-110",
+               workflow_version: "agent-run.v1",
                workflow_input_version: "v1",
+               workflow_input_ref: "claim-workflow-input-110",
                authority_packet_ref: receipt.authority_packet_ref,
                permission_decision_ref: receipt.permission_decision_ref,
                idempotency_key: receipt.idempotency_key,
+               dedupe_scope: "tenant-acme:resource-work-1:agentic_workflow:cmd-105",
                trace_id: receipt.trace_id,
+               correlation_id: receipt.correlation_id || "corr-105",
+               release_manifest_ref: "phase4-v6-milestone26",
                payload_hash: String.duplicate("a", 64),
                payload_ref: "claim-workflow-110",
-               status: "queued"
+               dispatch_state: "queued",
+               retry_count: 0
              })
 
     assert outbox.workflow_id == "wf-110"
+
+    assert {:ok, receipt} =
+             Mezzanine.WorkflowStartReceipt.new(%{
+               workflow_ref: "workflow-ref://wf-110",
+               workflow_id: outbox.workflow_id,
+               workflow_run_id: "run-110",
+               workflow_type: outbox.workflow_type,
+               workflow_version: outbox.workflow_version,
+               tenant_ref: outbox.tenant_ref,
+               resource_ref: outbox.resource_ref,
+               command_id: outbox.command_id,
+               idempotency_key: outbox.idempotency_key,
+               trace_id: outbox.trace_id,
+               correlation_id: outbox.correlation_id,
+               release_manifest_ref: outbox.release_manifest_ref,
+               start_state: "started",
+               duplicate?: false,
+               retry_class: "none",
+               failure_class: "none"
+             })
+
+    assert receipt.workflow_run_id == "run-110"
+
+    assert {:error, :workflow_runtime_unconfigured} =
+             Mezzanine.WorkflowRuntime.start_workflow(outbox)
   end
 
   test "workflow signal receipts expose lifecycle states without claiming completion" do
