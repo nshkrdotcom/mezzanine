@@ -119,6 +119,34 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
            ]
   end
 
+  test "advance/2 rejects stale caller-visible installation revisions before queuing work" do
+    installation = active_installation_fixture()
+    installation_id = installation.id
+
+    subject =
+      subject_fixture(%{
+        installation_id: installation_id,
+        source_ref: "expense:request:stale-revision",
+        subject_kind: "expense_request",
+        lifecycle_state: "submitted",
+        payload: %{"amount_cents" => 12_500},
+        trace_id: "trace-lifecycle-stale-revision",
+        causation_id: "cause-lifecycle-stale-revision"
+      })
+
+    assert {:error,
+            {:stale_installation_revision,
+             %{
+               installation_id: ^installation_id,
+               attempted_revision: 0,
+               current_revision: 1
+             }}} =
+             LifecycleEvaluator.advance(subject.id, expected_installation_revision: 0)
+
+    assert %{lifecycle_state: "submitted"} = fetch_subject(subject.id)
+    assert Repo.aggregate(Oban.Job, :count, :id) == 0
+  end
+
   test "advance/1 rolls back the subject transition when dispatch enqueue fails" do
     Application.put_env(:mezzanine_execution_engine, :job_outbox_impl, FailingJobOutbox)
 

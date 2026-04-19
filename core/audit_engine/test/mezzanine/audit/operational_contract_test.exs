@@ -3,7 +3,7 @@ defmodule Mezzanine.Audit.OperationalContractTest do
 
   alias Mezzanine.Audit.{
     ExecutionLineage,
-    Freshness,
+    Staleness,
     TraceContract,
     UnifiedTrace
   }
@@ -107,13 +107,13 @@ defmodule Mezzanine.Audit.OperationalContractTest do
     assert Enum.all?(timeline.steps, &(&1.trace_id == "trace-1"))
 
     lower_step = Enum.find(timeline.steps, &(&1.ref == "run-1"))
-    assert lower_step.freshness == :lower_authoritative_unreconciled
+    assert lower_step.staleness_class == :lower_fresh
     refute lower_step.operator_actionable?
 
     authoritative_steps =
       Enum.filter(
         timeline.steps,
-        &(Freshness.operator_actionable?(&1.freshness) and &1.ref != "run-1")
+        &(Staleness.operator_actionable?(&1.staleness_class) and &1.ref != "run-1")
       )
 
     assert ["audit-1", "exec-1", "decision-1"] == Enum.map(authoritative_steps, & &1.ref)

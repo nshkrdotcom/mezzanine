@@ -9,6 +9,7 @@ defmodule MezzanineExecutionEngine do
     [
       Mezzanine.Execution,
       Mezzanine.Execution.ExecutionRecord,
+      Mezzanine.Execution.LifecycleContinuation,
       Mezzanine.JobOutbox,
       Mezzanine.LowerGateway,
       Mezzanine.ExecutionDispatchWorker,

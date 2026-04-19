@@ -73,6 +73,27 @@ defmodule Mezzanine.Archival.SchedulerTest do
     assert length(archived_trace.sources.decisions) == 1
     assert length(archived_trace.sources.evidence) == 1
 
+    assert archived_trace.sources.executions |> hd() |> Map.fetch!(:staleness_class) ==
+             :authoritative_archived
+
+    for {pivot, value} <- [
+          trace_id: "trace-archive",
+          subject_id: subject_id,
+          execution_id: execution_id,
+          decision_id: decision_id,
+          run_id: "lower-run-#{execution_id}",
+          attempt_id: "lower-attempt-#{execution_id}",
+          artifact_id: "artifact-#{execution_id}",
+          manifest_ref: manifest.manifest_ref
+        ] do
+      assert {:ok, pivot_trace} =
+               Query.archived_trace_sources_by_pivot(installation_id, pivot, value)
+
+      assert pivot_trace.trace_id == "trace-archive"
+      assert pivot_trace.manifest.manifest_ref == manifest.manifest_ref
+      assert length(pivot_trace.sources.executions) == 1
+    end
+
     assert_receive {[:mezzanine, :archival, :run], %{count: 1}, run_meta}
     assert run_meta.trace_id == "trace-archive"
     assert run_meta.subject_id == subject_id
@@ -211,14 +232,19 @@ defmodule Mezzanine.Archival.SchedulerTest do
     SQL.query!(
       Repo,
       """
-      INSERT INTO execution_records (id, tenant_id, installation_id, subject_id, recipe_ref, compiled_pack_revision, binding_snapshot, dispatch_envelope, intent_snapshot, dispatch_state, dispatch_attempt_count, submission_dedupe_key, trace_id, row_version, inserted_at, updated_at)
-      VALUES ($1::uuid, 'tenant-1', $2, $3::uuid, 'recipe', 1, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, 'completed', 0, $4, $5, 1, NOW(), NOW())
+      INSERT INTO execution_records (id, tenant_id, installation_id, subject_id, recipe_ref, compiled_pack_revision, binding_snapshot, dispatch_envelope, intent_snapshot, dispatch_state, dispatch_attempt_count, submission_dedupe_key, lower_receipt, trace_id, row_version, inserted_at, updated_at)
+      VALUES ($1::uuid, 'tenant-1', $2, $3::uuid, 'recipe', 1, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, 'completed', 0, $4, $5::jsonb, $6, 1, NOW(), NOW())
       """,
       [
         dump_uuid!(execution_id),
         installation_id,
         dump_uuid!(subject_id),
         "submission-#{execution_id}",
+        Jason.encode!(%{
+          "run_id" => "lower-run-#{execution_id}",
+          "attempt_id" => "lower-attempt-#{execution_id}",
+          "artifact_ids" => ["artifact-#{execution_id}"]
+        }),
         trace_id
       ]
     )

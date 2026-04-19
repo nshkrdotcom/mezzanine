@@ -97,25 +97,43 @@ defmodule Mezzanine.Audit.ExecutionLineage do
   defp blank?(_value), do: false
 end
 
-defmodule Mezzanine.Audit.Freshness do
+defmodule Mezzanine.Audit.Staleness do
   @moduledoc """
   Truth-precedence classifier for unified trace assembly and operator safety.
   """
 
-  @classes [:substrate_authoritative, :lower_authoritative_unreconciled, :diagnostic_only]
+  @classes [
+    :authoritative_hot,
+    :authoritative_archived,
+    :lower_fresh,
+    :projection_stale,
+    :diagnostic_only,
+    :unavailable
+  ]
 
   @source_classes %{
-    audit_fact: :substrate_authoritative,
-    execution_record: :substrate_authoritative,
-    decision_record: :substrate_authoritative,
-    evidence_record: :substrate_authoritative,
-    lower_run_status: :lower_authoritative_unreconciled,
-    lower_attempt_status: :lower_authoritative_unreconciled,
-    lower_artifact_status: :lower_authoritative_unreconciled,
+    audit_fact: :authoritative_hot,
+    execution_record: :authoritative_hot,
+    decision_record: :authoritative_hot,
+    evidence_record: :authoritative_hot,
+    archived_audit_fact: :authoritative_archived,
+    archived_execution_record: :authoritative_archived,
+    archived_decision_record: :authoritative_archived,
+    archived_evidence_record: :authoritative_archived,
+    lower_run_status: :lower_fresh,
+    lower_attempt_status: :lower_fresh,
+    lower_artifact_status: :lower_fresh,
+    operator_projection: :projection_stale,
     bridge_diagnostic: :diagnostic_only
   }
 
-  @type t :: :substrate_authoritative | :lower_authoritative_unreconciled | :diagnostic_only
+  @type t ::
+          :authoritative_hot
+          | :authoritative_archived
+          | :lower_fresh
+          | :projection_stale
+          | :diagnostic_only
+          | :unavailable
 
   @spec classes() :: [t()]
   def classes, do: @classes
@@ -127,8 +145,10 @@ defmodule Mezzanine.Audit.Freshness do
   def classify_source(source), do: Map.get(@source_classes, source, :diagnostic_only)
 
   @spec operator_actionable?(t()) :: boolean()
-  def operator_actionable?(:substrate_authoritative), do: true
-  def operator_actionable?(_freshness), do: false
+  def operator_actionable?(class) when class in [:authoritative_hot, :authoritative_archived],
+    do: true
+
+  def operator_actionable?(_staleness_class), do: false
 end
 
 defmodule Mezzanine.Audit.UnifiedTrace.Query do
@@ -172,16 +192,17 @@ end
 
 defmodule Mezzanine.Audit.UnifiedTrace.Step do
   @moduledoc """
-  One operator-visible unified trace step with explicit freshness semantics.
+  One operator-visible unified trace step with explicit source and staleness
+  semantics.
   """
 
-  @enforce_keys [:ref, :source, :occurred_at, :trace_id, :freshness]
+  @enforce_keys [:ref, :source, :occurred_at, :trace_id, :staleness_class]
   defstruct ref: nil,
             source: nil,
             occurred_at: nil,
             trace_id: nil,
             causation_id: nil,
-            freshness: nil,
+            staleness_class: nil,
             operator_actionable?: false,
             diagnostic?: false,
             payload: %{}
@@ -192,7 +213,7 @@ defmodule Mezzanine.Audit.UnifiedTrace.Step do
           occurred_at: DateTime.t(),
           trace_id: String.t(),
           causation_id: String.t() | nil,
-          freshness: Mezzanine.Audit.Freshness.t(),
+          staleness_class: Mezzanine.Audit.Staleness.t(),
           operator_actionable?: boolean(),
           diagnostic?: boolean(),
           payload: map()
@@ -225,7 +246,7 @@ defmodule Mezzanine.Audit.UnifiedTrace do
   Pure unified-trace assembler for the operator-facing “3 AM query”.
   """
 
-  alias Mezzanine.Audit.Freshness
+  alias Mezzanine.Audit.Staleness
   alias Mezzanine.Audit.UnifiedTrace.{Query, Step, Timeline}
 
   @source_families [:audit_facts, :executions, :decisions, :evidence, :lower_facts]
@@ -258,8 +279,8 @@ defmodule Mezzanine.Audit.UnifiedTrace do
       []
     else
       source = source_for_record(record, family)
-      freshness = Freshness.classify_source(source)
-      diagnostic? = freshness == :diagnostic_only
+      staleness_class = staleness_class_for_record(record, source)
+      diagnostic? = staleness_class in [:diagnostic_only, :unavailable]
 
       if diagnostic? and not query.include_diagnostic? do
         []
@@ -268,11 +289,11 @@ defmodule Mezzanine.Audit.UnifiedTrace do
           %Step{
             ref: Map.fetch!(record, :id),
             source: source,
-            occurred_at: Map.fetch!(record, :occurred_at),
+            occurred_at: occurred_at_for_record(record),
             trace_id: Map.fetch!(record, :trace_id),
             causation_id: Map.get(record, :causation_id),
-            freshness: freshness,
-            operator_actionable?: Freshness.operator_actionable?(freshness),
+            staleness_class: staleness_class,
+            operator_actionable?: Staleness.operator_actionable?(staleness_class),
             diagnostic?: diagnostic?,
             payload: payload_for_step(record)
           }
@@ -287,7 +308,62 @@ defmodule Mezzanine.Audit.UnifiedTrace do
   defp source_for_record(_record, :decisions), do: :decision_record
   defp source_for_record(_record, :evidence), do: :evidence_record
 
+  defp occurred_at_for_record(record) do
+    [:occurred_at, :updated_at, :inserted_at, :collected_at, :required_by]
+    |> Enum.find_value(&coerce_datetime(Map.get(record, &1)))
+    |> case do
+      %DateTime{} = occurred_at -> occurred_at
+      nil -> Map.fetch!(record, :occurred_at)
+    end
+  end
+
+  defp coerce_datetime(%DateTime{} = value), do: value
+  defp coerce_datetime(%NaiveDateTime{} = value), do: DateTime.from_naive!(value, "Etc/UTC")
+
+  defp coerce_datetime(value) when is_binary(value) do
+    case DateTime.from_iso8601(value) do
+      {:ok, datetime, _offset} ->
+        datetime
+
+      {:error, _reason} ->
+        case NaiveDateTime.from_iso8601(value) do
+          {:ok, naive_datetime} -> DateTime.from_naive!(naive_datetime, "Etc/UTC")
+          {:error, _reason} -> nil
+        end
+    end
+  end
+
+  defp coerce_datetime(_value), do: nil
+
+  defp staleness_class_for_record(record, source) do
+    record
+    |> Map.get(:staleness_class)
+    |> normalize_staleness_class()
+    |> case do
+      nil -> Staleness.classify_source(source)
+      staleness_class -> staleness_class
+    end
+  end
+
+  defp normalize_staleness_class(value) when is_atom(value) do
+    if value in Staleness.classes(), do: value
+  end
+
+  defp normalize_staleness_class(value) when is_binary(value) do
+    case value do
+      "authoritative_hot" -> :authoritative_hot
+      "authoritative_archived" -> :authoritative_archived
+      "lower_fresh" -> :lower_fresh
+      "projection_stale" -> :projection_stale
+      "diagnostic_only" -> :diagnostic_only
+      "unavailable" -> :unavailable
+      _other -> nil
+    end
+  end
+
+  defp normalize_staleness_class(_value), do: nil
+
   defp payload_for_step(record) do
-    Map.drop(record, [:id, :trace_id, :causation_id, :occurred_at])
+    Map.drop(record, [:id, :trace_id, :causation_id, :occurred_at, :staleness_class])
   end
 end

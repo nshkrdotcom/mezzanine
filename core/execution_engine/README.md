@@ -19,6 +19,8 @@ This package now owns the Phase `2.4.4` durable execution slice:
 - neutral operator command handling through `Mezzanine.OperatorActions`
 - neutral review, waiver, escalation, and gate evaluation through
   `Mezzanine.Reviews`
+- durable `LifecycleContinuation` records for post-commit lifecycle work that
+  must retry, dead-letter, or be waived without recursive transactions
 
 Primary modules:
 
@@ -30,3 +32,4 @@ Primary modules:
 - `Mezzanine.WorkControl`
 - `Mezzanine.OperatorActions`
 - `Mezzanine.Reviews`
+- `Mezzanine.Execution.LifecycleContinuation`

@@ -5,7 +5,7 @@ defmodule MezzanineAuditEngineTest do
     assert [
              Mezzanine.Audit.TraceContract,
              Mezzanine.Audit.ExecutionLineage,
-             Mezzanine.Audit.Freshness,
+             Mezzanine.Audit.Staleness,
              Mezzanine.Audit.UnifiedTrace
            ] == MezzanineAuditEngine.contract_modules()
   end

@@ -8,6 +8,10 @@ This package now owns the durable Stage-11 substrate archival slice for:
 - durable archival manifests carrying subject graph membership and cold-storage state
 - filesystem-backed cold snapshots plus archived-query helpers
 - hot-row removal and archival telemetry on the real scheduler path
+- archived trace source lookup by trace, subject, execution, decision, run,
+  attempt, artifact, and manifest pivots
+- operator-facing staleness labels that distinguish archived truth from hot,
+  lower-fresh, projection-stale, diagnostic, or unavailable fields
 
 Primary public surfaces:
 

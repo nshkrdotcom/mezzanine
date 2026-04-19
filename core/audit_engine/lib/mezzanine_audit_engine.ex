@@ -8,7 +8,7 @@ defmodule MezzanineAuditEngine do
     [
       Mezzanine.Audit.TraceContract,
       Mezzanine.Audit.ExecutionLineage,
-      Mezzanine.Audit.Freshness,
+      Mezzanine.Audit.Staleness,
       Mezzanine.Audit.UnifiedTrace
     ]
   end

@@ -7,6 +7,7 @@ defmodule MezzanineLifecycleEngine do
   def components do
     [
       Mezzanine.LifecycleEvaluator,
+      Mezzanine.LifecycleContinuationWorker,
       Mezzanine.ExecutionReceiptWorker,
       Mezzanine.ExecutionReconcileWorker
     ]

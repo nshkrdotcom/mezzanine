@@ -16,7 +16,7 @@ defmodule Mezzanine.LifecycleEvaluator do
   alias Mezzanine.Pack.{CompiledPack, ExecutionRecipeSpec, Serializer}
 
   @dialyzer [
-    {:nowarn_function, advance_multi: 8},
+    {:nowarn_function, advance_multi: 2},
     {:nowarn_function, execution_plan_multi: 5},
     {:nowarn_function, dispatch_multi: 2},
     {:nowarn_function, cycle_bound_multi: 3},
@@ -296,41 +296,27 @@ defmodule Mezzanine.LifecycleEvaluator do
     trigger = Keyword.get(opts, :trigger, :auto)
     causation_id = Keyword.get(opts, :causation_id, default_causation_id(subject_id, now))
 
+    expected_installation_revision =
+      Keyword.get(opts, :expected_installation_revision) ||
+        Keyword.get(opts, :installation_revision)
+
     with {:ok, supersession_opts} <- normalize_supersession_opts(opts) do
       {:ok,
-       advance_multi(
-         subject_id,
-         now,
-         actor_ref,
-         trace_id,
-         execution_id,
-         trigger,
-         causation_id,
-         supersession_opts
-       )}
+       advance_multi(subject_id, %{
+         now: now,
+         actor_ref: actor_ref,
+         explicit_trace_id: trace_id,
+         execution_id: execution_id,
+         trigger: trigger,
+         causation_id: causation_id,
+         supersession_opts: supersession_opts,
+         expected_installation_revision: expected_installation_revision
+       })}
     end
   end
 
-  @spec advance_multi(
-          Ecto.UUID.t(),
-          DateTime.t(),
-          map(),
-          String.t() | nil,
-          Ecto.UUID.t() | nil,
-          trigger_key(),
-          String.t(),
-          supersession_opts() | nil
-        ) :: Ecto.Multi.t()
-  defp advance_multi(
-         subject_id,
-         now,
-         actor_ref,
-         explicit_trace_id,
-         execution_id,
-         trigger,
-         causation_id,
-         supersession_opts
-       ) do
+  @spec advance_multi(Ecto.UUID.t(), map()) :: Ecto.Multi.t()
+  defp advance_multi(subject_id, context) do
     Multi.new()
     |> Multi.run(:subject_lock, fn repo, _changes ->
       case execute(repo, @subject_lock_sql, [subject_id]) do
@@ -344,21 +330,30 @@ defmodule Mezzanine.LifecycleEvaluator do
     |> Multi.run(:installation, fn repo, %{subject: subject} ->
       fetch_installation(repo, subject.installation_id)
     end)
+    |> Multi.run(:installation_revision_gate, fn _repo, %{installation: installation} ->
+      ensure_expected_installation_revision(installation, context.expected_installation_revision)
+    end)
     |> Multi.run(:supersession_context, fn repo,
                                            %{subject: subject, installation: installation} ->
-      resolve_supersession_context(repo, subject, installation, supersession_opts)
+      resolve_supersession_context(repo, subject, installation, context.supersession_opts)
     end)
     |> Multi.run(:compiled_pack, fn _repo, %{installation: installation} ->
       deserialize_compiled_pack(installation.compiled_manifest)
     end)
     |> Multi.run(:trace_id, fn repo, %{subject: subject} ->
-      resolve_trace_id(repo, subject.id, explicit_trace_id)
+      resolve_trace_id(repo, subject.id, context.explicit_trace_id)
     end)
     |> Multi.run(:plan, fn _repo, %{compiled_pack: compiled_pack, subject: subject} ->
-      build_plan(compiled_pack, subject, trigger)
+      build_plan(compiled_pack, subject, context.trigger)
     end)
     |> Multi.merge(fn changes ->
-      execution_plan_multi(changes, now, actor_ref, execution_id, causation_id)
+      execution_plan_multi(
+        changes,
+        context.now,
+        context.actor_ref,
+        context.execution_id,
+        context.causation_id
+      )
     end)
   end
 
@@ -783,6 +778,27 @@ defmodule Mezzanine.LifecycleEvaluator do
       {:error, error} ->
         {:error, error}
     end
+  end
+
+  defp ensure_expected_installation_revision(_installation, nil), do: {:ok, :not_required}
+
+  defp ensure_expected_installation_revision(installation, expected_revision)
+       when is_integer(expected_revision) and expected_revision >= 0 do
+    if installation.compiled_pack_revision == expected_revision do
+      {:ok, :matched}
+    else
+      {:error,
+       {:stale_installation_revision,
+        %{
+          installation_id: installation.id,
+          attempted_revision: expected_revision,
+          current_revision: installation.compiled_pack_revision
+        }}}
+    end
+  end
+
+  defp ensure_expected_installation_revision(_installation, attempted_revision) do
+    {:error, {:invalid_installation_revision, attempted_revision}}
   end
 
   defp deserialize_compiled_pack(compiled_manifest) when is_map(compiled_manifest) do

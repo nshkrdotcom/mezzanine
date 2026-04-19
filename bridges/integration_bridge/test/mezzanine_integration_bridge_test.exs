@@ -162,7 +162,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
 
     assert result.operation == :fetch_run
     assert result.source == :lower_run_status
-    assert result.freshness == :lower_authoritative_unreconciled
+    assert result.staleness_class == :lower_fresh
     refute result.operator_actionable?
 
     assert result.lineage == %{

@@ -48,7 +48,14 @@ defmodule Mezzanine.RuntimeScheduler.InstallationLeaseStore do
             persist_existing_lease(repo, persisted, candidate, :renewed)
 
           stale_revision?(current_lease, candidate) ->
-            repo.rollback({:stale_revision, Fence.from_lease(current_lease)})
+            repo.rollback(
+              {:stale_revision,
+               %{
+                 attempted_revision: candidate.compiled_pack_revision,
+                 current_revision: current_lease.compiled_pack_revision,
+                 fence: Fence.from_lease(current_lease)
+               }}
+            )
 
           InstallationLease.expired?(current_lease, now) and candidate.epoch > current_lease.epoch ->
             persist_existing_lease(repo, persisted, candidate, :acquired)

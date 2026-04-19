@@ -70,12 +70,16 @@ defmodule Mezzanine.RuntimeScheduler.InstallationLeaseStoreTest do
 
     assert {:error,
             {:stale_revision,
-             %Fence{
-               installation_id: "installation-expense",
-               holder: "scheduler-a",
-               lease_id: "lease-expense-a",
-               epoch: 2,
-               compiled_pack_revision: 9
+             %{
+               attempted_revision: 8,
+               current_revision: 9,
+               fence: %Fence{
+                 installation_id: "installation-expense",
+                 holder: "scheduler-a",
+                 lease_id: "lease-expense-a",
+                 epoch: 2,
+                 compiled_pack_revision: 9
+               }
              }}} =
              InstallationLeaseStore.acquire_lease(
                lease!("installation-expense", "scheduler-b", "lease-expense-b", 3, 8, later),

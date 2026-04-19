@@ -16,9 +16,15 @@ This package now owns the first real Stage `9.1` lifecycle slice:
   `{:execution_failed, recipe_ref[, failure_kind]}`
 - idempotent reconcile-to-receipt recovery for executions stranded in
   `:awaiting_receipt`
+- installation revision gating before governed execution requests are queued;
+  stale callers receive attempted/current revision diagnostics and no lower
+  submission
+- duplicate-safe `LifecycleContinuationWorker` processing for transient retry,
+  deterministic dead-letter, and operator-forced retry/waive flows
 
 Primary modules:
 
 - `Mezzanine.LifecycleEvaluator`
 - `Mezzanine.ExecutionReceiptWorker`
 - `Mezzanine.ExecutionReconcileWorker`
+- `Mezzanine.LifecycleContinuationWorker`

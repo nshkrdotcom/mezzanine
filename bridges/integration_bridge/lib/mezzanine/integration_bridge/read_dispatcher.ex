@@ -12,7 +12,7 @@ defmodule Mezzanine.IntegrationBridge.ReadDispatcher do
 
   alias Jido.Integration.V2.SubstrateReadSlice
   alias Jido.Integration.V2.TenantScope
-  alias Mezzanine.Audit.{ExecutionLineage, ExecutionLineageStore, Freshness}
+  alias Mezzanine.Audit.{ExecutionLineage, ExecutionLineageStore, Staleness}
   alias Mezzanine.Intent.ReadIntent
 
   @lower_facts SubstrateReadSlice
@@ -45,14 +45,14 @@ defmodule Mezzanine.IntegrationBridge.ReadDispatcher do
          {:ok, result, source} <-
            dispatch_lower_fact(lower_facts, operation, scope, lineage, intent.query),
          :ok <- enforce_lineage_guard(operation, result, lineage, intent.query) do
-      freshness = Freshness.classify_source(source)
+      staleness_class = Staleness.classify_source(source)
 
       {:ok,
        %{
          operation: operation,
          source: source,
-         freshness: freshness,
-         operator_actionable?: Freshness.operator_actionable?(freshness),
+         staleness_class: staleness_class,
+         operator_actionable?: Staleness.operator_actionable?(staleness_class),
          lineage: ExecutionLineage.public_lookup(lineage),
          result: result
        }}
