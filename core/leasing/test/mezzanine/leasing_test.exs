@@ -14,6 +14,9 @@ defmodule Mezzanine.LeasingTest do
           trace_id: "00-4bf92f3577b34da6a3ce929d0e0e4736-f067aa0ba902b7-01",
           tenant_id: "tenant-a",
           installation_id: Ecto.UUID.generate(),
+          installation_revision: 12,
+          activation_epoch: 8,
+          lease_epoch: 4,
           subject_id: Ecto.UUID.generate(),
           lineage_anchor: %{"submission_ref" => "sub-1"},
           allowed_family: "unified_trace",
@@ -29,6 +32,9 @@ defmodule Mezzanine.LeasingTest do
       assert metadata.allowed_family == "unified_trace"
 
       assert lease.issued_invalidation_cursor == 0
+      assert lease.installation_revision == 12
+      assert lease.activation_epoch == 8
+      assert lease.lease_epoch == 4
 
       scope = authorization_scope(lease)
 
@@ -41,6 +47,14 @@ defmodule Mezzanine.LeasingTest do
       assert {:error, :tenant_mismatch} =
                Leasing.authorize_read(
                  %{scope | tenant_id: "tenant-b"},
+                 lease.lease_id,
+                 lease.lease_token,
+                 :events
+               )
+
+      assert {:error, :lease_epoch_mismatch} =
+               Leasing.authorize_read(
+                 %{scope | lease_epoch: 3},
                  lease.lease_id,
                  lease.lease_token,
                  :events
@@ -60,6 +74,9 @@ defmodule Mezzanine.LeasingTest do
           trace_id: "00-4bf92f3577b34da6a3ce929d0e0e4736-f067aa0ba902b7-01",
           tenant_id: "tenant-a",
           installation_id: Ecto.UUID.generate(),
+          installation_revision: 12,
+          activation_epoch: 8,
+          lease_epoch: 4,
           subject_id: subject_id,
           lineage_anchor: %{"submission_ref" => "sub-2"},
           allowed_family: "unified_trace",
@@ -71,6 +88,9 @@ defmodule Mezzanine.LeasingTest do
           trace_id: "00-4bf92f3577b34da6a3ce929d0e0e4736-f067aa0ba902b7-01",
           tenant_id: "tenant-a",
           installation_id: Ecto.UUID.generate(),
+          installation_revision: 12,
+          activation_epoch: 8,
+          lease_epoch: 4,
           subject_id: subject_id,
           lineage_anchor: %{"submission_ref" => "sub-2"},
           allowed_family: "runtime_stream"
@@ -122,6 +142,9 @@ defmodule Mezzanine.LeasingTest do
             trace_id: "00-4bf92f3577b34da6a3ce929d0e0e4736-f067aa0ba902b7-01",
             tenant_id: "tenant-#{index}",
             installation_id: Ecto.UUID.generate(),
+            installation_revision: index,
+            activation_epoch: index,
+            lease_epoch: index,
             execution_id: Ecto.UUID.generate(),
             lineage_anchor: %{"submission_ref" => "sub-#{index}"},
             allowed_family: "runtime_stream"
@@ -172,6 +195,9 @@ defmodule Mezzanine.LeasingTest do
     AuthorizationScope.new!(%{
       tenant_id: lease.tenant_id,
       installation_id: lease.installation_id,
+      installation_revision: lease.installation_revision,
+      activation_epoch: lease.activation_epoch,
+      lease_epoch: lease.lease_epoch,
       subject_id: lease.subject_id,
       execution_id: lease.execution_id,
       trace_id: lease.trace_id,

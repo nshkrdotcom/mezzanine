@@ -14,11 +14,16 @@ defmodule Mezzanine.LeaseInvalidation do
     field(:lease_kind, :string)
     field(:tenant_id, :string)
     field(:installation_id, :string)
+    field(:installation_revision, :integer)
+    field(:activation_epoch, :integer)
+    field(:lease_epoch, :integer)
     field(:subject_id, :binary_id)
     field(:execution_id, :binary_id)
     field(:trace_id, :string)
     field(:reason, :string)
     field(:sequence_number, :integer)
+    field(:revocation_ref, :string)
+    field(:cache_invalidation_ref, :string)
     field(:invalidated_at, :utc_datetime_usec)
 
     timestamps(updated_at: false)
@@ -30,11 +35,16 @@ defmodule Mezzanine.LeaseInvalidation do
           lease_kind: String.t() | nil,
           tenant_id: String.t() | nil,
           installation_id: String.t() | nil,
+          installation_revision: non_neg_integer() | nil,
+          activation_epoch: non_neg_integer() | nil,
+          lease_epoch: non_neg_integer() | nil,
           subject_id: Ecto.UUID.t() | nil,
           execution_id: Ecto.UUID.t() | nil,
           trace_id: String.t() | nil,
           reason: String.t() | nil,
           sequence_number: non_neg_integer() | nil,
+          revocation_ref: String.t() | nil,
+          cache_invalidation_ref: String.t() | nil,
           invalidated_at: DateTime.t() | nil,
           inserted_at: DateTime.t() | nil
         }
@@ -46,10 +56,19 @@ defmodule Mezzanine.LeaseInvalidation do
     :trace_id,
     :reason,
     :sequence_number,
+    :revocation_ref,
+    :cache_invalidation_ref,
     :invalidated_at
   ]
 
-  @optional_fields [:installation_id, :subject_id, :execution_id]
+  @optional_fields [
+    :installation_id,
+    :installation_revision,
+    :activation_epoch,
+    :lease_epoch,
+    :subject_id,
+    :execution_id
+  ]
 
   @spec changeset(t(), map()) :: Ecto.Changeset.t()
   def changeset(invalidation, attrs) do

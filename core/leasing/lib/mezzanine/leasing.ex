@@ -46,7 +46,10 @@ defmodule Mezzanine.Leasing do
         lease_id: Ecto.UUID.generate(),
         trace_id: fetch_required!(attrs, :trace_id),
         tenant_id: fetch_required!(attrs, :tenant_id),
-        installation_id: Map.get(attrs, :installation_id),
+        installation_id: fetch_required!(attrs, :installation_id),
+        installation_revision: fetch_required!(attrs, :installation_revision),
+        activation_epoch: fetch_required!(attrs, :activation_epoch),
+        lease_epoch: fetch_required!(attrs, :lease_epoch),
         subject_id: Map.get(attrs, :subject_id),
         execution_id: Map.get(attrs, :execution_id),
         lineage_anchor: Map.get(attrs, :lineage_anchor, %{}),
@@ -83,7 +86,10 @@ defmodule Mezzanine.Leasing do
         lease_id: Ecto.UUID.generate(),
         trace_id: fetch_required!(attrs, :trace_id),
         tenant_id: fetch_required!(attrs, :tenant_id),
-        installation_id: Map.get(attrs, :installation_id),
+        installation_id: fetch_required!(attrs, :installation_id),
+        installation_revision: fetch_required!(attrs, :installation_revision),
+        activation_epoch: fetch_required!(attrs, :activation_epoch),
+        lease_epoch: fetch_required!(attrs, :lease_epoch),
         subject_id: Map.get(attrs, :subject_id),
         execution_id: Map.get(attrs, :execution_id),
         lineage_anchor: Map.get(attrs, :lineage_anchor, %{}),
@@ -274,6 +280,10 @@ defmodule Mezzanine.Leasing do
     [
       {:tenant_mismatch, lease.tenant_id, scope.tenant_id, :required},
       {:installation_mismatch, lease.installation_id, scope.installation_id, :optional},
+      {:installation_revision_mismatch, lease.installation_revision, scope.installation_revision,
+       :required},
+      {:activation_epoch_mismatch, lease.activation_epoch, scope.activation_epoch, :required},
+      {:lease_epoch_mismatch, lease.lease_epoch, scope.lease_epoch, :required},
       {:trace_mismatch, lease.trace_id, scope.trace_id, :optional},
       {:subject_mismatch, lease.subject_id, scope.subject_id, :optional},
       {:execution_mismatch, lease.execution_id, scope.execution_id, :optional}
@@ -397,6 +407,9 @@ defmodule Mezzanine.Leasing do
       lease_kind: lease_kind,
       tenant_id: lease.tenant_id,
       installation_id: lease.installation_id,
+      installation_revision: lease.installation_revision,
+      activation_epoch: lease.activation_epoch,
+      lease_epoch: lease.lease_epoch,
       subject_id: lease.subject_id,
       execution_id: lease.execution_id,
       trace_id: trace_id,
@@ -410,7 +423,16 @@ defmodule Mezzanine.Leasing do
     rows
     |> Enum.with_index(start_at)
     |> Enum.map(fn {row, sequence_number} ->
-      Map.put(row, :sequence_number, sequence_number)
+      row
+      |> Map.put(:sequence_number, sequence_number)
+      |> Map.put(
+        :revocation_ref,
+        "lease-revocation:#{row.lease_kind}:#{row.lease_id}:#{sequence_number}"
+      )
+      |> Map.put(
+        :cache_invalidation_ref,
+        "lease-cache-invalidation:#{row.lease_kind}:#{row.lease_id}:#{sequence_number}"
+      )
     end)
   end
 
@@ -466,8 +488,10 @@ defmodule Mezzanine.Leasing do
     sql =
       [
         """
-        SELECT id, lease_id, lease_kind, tenant_id, installation_id, subject_id,
-               execution_id, trace_id, reason, sequence_number, invalidated_at, inserted_at
+        SELECT id, lease_id, lease_kind, tenant_id, installation_id,
+               installation_revision, activation_epoch, lease_epoch, subject_id,
+               execution_id, trace_id, reason, sequence_number, revocation_ref,
+               cache_invalidation_ref, invalidated_at, inserted_at
         FROM lease_invalidations
         WHERE sequence_number > $1
         """,
@@ -490,11 +514,16 @@ defmodule Mezzanine.Leasing do
       lease_kind: row.lease_kind,
       tenant_id: row.tenant_id,
       installation_id: row.installation_id,
+      installation_revision: row.installation_revision,
+      activation_epoch: row.activation_epoch,
+      lease_epoch: row.lease_epoch,
       subject_id: row.subject_id,
       execution_id: row.execution_id,
       trace_id: row.trace_id,
       reason: row.reason,
       sequence_number: row.sequence_number,
+      revocation_ref: row.revocation_ref,
+      cache_invalidation_ref: row.cache_invalidation_ref,
       invalidated_at: coerce_datetime(row.invalidated_at),
       inserted_at: coerce_datetime(row.inserted_at)
     }

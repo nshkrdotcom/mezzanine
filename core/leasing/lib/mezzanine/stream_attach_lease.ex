@@ -14,6 +14,9 @@ defmodule Mezzanine.StreamAttachLease do
     field(:trace_id, :string)
     field(:tenant_id, :string)
     field(:installation_id, :string)
+    field(:installation_revision, :integer)
+    field(:activation_epoch, :integer)
+    field(:lease_epoch, :integer)
     field(:subject_id, :binary_id)
     field(:execution_id, :binary_id)
     field(:lineage_anchor, :map, default: %{})
@@ -34,6 +37,9 @@ defmodule Mezzanine.StreamAttachLease do
           trace_id: String.t() | nil,
           tenant_id: String.t() | nil,
           installation_id: String.t() | nil,
+          installation_revision: non_neg_integer() | nil,
+          activation_epoch: non_neg_integer() | nil,
+          lease_epoch: non_neg_integer() | nil,
           subject_id: Ecto.UUID.t() | nil,
           execution_id: Ecto.UUID.t() | nil,
           lineage_anchor: map(),
@@ -53,6 +59,10 @@ defmodule Mezzanine.StreamAttachLease do
     :lease_id,
     :trace_id,
     :tenant_id,
+    :installation_id,
+    :installation_revision,
+    :activation_epoch,
+    :lease_epoch,
     :allowed_family,
     :attach_token_digest,
     :expires_at,
@@ -62,7 +72,6 @@ defmodule Mezzanine.StreamAttachLease do
   ]
 
   @optional_fields [
-    :installation_id,
     :subject_id,
     :execution_id,
     :lineage_anchor,

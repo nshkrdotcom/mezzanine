@@ -6,6 +6,9 @@ defmodule Mezzanine.Leasing.AuthorizationScope do
   @type t :: %__MODULE__{
           tenant_id: String.t(),
           installation_id: String.t() | nil,
+          installation_revision: non_neg_integer(),
+          activation_epoch: non_neg_integer(),
+          lease_epoch: non_neg_integer(),
           subject_id: Ecto.UUID.t() | nil,
           execution_id: Ecto.UUID.t() | nil,
           trace_id: String.t() | nil,
@@ -16,6 +19,9 @@ defmodule Mezzanine.Leasing.AuthorizationScope do
   @enforce_keys [:tenant_id]
   defstruct tenant_id: nil,
             installation_id: nil,
+            installation_revision: nil,
+            activation_epoch: nil,
+            lease_epoch: nil,
             subject_id: nil,
             execution_id: nil,
             trace_id: nil,
@@ -46,6 +52,9 @@ defmodule Mezzanine.Leasing.AuthorizationScope do
     %{
       tenant_id: scope.tenant_id,
       installation_id: scope.installation_id,
+      installation_revision: scope.installation_revision,
+      activation_epoch: scope.activation_epoch,
+      lease_epoch: scope.lease_epoch,
       subject_id: scope.subject_id,
       execution_id: scope.execution_id,
       trace_id: scope.trace_id,
@@ -66,6 +75,9 @@ defmodule Mezzanine.Leasing.AuthorizationScope do
     %__MODULE__{
       tenant_id: required_string!(attrs, :tenant_id),
       installation_id: optional_string!(Map.get(attrs, :installation_id)),
+      installation_revision: required_non_neg_integer!(attrs, :installation_revision),
+      activation_epoch: required_non_neg_integer!(attrs, :activation_epoch),
+      lease_epoch: required_non_neg_integer!(attrs, :lease_epoch),
       subject_id: optional_string!(Map.get(attrs, :subject_id)),
       execution_id: optional_string!(Map.get(attrs, :execution_id)),
       trace_id: optional_string!(Map.get(attrs, :trace_id)),
@@ -83,6 +95,19 @@ defmodule Mezzanine.Leasing.AuthorizationScope do
 
       value ->
         raise ArgumentError, "#{inspect(key)} must be a non-empty string, got: #{inspect(value)}"
+    end
+  end
+
+  defp required_non_neg_integer!(attrs, key) do
+    attrs
+    |> Map.get(key)
+    |> case do
+      value when is_integer(value) and value >= 0 ->
+        value
+
+      value ->
+        raise ArgumentError,
+              "#{inspect(key)} must be a non-negative integer, got: #{inspect(value)}"
     end
   end
 

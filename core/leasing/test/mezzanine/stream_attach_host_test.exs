@@ -18,6 +18,9 @@ defmodule Mezzanine.StreamAttachHostTest do
           trace_id: "00-4bf92f3577b34da6a3ce929d0e0e4736-f067aa0ba902b7-01",
           tenant_id: "tenant-a",
           installation_id: Ecto.UUID.generate(),
+          installation_revision: 12,
+          activation_epoch: 8,
+          lease_epoch: 4,
           execution_id: Ecto.UUID.generate(),
           lineage_anchor: %{"submission_ref" => "sub-1"},
           allowed_family: "runtime_stream"
@@ -82,6 +85,9 @@ defmodule Mezzanine.StreamAttachHostTest do
           trace_id: "00-4bf92f3577b34da6a3ce929d0e0e4736-f067aa0ba902b7-01",
           tenant_id: "tenant-a",
           installation_id: Ecto.UUID.generate(),
+          installation_revision: 12,
+          activation_epoch: 8,
+          lease_epoch: 4,
           execution_id: Ecto.UUID.generate(),
           lineage_anchor: %{"submission_ref" => "sub-1"},
           allowed_family: "runtime_stream"
@@ -139,6 +145,9 @@ defmodule Mezzanine.StreamAttachHostTest do
           trace_id: "00-4bf92f3577b34da6a3ce929d0e0e4736-f067aa0ba902b7-01",
           tenant_id: "tenant-a",
           installation_id: Ecto.UUID.generate(),
+          installation_revision: 12,
+          activation_epoch: 8,
+          lease_epoch: 4,
           execution_id: Ecto.UUID.generate(),
           lineage_anchor: %{"submission_ref" => "sub-gap"},
           allowed_family: "runtime_stream"
@@ -207,6 +216,9 @@ defmodule Mezzanine.StreamAttachHostTest do
         trace_id: "00-4bf92f3577b34da6a3ce929d0e0e4736-f067aa0ba902b7-01",
         tenant_id: "tenant-a",
         installation_id: Ecto.UUID.generate(),
+        installation_revision: 12,
+        activation_epoch: 8,
+        lease_epoch: 4,
         execution_id: Ecto.UUID.generate(),
         lineage_anchor: %{"submission_ref" => "sub-1"},
         allowed_family: "runtime_stream"
@@ -268,6 +280,9 @@ defmodule Mezzanine.StreamAttachHostTest do
     AuthorizationScope.new!(%{
       tenant_id: lease.tenant_id,
       installation_id: lease.installation_id,
+      installation_revision: lease.installation_revision,
+      activation_epoch: lease.activation_epoch,
+      lease_epoch: lease.lease_epoch,
       subject_id: lease.subject_id,
       execution_id: lease.execution_id,
       trace_id: lease.trace_id,

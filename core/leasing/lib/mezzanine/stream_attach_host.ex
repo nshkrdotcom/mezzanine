@@ -244,6 +244,9 @@ defmodule Mezzanine.StreamAttachHost do
         AuthorizationScope.new!(
           tenant_id: Keyword.fetch!(opts, :tenant_id),
           installation_id: Keyword.get(opts, :installation_id),
+          installation_revision: Keyword.fetch!(opts, :installation_revision),
+          activation_epoch: Keyword.fetch!(opts, :activation_epoch),
+          lease_epoch: Keyword.fetch!(opts, :lease_epoch),
           subject_id: Keyword.get(opts, :subject_id),
           execution_id: Keyword.get(opts, :execution_id),
           trace_id: Keyword.get(opts, :trace_id),
