@@ -87,6 +87,10 @@ Current posture:
   caller-carried authorization scope before token validation, and
   `bridges/integration_bridge` forwards only typed `TenantScope` reads to the
   lower store
+- control-room incident bundles now use
+  `Mezzanine.ControlRoom.IncidentBundle` to carry compact tenant, authority,
+  trace, workflow, lower-fact, semantic, projection, staleness, and release
+  references without embedding raw workflow history or lower/provider payloads
 - internal/operator pack authoring enters through deterministic
   `Mezzanine.Authoring.Bundle` imports; the config registry validates checksum,
   configured signature, policy refs, binding descriptors, lifecycle hints,

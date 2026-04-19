@@ -1,9 +1,21 @@
 # MezzanineOperatorEngine
 
-Neutral operator command and diagnostics engine scaffold for the Mezzanine
-rebuild.
+Neutral operator command, diagnostics, and control-room evidence engine for the
+Mezzanine rebuild.
 
-This package will own operator-facing commands, diagnostics, and intervention
-coordination above the new neutral execution core.
+This package owns operator-facing commands, diagnostics, intervention
+coordination above the neutral execution core, and the Phase 4 control-room
+incident bundle contract.
 
-Status: Phase `2.1` scaffold only.
+Primary modules:
+
+- `Mezzanine.OperatorCommands`
+- `Mezzanine.ExecutionCancelWorker`
+- `Mezzanine.ControlRoom.IncidentBundle`
+
+`Mezzanine.ControlRoom.IncidentBundle` implements
+`Mezzanine.IncidentBundle.v1` as a compact reference envelope. It requires
+tenant, installation, principal or system actor, resource, authority,
+idempotency, trace, workflow, lower-fact, semantic, projection, staleness, and
+release-manifest references without embedding raw workflow history, lower
+payloads, provider metadata, prompts, or artifacts.
