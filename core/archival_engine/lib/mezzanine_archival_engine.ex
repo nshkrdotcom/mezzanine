@@ -8,7 +8,11 @@ defmodule MezzanineArchivalEngine do
   def contract_modules do
     [
       Mezzanine.Archival.ArchivalManifest,
+      Mezzanine.Archival.ArchivalConflict,
+      Mezzanine.Archival.ArchivalSweep,
       Mezzanine.Archival.ColdStore,
+      Mezzanine.Archival.ColdRestoreArtifactQuery,
+      Mezzanine.Archival.ColdRestoreTraceQuery,
       Mezzanine.Archival.FileSystemColdStore,
       Mezzanine.Archival.Query,
       Mezzanine.Archival.Scheduler,

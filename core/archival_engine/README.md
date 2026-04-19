@@ -12,11 +12,18 @@ This package now owns the durable Stage-11 substrate archival slice for:
   attempt, artifact, and manifest pivots
 - operator-facing staleness labels that distinguish archived truth from hot,
   lower-fresh, projection-stale, diagnostic, or unavailable fields
+- Phase 4 release contracts for cold restore by trace id, cold restore by
+  artifact id, hot/cold conflict quarantine, and archival sweep retry
+  quarantine
 
 Primary public surfaces:
 
 - `Mezzanine.Archival.ArchivalManifest`
+- `Mezzanine.Archival.ArchivalConflict`
+- `Mezzanine.Archival.ArchivalSweep`
 - `Mezzanine.Archival.ColdStore`
+- `Mezzanine.Archival.ColdRestoreArtifactQuery`
+- `Mezzanine.Archival.ColdRestoreTraceQuery`
 - `Mezzanine.Archival.Query`
 
 Internal implementation files:
