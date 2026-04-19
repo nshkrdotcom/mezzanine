@@ -1322,10 +1322,356 @@ defmodule Mezzanine.ActivityLeaseBroker do
   Behaviour for worker-local lower lease and attach-grant bundle brokering.
   """
 
+  @cache_key_version 1
+  @default_max_uses 5
+  @failure_classes [
+    :lease_denied,
+    :lease_stale,
+    :lease_revoked,
+    :lease_expired,
+    :lease_scope_mismatch,
+    :lease_epoch_mismatch,
+    :lease_cache_unavailable,
+    :lease_mint_unavailable_retryable,
+    :lease_mint_failed_terminal
+  ]
+
   @callback acquire(Mezzanine.ActivityLeaseScopeRequest.t()) ::
               {:ok, Mezzanine.ActivityLeaseBundle.t()} | {:error, term()}
   @callback refresh(Mezzanine.ActivityLeaseScopeRequest.t(), term()) ::
               {:ok, Mezzanine.ActivityLeaseBundle.t()} | {:error, term()}
   @callback revoke_seen(term()) :: :ok | {:error, term()}
   @callback invalidate(term()) :: :ok | {:error, term()}
+
+  @doc "Version of the opaque worker-local lease bundle cache key."
+  @spec cache_key_version() :: pos_integer()
+  def cache_key_version, do: @cache_key_version
+
+  @doc "Terminal and retryable failure classes emitted by the activity lease broker."
+  @spec failure_classes() :: [atom()]
+  def failure_classes, do: @failure_classes
+
+  @doc """
+  Acquire an authority bundle for an activity scope.
+
+  The cache is intentionally process-local so activity workers can reuse scoped
+  authority evidence without entering deterministic workflow history.
+  """
+  @spec acquire(Mezzanine.ActivityLeaseScopeRequest.t() | map() | keyword()) ::
+          {:ok, Mezzanine.ActivityLeaseBundle.t()} | {:error, term()}
+  def acquire(request) do
+    with {:ok, request} <- normalize_request(request),
+         :ok <- deny_if_revoked(request) do
+      acquire_from_cache(request)
+    end
+  end
+
+  @doc "Refresh a stale bundle by invalidating the prior scope and minting a new evidence bundle."
+  @spec refresh(Mezzanine.ActivityLeaseScopeRequest.t() | map() | keyword(), term()) ::
+          {:ok, Mezzanine.ActivityLeaseBundle.t()} | {:error, term()}
+  def refresh(request, stale_bundle_ref) do
+    _ = invalidate(stale_bundle_ref)
+
+    with {:ok, request} <- normalize_request(request),
+         :ok <- deny_if_revoked(request) do
+      mint_and_store(request, "refreshed")
+    end
+  end
+
+  @doc "Record a revocation event and evict matching worker-local cache entries."
+  @spec revoke_seen(map() | keyword()) :: :ok | {:error, term()}
+  def revoke_seen(event) do
+    event = normalize_map(event)
+    key = revocation_key(event)
+    epoch = integer_value(event, :revocation_epoch, 0)
+
+    revocations =
+      process_get(:revocations, %{})
+      |> Map.update(key, epoch, &max(&1, epoch))
+
+    Process.put(process_key(:revocations), revocations)
+
+    invalidated =
+      cache()
+      |> Enum.filter(fn {_cache_key, %{request: request}} ->
+        revocation_match?(request, event)
+      end)
+      |> Enum.map(fn {cache_key, _entry} -> cache_key end)
+
+    Enum.each(invalidated, &delete_cache_key/1)
+    metric(:revocation_invalidations, length(invalidated))
+    :ok
+  end
+
+  @doc "Invalidate one cache key, one cache epoch, or all cache state for the current worker."
+  @spec invalidate(term()) :: :ok | {:error, term()}
+  def invalidate(:all) do
+    Process.delete(process_key(:cache))
+    :ok
+  end
+
+  def invalidate(cache_key) when is_binary(cache_key) do
+    delete_cache_key(cache_key)
+    :ok
+  end
+
+  def invalidate(epoch) when is_integer(epoch) do
+    cache()
+    |> Enum.filter(fn {_key, %{bundle: bundle}} ->
+      bundle.lease_epoch == epoch or bundle.revocation_epoch == epoch
+    end)
+    |> Enum.each(fn {key, _entry} -> delete_cache_key(key) end)
+
+    :ok
+  end
+
+  def invalidate(_cache_key_or_epoch), do: :ok
+
+  @doc "Current process-local broker metrics used by Stack Lab and unit proofs."
+  @spec metrics() :: map()
+  def metrics do
+    metrics = process_get(:metrics, %{})
+    hits = Map.get(metrics, :cache_hit_count, 0)
+    misses = Map.get(metrics, :cache_miss_count, 0)
+    total = hits + misses
+
+    Map.merge(
+      %{
+        mint_count: 0,
+        cache_hit_count: 0,
+        cache_miss_count: 0,
+        cache_hit_rate: if(total == 0, do: 0.0, else: hits / total),
+        revocation_invalidations: 0,
+        mint_latency_microseconds: [],
+        failure_classes: %{}
+      },
+      metrics
+    )
+    |> Map.put(:cache_hit_rate, if(total == 0, do: 0.0, else: hits / total))
+  end
+
+  @doc "Reset current worker cache and metrics. Intended for tests and Stack Lab proof setup."
+  @spec reset_worker_cache!() :: :ok
+  def reset_worker_cache! do
+    Process.delete(process_key(:cache))
+    Process.delete(process_key(:metrics))
+    Process.delete(process_key(:revocations))
+    :ok
+  end
+
+  @doc "Build the stable opaque cache key for a scope request without exposing lease material."
+  @spec cache_key(Mezzanine.ActivityLeaseScopeRequest.t() | map() | keyword()) ::
+          {:ok, String.t()} | {:error, term()}
+  def cache_key(request) do
+    with {:ok, request} <- normalize_request(request) do
+      {:ok, cache_key!(request)}
+    end
+  end
+
+  defp acquire_from_cache(request) do
+    key = cache_key!(request)
+
+    case Map.get(cache(), key) do
+      %{bundle: bundle} = entry ->
+        if reusable?(request, bundle) do
+          hit = update_cache_status(bundle, "hit")
+          used = %{hit | remaining_uses: max(hit.remaining_uses - 1, 0)}
+          put_cache_key(key, %{entry | bundle: used})
+          metric(:cache_hit_count, 1)
+          {:ok, used}
+        else
+          delete_cache_key(key)
+          metric(:cache_miss_count, 1)
+          mint_and_store(request, "miss")
+        end
+
+      nil ->
+        metric(:cache_miss_count, 1)
+        mint_and_store(request, "miss")
+    end
+  end
+
+  defp mint_and_store(request, cache_status) do
+    started = System.monotonic_time(:microsecond)
+    key = cache_key!(request)
+    capability_hash = capability_scope_hash(request)
+
+    with {:ok, bundle} <-
+           Mezzanine.ActivityLeaseBundle.new(%{
+             lease_ref: "lease://#{capability_hash}",
+             attach_grant_ref: attach_grant_ref(request, capability_hash),
+             capability_scope_hash: capability_hash,
+             authority_packet_ref: request.authority_packet_ref,
+             permission_decision_ref: request.permission_decision_ref,
+             policy_revision: request.policy_revision,
+             lease_epoch: request.lease_epoch,
+             revocation_epoch: request.revocation_epoch,
+             expires_at: request.deadline,
+             max_uses: @default_max_uses,
+             remaining_uses: @default_max_uses - 1,
+             cache_status: cache_status,
+             evidence_ref: "evidence://activity-lease/#{capability_hash}",
+             failure_class: "none"
+           }) do
+      put_cache_key(key, %{request: request, bundle: bundle})
+      metric(:mint_count, 1)
+      metric(:mint_latency_microseconds, System.monotonic_time(:microsecond) - started)
+      {:ok, bundle}
+    end
+  end
+
+  defp normalize_request(%Mezzanine.ActivityLeaseScopeRequest{} = request), do: {:ok, request}
+
+  defp normalize_request(request), do: Mezzanine.ActivityLeaseScopeRequest.new(request)
+
+  defp normalize_map(value) when is_list(value), do: Map.new(value)
+  defp normalize_map(value) when is_map(value), do: value
+  defp normalize_map(_value), do: %{}
+
+  defp reusable?(request, bundle) do
+    bundle.remaining_uses > 0 and
+      bundle.lease_epoch == request.lease_epoch and
+      bundle.revocation_epoch == request.revocation_epoch and
+      not expired?(bundle.expires_at) and
+      deny_if_revoked(request) == :ok
+  end
+
+  defp expired?(nil), do: false
+
+  defp expired?(expires_at) when is_binary(expires_at) do
+    case DateTime.from_iso8601(expires_at) do
+      {:ok, deadline, _offset} -> DateTime.compare(deadline, DateTime.utc_now()) == :lt
+      _invalid -> false
+    end
+  end
+
+  defp expired?(_expires_at), do: false
+
+  defp deny_if_revoked(request) do
+    seen_epoch =
+      process_get(:revocations, %{})
+      |> Map.get(revocation_key(request), 0)
+
+    if request.revocation_epoch < seen_epoch do
+      metric_failure(:lease_revoked)
+      {:error, {:activity_lease_denied, :lease_revoked}}
+    else
+      :ok
+    end
+  end
+
+  defp update_cache_status(bundle, cache_status), do: %{bundle | cache_status: cache_status}
+
+  defp cache_key!(request) do
+    key_material = %{
+      cache_key_version: @cache_key_version,
+      tenant_ref: request.tenant_ref,
+      actor_ref: request.principal_ref || request.system_actor_ref,
+      resource_ref: request.resource_ref,
+      resource_path: request.resource_path,
+      authority_packet_ref: request.authority_packet_ref,
+      permission_decision_ref: request.permission_decision_ref,
+      policy_revision: request.policy_revision,
+      lease_epoch: request.lease_epoch,
+      revocation_epoch: request.revocation_epoch,
+      activity_type: request.activity_type,
+      lower_scope_ref: request.lower_scope_ref,
+      requested_capabilities: Enum.sort(request.requested_capabilities)
+    }
+
+    "activity-lease-cache:v#{@cache_key_version}:#{hash(key_material)}"
+  end
+
+  defp capability_scope_hash(request) do
+    %{
+      tenant_ref: request.tenant_ref,
+      actor_ref: request.principal_ref || request.system_actor_ref,
+      resource_ref: request.resource_ref,
+      lower_scope_ref: request.lower_scope_ref,
+      requested_capabilities: Enum.sort(request.requested_capabilities),
+      lease_epoch: request.lease_epoch,
+      revocation_epoch: request.revocation_epoch
+    }
+    |> hash()
+  end
+
+  defp attach_grant_ref(request, capability_hash) do
+    if Enum.any?(request.requested_capabilities, &String.contains?(to_string(&1), "attach")) do
+      "attach-grant://#{capability_hash}"
+    end
+  end
+
+  defp hash(term) do
+    :sha256
+    |> :crypto.hash(:erlang.term_to_binary(term))
+    |> Base.encode16(case: :lower)
+  end
+
+  defp revocation_key(source) do
+    source = normalize_map(source)
+
+    {
+      value(source, :tenant_ref),
+      value(source, :resource_ref),
+      value(source, :lower_scope_ref)
+    }
+  end
+
+  defp revocation_match?(request, event) do
+    revocation_key(request) == revocation_key(event) and
+      request.revocation_epoch <=
+        integer_value(event, :revocation_epoch, request.revocation_epoch)
+  end
+
+  defp value(%{__struct__: _} = source, field), do: source |> Map.from_struct() |> value(field)
+
+  defp value(source, field) when is_map(source),
+    do: Map.get(source, field) || Map.get(source, Atom.to_string(field))
+
+  defp integer_value(source, field, default) do
+    case value(source, field) do
+      value when is_integer(value) ->
+        value
+
+      value when is_binary(value) ->
+        case Integer.parse(value) do
+          {integer, ""} -> integer
+          _invalid -> default
+        end
+
+      _other ->
+        default
+    end
+  end
+
+  defp cache, do: process_get(:cache, %{})
+
+  defp put_cache_key(key, entry) do
+    Process.put(process_key(:cache), Map.put(cache(), key, entry))
+  end
+
+  defp delete_cache_key(key) do
+    Process.put(process_key(:cache), Map.delete(cache(), key))
+  end
+
+  defp metric(:mint_latency_microseconds, value) do
+    metrics = process_get(:metrics, %{})
+    latencies = [value | Map.get(metrics, :mint_latency_microseconds, [])]
+    Process.put(process_key(:metrics), Map.put(metrics, :mint_latency_microseconds, latencies))
+  end
+
+  defp metric(name, value) do
+    metrics = process_get(:metrics, %{})
+    Process.put(process_key(:metrics), Map.update(metrics, name, value, &(&1 + value)))
+  end
+
+  defp metric_failure(failure_class) do
+    metrics = process_get(:metrics, %{})
+    failures = Map.update(Map.get(metrics, :failure_classes, %{}), failure_class, 1, &(&1 + 1))
+    Process.put(process_key(:metrics), Map.put(metrics, :failure_classes, failures))
+  end
+
+  defp process_get(name, default), do: Process.get(process_key(name), default)
+
+  defp process_key(name), do: {__MODULE__, name}
 end

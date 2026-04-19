@@ -3,6 +3,7 @@ defmodule Mezzanine.EnterprisePrecutContractsTest do
 
   alias Mezzanine.{
     ActivityCallRef,
+    ActivityLeaseBroker,
     ActivityLeaseBundle,
     ActivityLeaseScopeRequest,
     ActivityResult,
@@ -501,6 +502,66 @@ defmodule Mezzanine.EnterprisePrecutContractsTest do
              })
   end
 
+  test "activity lease broker reuses worker-local bundles and records metrics" do
+    ActivityLeaseBroker.reset_worker_cache!()
+    request = activity_lease_request()
+
+    assert {:ok, first} = ActivityLeaseBroker.acquire(request)
+    assert first.cache_status == "miss"
+    assert first.remaining_uses == first.max_uses - 1
+
+    assert {:ok, second} = ActivityLeaseBroker.acquire(request)
+    assert second.cache_status == "hit"
+    assert second.lease_ref == first.lease_ref
+    assert second.remaining_uses == first.remaining_uses - 1
+
+    metrics = ActivityLeaseBroker.metrics()
+    assert metrics.mint_count == 1
+    assert metrics.cache_hit_count == 1
+    assert metrics.cache_miss_count == 1
+    assert metrics.cache_hit_rate == 0.5
+    assert is_list(metrics.mint_latency_microseconds)
+  end
+
+  test "activity lease broker denies stale revocation epochs and separates tenant scope" do
+    ActivityLeaseBroker.reset_worker_cache!()
+    request = activity_lease_request()
+
+    assert {:ok, first} = ActivityLeaseBroker.acquire(request)
+
+    assert :ok =
+             ActivityLeaseBroker.revoke_seen(%{
+               tenant_ref: request.tenant_ref,
+               resource_ref: request.resource_ref,
+               lower_scope_ref: request.lower_scope_ref,
+               revocation_epoch: request.revocation_epoch + 1
+             })
+
+    assert {:error, {:activity_lease_denied, :lease_revoked}} =
+             ActivityLeaseBroker.acquire(request)
+
+    assert {:ok, later_epoch} =
+             ActivityLeaseBroker.acquire(%{
+               request
+               | revocation_epoch: request.revocation_epoch + 1
+             })
+
+    assert later_epoch.cache_status == "miss"
+    refute later_epoch.lease_ref == first.lease_ref
+
+    assert {:ok, wrong_tenant} =
+             ActivityLeaseBroker.acquire(%{
+               request
+               | tenant_ref: "tenant-other",
+                 revocation_epoch: 1
+             })
+
+    assert wrong_tenant.cache_status == "miss"
+    refute wrong_tenant.lease_ref == later_epoch.lease_ref
+
+    assert Map.fetch!(ActivityLeaseBroker.metrics().failure_classes, :lease_revoked) == 1
+  end
+
   defp lifecycle_attrs do
     %{
       tenant_ref: "tenant-acme",
@@ -532,5 +593,29 @@ defmodule Mezzanine.EnterprisePrecutContractsTest do
       terminal_policy: "quarantine_late_receipts",
       routing_facts: %{review_required: false, risk_band: "low"}
     }
+  end
+
+  defp activity_lease_request do
+    {:ok, request} =
+      ActivityLeaseScopeRequest.new(%{
+        tenant_ref: "tenant-acme",
+        principal_ref: "principal-operator",
+        resource_ref: "resource-work-1",
+        authority_packet_ref: "authpkt-112",
+        permission_decision_ref: "decision-112",
+        policy_revision: "policy-rev-1",
+        lease_epoch: 1,
+        revocation_epoch: 1,
+        activity_type: "lower.execute",
+        activity_id: "act-112",
+        workflow_ref: "wf-110",
+        lower_scope_ref: "lower-scope-112",
+        requested_capabilities: ["lower.execute", "stream.attach"],
+        idempotency_key: "idem-act-112",
+        trace_id: "trace-112",
+        deadline: "2999-04-18T00:05:00Z"
+      })
+
+    request
   end
 end

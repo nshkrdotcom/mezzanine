@@ -51,6 +51,9 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecisionTest do
 
     assert Mezzanine.Activities.StartLowerExecution in activity_modules
     assert Mezzanine.Activities.CallOuterBrain in activity_modules
+    assert Mezzanine.Activities.SubmitJidoLowerActivity in activity_modules
+    assert Mezzanine.Activities.ExecutionSideEffectActivity in activity_modules
+    assert Mezzanine.Activities.SemanticPayloadBoundaryActivity in activity_modules
     assert Mezzanine.Activities.CompensateCancelledRun in activity_modules
 
     for workflow <- workflow_modules do

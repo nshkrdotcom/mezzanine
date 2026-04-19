@@ -94,6 +94,30 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
       version: "reconcile-lower-run.v1"
     },
     %{
+      name: :submit_jido_lower_activity,
+      module: Mezzanine.Activities.SubmitJidoLowerActivity,
+      owner_repo: :jido_integration,
+      task_queue: "mezzanine.hazmat",
+      lease_broker?: true,
+      version: "JidoIntegration.LowerSubmissionActivity.v1"
+    },
+    %{
+      name: :execution_side_effect_activity,
+      module: Mezzanine.Activities.ExecutionSideEffectActivity,
+      owner_repo: :execution_plane,
+      task_queue: "mezzanine.hazmat",
+      lease_broker?: true,
+      version: "ExecutionPlane.ActivitySideEffectIdempotency.v1"
+    },
+    %{
+      name: :semantic_payload_boundary_activity,
+      module: Mezzanine.Activities.SemanticPayloadBoundaryActivity,
+      owner_repo: :outer_brain,
+      task_queue: "mezzanine.semantic",
+      lease_broker?: false,
+      version: "OuterBrain.SemanticActivityPayloadBoundary.v1"
+    },
+    %{
       name: :compensate_cancelled_run,
       module: Mezzanine.Activities.CompensateCancelledRun,
       owner_repo: :execution_plane,
@@ -731,6 +755,66 @@ defmodule Mezzanine.Activities.CompensateCancelledRun do
 
   @impl Temporalex.Activity
   def perform(input), do: Support.compact_result(:compensate_cancelled_run, input)
+
+  @impl Temporalex.Activity
+  def perform(_ctx, input), do: perform(input)
+end
+
+defmodule Mezzanine.Activities.SubmitJidoLowerActivity do
+  @moduledoc "Phase 4 Jido lower-submission activity with tenant-scoped retry idempotency."
+  @behaviour Temporalex.Activity
+
+  alias Mezzanine.WorkflowRuntime.ActivitySideEffectIdempotency
+
+  @doc false
+  def __activity_type__, do: __MODULE__ |> Module.split() |> Enum.join(".")
+
+  @doc false
+  def __activity_defaults__,
+    do: [task_queue: "mezzanine.hazmat", start_to_close_timeout: :timer.seconds(30)]
+
+  @impl Temporalex.Activity
+  def perform(input), do: ActivitySideEffectIdempotency.lower_submission_activity(input)
+
+  @impl Temporalex.Activity
+  def perform(_ctx, input), do: perform(input)
+end
+
+defmodule Mezzanine.Activities.ExecutionSideEffectActivity do
+  @moduledoc "Phase 4 Execution Plane side-effect activity with lease-bound heartbeat posture."
+  @behaviour Temporalex.Activity
+
+  alias Mezzanine.WorkflowRuntime.ActivitySideEffectIdempotency
+
+  @doc false
+  def __activity_type__, do: __MODULE__ |> Module.split() |> Enum.join(".")
+
+  @doc false
+  def __activity_defaults__,
+    do: [task_queue: "mezzanine.hazmat", start_to_close_timeout: :timer.seconds(30)]
+
+  @impl Temporalex.Activity
+  def perform(input), do: ActivitySideEffectIdempotency.execution_side_effect_activity(input)
+
+  @impl Temporalex.Activity
+  def perform(_ctx, input), do: perform(input)
+end
+
+defmodule Mezzanine.Activities.SemanticPayloadBoundaryActivity do
+  @moduledoc "Phase 4 Outer Brain semantic activity payload boundary."
+  @behaviour Temporalex.Activity
+
+  alias Mezzanine.WorkflowRuntime.ActivitySideEffectIdempotency
+
+  @doc false
+  def __activity_type__, do: __MODULE__ |> Module.split() |> Enum.join(".")
+
+  @doc false
+  def __activity_defaults__,
+    do: [task_queue: "mezzanine.semantic", start_to_close_timeout: :timer.seconds(60)]
+
+  @impl Temporalex.Activity
+  def perform(input), do: ActivitySideEffectIdempotency.semantic_workflow_history_payload(input)
 
   @impl Temporalex.Activity
   def perform(_ctx, input), do: perform(input)

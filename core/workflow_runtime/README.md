@@ -26,3 +26,17 @@ authority/decision refs, trace/idempotency scope, release-manifest ref, and
 scalar routing metadata only. Raw payloads, Temporal SDK structs, Temporal
 protobufs, NIF resources, task tokens, and raw history events stay outside the
 public DTO boundary.
+
+## Activity Side-Effect Idempotency
+
+`Mezzanine.WorkflowRuntime.ActivitySideEffectIdempotency` defines the M29
+activity boundary used by Temporalex BEAM workers. It registers the workflow
+activity versions for Jido lower submission, Execution Plane side effects, and
+Outer Brain semantic payload boundaries while keeping owner repos free of
+Temporal SDK imports.
+
+Lower, execution, attach, heartbeat, cancellation, and connector-effect
+activities acquire authority evidence through `Mezzanine.ActivityLeaseBroker`.
+The broker cache is process-local to the activity worker and never enters
+workflow history; workflow history carries only compact refs, hashes, bounded
+routing facts, validation state, and diagnostics refs.
