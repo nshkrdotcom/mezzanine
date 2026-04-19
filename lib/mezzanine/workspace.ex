@@ -24,7 +24,8 @@ defmodule Mezzanine.Workspace do
     "core/projection_engine",
     "core/operator_engine",
     "core/audit_engine",
-    "core/archival_engine"
+    "core/archival_engine",
+    "core/workflow_runtime"
   ]
 
   @semantic_host_packages [

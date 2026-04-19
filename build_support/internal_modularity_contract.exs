@@ -57,6 +57,7 @@ defmodule Mezzanine.Build.InternalModularityContract do
         "core/object_engine"
       ]
     },
+    %{path: "core/workflow_runtime", allowed_internal_deps: []},
     %{
       path: "core/decision_engine",
       allowed_internal_deps: ["core/audit_engine", "core/execution_engine", "core/object_engine"]

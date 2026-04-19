@@ -22,7 +22,8 @@ defmodule Mezzanine.InternalModularityContractTest do
              "core/pack_compiler",
              "core/pack_model",
              "core/projection_engine",
-             "core/runtime_scheduler"
+             "core/runtime_scheduler",
+             "core/workflow_runtime"
            ]
   end
 

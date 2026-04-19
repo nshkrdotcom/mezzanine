@@ -19,6 +19,7 @@ defmodule Mezzanine.WorkspaceTest do
     assert "core/operator_engine" in Mezzanine.Workspace.neutral_package_paths()
     assert "core/audit_engine" in Mezzanine.Workspace.neutral_package_paths()
     assert "core/archival_engine" in Mezzanine.Workspace.neutral_package_paths()
+    assert "core/workflow_runtime" in Mezzanine.Workspace.neutral_package_paths()
   end
 
   test "publishes the remaining ops packages as live semantic hosts under current repo posture" do

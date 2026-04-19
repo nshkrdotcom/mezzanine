@@ -17,6 +17,7 @@ defmodule Mezzanine.Build.WorkspaceContract do
     "core/object_engine",
     "core/execution_engine",
     "core/runtime_scheduler",
+    "core/workflow_runtime",
     "core/decision_engine",
     "core/evidence_engine",
     "core/projection_engine",
