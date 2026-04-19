@@ -6,6 +6,7 @@ defmodule MezzanineOperatorEngine do
   @spec components() :: [module()]
   def components do
     [
+      Mezzanine.ControlRoom.ForensicReplay,
       Mezzanine.ControlRoom.IncidentBundle,
       Mezzanine.ControlRoom.IncidentExportBundle,
       Mezzanine.OperatorCommands,

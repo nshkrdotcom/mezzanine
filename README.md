@@ -96,6 +96,11 @@ Current posture:
   redaction-manifest, checksum, operator, tenant, authority, trace, and
   release-manifest evidence without embedding raw workflow history, lower
   payloads, provider bodies, prompts, artifacts, or tenant-sensitive secrets
+- forensic replay now uses `Mezzanine.ControlRoom.ForensicReplay` to carry
+  compact ordered event refs, integrity hash, missing-ref set, replay result,
+  tenant, authority, trace, and release-manifest evidence without embedding raw
+  workflow history, lower payloads, provider bodies, prompts, artifacts, or
+  tenant-sensitive secrets
 - internal/operator pack authoring enters through deterministic
   `Mezzanine.Authoring.Bundle` imports; the config registry validates checksum,
   configured signature, policy refs, binding descriptors, lifecycle hints,

@@ -11,6 +11,7 @@ Primary modules:
 
 - `Mezzanine.OperatorCommands`
 - `Mezzanine.ExecutionCancelWorker`
+- `Mezzanine.ControlRoom.ForensicReplay`
 - `Mezzanine.ControlRoom.IncidentBundle`
 - `Mezzanine.ControlRoom.IncidentExportBundle`
 - `Mezzanine.ControlRoom.QueuePressurePolicy`
@@ -30,6 +31,15 @@ It requires tenant, authority, trace, export, incident, included-reference,
 redaction-manifest, checksum, operator, format, and release-manifest evidence,
 and rejects raw workflow history, lower payloads, provider bodies, prompts,
 artifacts, and tenant-sensitive secrets.
+
+`Mezzanine.ControlRoom.ForensicReplay` implements
+`Mezzanine.ForensicReplay.v1` as a compact replay timeline and integrity
+report over incident evidence refs. It requires tenant, installation,
+workspace, project, environment, principal or system actor, resource,
+authority, idempotency, trace, release-manifest, incident, timeline, ordered
+event, integrity-hash, missing-ref-set, and replay-result evidence, and rejects
+raw workflow history, lower payloads, provider bodies, prompts, artifacts, and
+tenant-sensitive secrets.
 
 `Mezzanine.ControlRoom.QueuePressurePolicy` implements
 `Mezzanine.QueuePressurePolicy.v1` for retained local queues such as the
