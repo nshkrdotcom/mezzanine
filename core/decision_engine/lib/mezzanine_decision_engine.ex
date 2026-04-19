@@ -8,8 +8,7 @@ defmodule MezzanineDecisionEngine do
     [
       Mezzanine.Decisions,
       Mezzanine.Decisions.DecisionRecord,
-      Mezzanine.DecisionCommands,
-      Mezzanine.DecisionExpiryWorker
+      Mezzanine.DecisionCommands
     ]
   end
 end

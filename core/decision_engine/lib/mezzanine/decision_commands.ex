@@ -1,15 +1,12 @@
 defmodule Mezzanine.DecisionCommands do
   @moduledoc """
-  Durable decision mutation commands coupled to delayed expiry-job ownership.
+  Durable decision mutation commands coupled to workflow-timer expiry ownership.
   """
 
   alias Ecto.Adapters.SQL
   alias Ecto.UUID
   alias Mezzanine.Decisions.DecisionRecord
   alias Mezzanine.Execution.Repo
-  alias Mezzanine.JobOutbox
-
-  @decision_queue :decision_expiry
 
   @insert_decision_sql """
   INSERT INTO decision_records (
@@ -21,7 +18,6 @@ defmodule Mezzanine.DecisionCommands do
     lifecycle_state,
     decision_value,
     required_by,
-    expiry_job_id,
     resolved_at,
     reason,
     trace_id,
@@ -39,7 +35,6 @@ defmodule Mezzanine.DecisionCommands do
     'pending',
     NULL,
     $6,
-    NULL,
     NULL,
     NULL,
     $7,
@@ -60,7 +55,6 @@ defmodule Mezzanine.DecisionCommands do
          lifecycle_state,
          decision_value,
          required_by,
-         expiry_job_id,
          resolved_at,
          reason,
          trace_id,
@@ -79,7 +73,6 @@ defmodule Mezzanine.DecisionCommands do
          lifecycle_state,
          decision_value,
          required_by,
-         expiry_job_id,
          resolved_at,
          reason,
          trace_id,
@@ -97,7 +90,6 @@ defmodule Mezzanine.DecisionCommands do
          lifecycle_state,
          decision_value,
          required_by,
-         expiry_job_id,
          resolved_at,
          reason,
          trace_id,
@@ -116,25 +108,11 @@ defmodule Mezzanine.DecisionCommands do
       decision_value = $3,
       reason = $4,
       resolved_at = $5,
-      expiry_job_id = NULL,
       causation_id = $6,
       row_version = row_version + 1,
       updated_at = $5
   WHERE id = $1::uuid
   RETURNING id
-  """
-
-  @set_expiry_job_sql """
-  UPDATE decision_records
-  SET expiry_job_id = $2,
-      updated_at = $3
-  WHERE id = $1::uuid
-  RETURNING id
-  """
-
-  @delete_oban_job_sql """
-  DELETE FROM oban_jobs
-  WHERE id = $1
   """
 
   @insert_audit_fact_sql """
@@ -180,8 +158,6 @@ defmodule Mezzanine.DecisionCommands do
 
     Repo.transaction(fn ->
       with :ok <- insert_pending_decision(decision_id, attrs, trace_id, causation_id, now),
-           {:ok, expiry_job_ref} <- maybe_enqueue_expiry_job(decision_id, attrs),
-           :ok <- maybe_attach_expiry_job(decision_id, expiry_job_ref, now),
            :ok <-
              insert_audit_fact(%{
                installation_id: fetch_required!(attrs, :installation_id),
@@ -199,7 +175,11 @@ defmodule Mezzanine.DecisionCommands do
                    encode_optional_datetime(
                      Map.get(attrs, :required_by) || Map.get(attrs, "required_by")
                    ),
-                 "expiry_job_id" => expiry_job_ref && expiry_job_ref.job_id
+                 "workflow_timer_ref" =>
+                   workflow_timer_ref(
+                     decision_id,
+                     Map.get(attrs, :required_by) || Map.get(attrs, "required_by")
+                   )
                },
                occurred_at: now
              }) do
@@ -279,7 +259,7 @@ defmodule Mezzanine.DecisionCommands do
     Repo.transaction(fn ->
       with {:ok, decision} <- fetch_decision_for_update(decision_id),
            :ok <- ensure_pending(decision),
-           :ok <- maybe_delete_expiry_job(decision.expiry_job_id, current_job_id),
+           :ok <- reject_legacy_expiry_job_ref(decision, current_job_id),
            :ok <-
              update_decision_resolution(
                decision.id,
@@ -338,30 +318,6 @@ defmodule Mezzanine.DecisionCommands do
     end
   end
 
-  defp maybe_enqueue_expiry_job(decision_id, attrs) do
-    case Map.get(attrs, :required_by) || Map.get(attrs, "required_by") do
-      %DateTime{} = required_by ->
-        JobOutbox.enqueue(
-          @decision_queue,
-          Mezzanine.DecisionExpiryWorker,
-          %{decision_id: decision_id},
-          scheduled_at: required_by
-        )
-
-      nil ->
-        {:ok, nil}
-    end
-  end
-
-  defp maybe_attach_expiry_job(_decision_id, nil, _now), do: :ok
-
-  defp maybe_attach_expiry_job(decision_id, %{job_id: job_id}, now) do
-    case SQL.query(Repo, @set_expiry_job_sql, [dump_uuid!(decision_id), job_id, now]) do
-      {:ok, _result} -> :ok
-      {:error, error} -> {:error, error}
-    end
-  end
-
   defp fetch_decision_for_update(decision_id) do
     case SQL.query(Repo, @load_decision_sql, [dump_uuid!(decision_id)]) do
       {:ok, %{rows: [row]}} ->
@@ -380,13 +336,13 @@ defmodule Mezzanine.DecisionCommands do
   defp ensure_pending(%{lifecycle_state: lifecycle_state}),
     do: {:error, {:decision_not_pending, lifecycle_state}}
 
-  defp maybe_delete_expiry_job(nil, _current_job_id), do: :ok
-  defp maybe_delete_expiry_job(expiry_job_id, expiry_job_id), do: :ok
+  defp reject_legacy_expiry_job_ref(decision, current_job_id) do
+    case Map.get(decision, :expiry_job_id) do
+      nil ->
+        :ok
 
-  defp maybe_delete_expiry_job(expiry_job_id, _current_job_id) do
-    case SQL.query(Repo, @delete_oban_job_sql, [expiry_job_id]) do
-      {:ok, _result} -> :ok
-      {:error, error} -> {:error, error}
+      expiry_job_id ->
+        {:error, {:legacy_decision_expiry_job_ref_present, expiry_job_id, current_job_id}}
     end
   end
 
@@ -460,6 +416,12 @@ defmodule Mezzanine.DecisionCommands do
   defp encode_optional_datetime(%DateTime{} = value), do: DateTime.to_iso8601(value)
   defp encode_optional_datetime(nil), do: nil
 
+  defp workflow_timer_ref(_decision_id, nil), do: nil
+
+  defp workflow_timer_ref(decision_id, %DateTime{} = required_by) do
+    "workflow-timer://decision/#{decision_id}/#{DateTime.to_unix(required_by, :millisecond)}"
+  end
+
   defp normalize_map(value) when is_map(value) do
     value
     |> Enum.map(fn {key, nested} -> {to_string(key), normalize_value(nested)} end)
@@ -483,7 +445,6 @@ defmodule Mezzanine.DecisionCommands do
          lifecycle_state,
          decision_value,
          required_by,
-         expiry_job_id,
          resolved_at,
          reason,
          trace_id,
@@ -498,7 +459,6 @@ defmodule Mezzanine.DecisionCommands do
       lifecycle_state: lifecycle_state,
       decision_value: decision_value,
       required_by: normalize_datetime(required_by),
-      expiry_job_id: expiry_job_id,
       resolved_at: normalize_datetime(resolved_at),
       reason: reason,
       trace_id: trace_id,

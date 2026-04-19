@@ -20,7 +20,6 @@ defmodule Mezzanine.Decisions.DecisionRecord do
       index([:causation_id])
       index([:subject_id, :lifecycle_state])
       index([:installation_id, :required_by])
-      index([:expiry_job_id])
       index([:installation_id, :subject_id, :decision_kind, :execution_id], unique: true)
     end
   end
@@ -289,10 +288,6 @@ defmodule Mezzanine.Decisions.DecisionRecord do
     end
 
     attribute :required_by, :utc_datetime_usec do
-      public?(true)
-    end
-
-    attribute :expiry_job_id, :integer do
       public?(true)
     end
 

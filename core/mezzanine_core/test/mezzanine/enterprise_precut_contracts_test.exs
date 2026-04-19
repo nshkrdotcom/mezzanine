@@ -9,11 +9,15 @@ defmodule Mezzanine.EnterprisePrecutContractsTest do
     CommandReceipt,
     EventFact,
     IncidentBundle,
+    OperatorWorkflowSignal,
     ProjectionSnapshot,
     ReviewTask,
+    WorkflowDecisionTimer,
     WorkflowExecutionLifecycleInput,
     WorkflowReceiptSignal,
     WorkflowRef,
+    WorkflowSignalAcknowledgement,
+    WorkflowSignalOutboxRow,
     WorkflowSignalReceipt,
     WorkflowStartOutboxPayload,
     WorkflowTerminalReceiptPolicy
@@ -26,6 +30,10 @@ defmodule Mezzanine.EnterprisePrecutContractsTest do
     WorkflowExecutionLifecycleInput,
     WorkflowReceiptSignal,
     WorkflowTerminalReceiptPolicy,
+    WorkflowDecisionTimer,
+    OperatorWorkflowSignal,
+    WorkflowSignalOutboxRow,
+    WorkflowSignalAcknowledgement,
     WorkflowSignalReceipt,
     EventFact,
     ProjectionSnapshot,
@@ -126,15 +134,25 @@ defmodule Mezzanine.EnterprisePrecutContractsTest do
     assert {:ok, receipt} =
              WorkflowSignalReceipt.new(%{
                tenant_ref: "tenant-acme",
+               installation_ref: "installation-main",
+               workspace_ref: "workspace-main",
+               project_ref: "project-main",
+               environment_ref: "env-prod",
+               principal_ref: "principal-operator",
+               operator_ref: "operator-1",
+               resource_ref: "resource-work-1",
                signal_id: "sig-111",
                workflow_id: "wf-110",
                signal_name: "operator.cancel",
                signal_version: "v1",
+               signal_sequence: 1,
                command_id: "cmd-111",
                authority_packet_ref: "authpkt-111",
                permission_decision_ref: "decision-111",
                idempotency_key: "idem-111",
                trace_id: "trace-111",
+               correlation_id: "corr-111",
+               release_manifest_ref: "phase4-v6-milestone28",
                authority_state: "authorized",
                local_state: "accepted",
                dispatch_state: "queued",
@@ -144,6 +162,131 @@ defmodule Mezzanine.EnterprisePrecutContractsTest do
 
     assert receipt.dispatch_state == "queued"
     assert receipt.workflow_effect_state == "pending"
+  end
+
+  test "decision timer and operator signal contracts use workflow timer and signal lifecycle refs" do
+    assert {:ok, timer} =
+             WorkflowDecisionTimer.new(%{
+               tenant_ref: "tenant-acme",
+               installation_ref: "installation-main",
+               system_actor_ref: "system-workflow",
+               resource_ref: "resource-work-1",
+               subject_ref: "subject-096",
+               workflow_id: "workflow-096",
+               workflow_run_id: "run-096",
+               decision_id: "decision-096",
+               decision_kind: "operator_review",
+               timer_id: "timer-096",
+               timer_version: "decision-timer.v1",
+               timer_duration_ms: 300_000,
+               expires_at: "2026-04-18T12:05:00Z",
+               authority_packet_ref: "authpkt-096",
+               permission_decision_ref: "decision-auth-096",
+               idempotency_key: "idem-timer-096",
+               trace_id: "trace-096",
+               correlation_id: "corr-096",
+               release_manifest_ref: "phase4-v6-milestone28",
+               workflow_history_ref: "temporal-history://workflow-096/timer-096",
+               projection_ref: "projection://workflow-096/decision-timer",
+               timer_state: "scheduled"
+             })
+
+    assert timer.contract_name == "Mezzanine.WorkflowDecisionTimer.v1"
+    assert timer.timer_state == "scheduled"
+
+    assert {:ok, signal} =
+             OperatorWorkflowSignal.new(%{
+               tenant_ref: "tenant-acme",
+               installation_ref: "installation-main",
+               workspace_ref: "workspace-main",
+               project_ref: "project-main",
+               environment_ref: "env-prod",
+               principal_ref: "principal-operator",
+               operator_ref: "operator-1",
+               resource_ref: "resource-work-1",
+               workflow_id: "workflow-097",
+               workflow_run_id: "run-097",
+               signal_id: "signal-097",
+               signal_name: "operator.cancel",
+               signal_version: "operator-cancel.v1",
+               signal_sequence: 1,
+               signal_effect: "cancel_requested",
+               authority_packet_ref: "authpkt-097",
+               permission_decision_ref: "decision-097",
+               idempotency_key: "idem-signal-097",
+               trace_id: "trace-097",
+               correlation_id: "corr-097",
+               release_manifest_ref: "phase4-v6-milestone28",
+               acknowledgement_ttl_ms: 30_000,
+               reason: "operator requested cancel",
+               payload_hash: String.duplicate("d", 64),
+               payload_ref: "claim://operator-signal/097"
+             })
+
+    assert signal.contract_name == "Mezzanine.OperatorWorkflowSignal.v1"
+    assert signal.signal_sequence == 1
+
+    assert {:ok, outbox} =
+             WorkflowSignalOutboxRow.new(%{
+               outbox_id: "signal-outbox-097",
+               tenant_ref: signal.tenant_ref,
+               installation_ref: signal.installation_ref,
+               workspace_ref: signal.workspace_ref,
+               project_ref: signal.project_ref,
+               environment_ref: signal.environment_ref,
+               principal_ref: signal.principal_ref,
+               operator_ref: signal.operator_ref,
+               resource_ref: signal.resource_ref,
+               signal_id: signal.signal_id,
+               workflow_id: signal.workflow_id,
+               signal_name: signal.signal_name,
+               signal_version: signal.signal_version,
+               signal_sequence: signal.signal_sequence,
+               authority_packet_ref: signal.authority_packet_ref,
+               permission_decision_ref: signal.permission_decision_ref,
+               idempotency_key: signal.idempotency_key,
+               trace_id: signal.trace_id,
+               correlation_id: signal.correlation_id,
+               release_manifest_ref: signal.release_manifest_ref,
+               dispatch_state: "queued",
+               workflow_effect_state: "pending",
+               projection_state: "lagging",
+               available_at: "2026-04-18T12:00:00Z",
+               dispatch_attempt_count: 0
+             })
+
+    assert outbox.dispatch_state == "queued"
+
+    assert {:ok, ack} =
+             WorkflowSignalAcknowledgement.new(%{
+               tenant_ref: signal.tenant_ref,
+               installation_ref: signal.installation_ref,
+               workspace_ref: signal.workspace_ref,
+               project_ref: signal.project_ref,
+               environment_ref: signal.environment_ref,
+               principal_ref: signal.principal_ref,
+               operator_ref: signal.operator_ref,
+               resource_ref: signal.resource_ref,
+               workflow_id: signal.workflow_id,
+               workflow_run_id: signal.workflow_run_id,
+               signal_id: signal.signal_id,
+               signal_name: signal.signal_name,
+               signal_version: signal.signal_version,
+               signal_sequence: signal.signal_sequence,
+               signal_effect: signal.signal_effect,
+               workflow_effect_state: "processed_by_workflow",
+               workflow_event_ref: "workflow-event://workflow-097/signal-097/ack",
+               authority_packet_ref: signal.authority_packet_ref,
+               permission_decision_ref: signal.permission_decision_ref,
+               idempotency_key: signal.idempotency_key,
+               trace_id: signal.trace_id,
+               correlation_id: signal.correlation_id,
+               release_manifest_ref: signal.release_manifest_ref,
+               acknowledged_at: "2026-04-18T12:00:02Z"
+             })
+
+    assert ack.contract_name == "Mezzanine.WorkflowSignalAcknowledgement.v1"
+    assert ack.workflow_effect_state == "processed_by_workflow"
   end
 
   test "execution lifecycle input, receipt signal, and terminal receipt policy are explicit contracts" do

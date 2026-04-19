@@ -121,6 +121,8 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecisionTest do
              &(&1.role == :claim_check_gc and &1.classification == :valid_claim_check_gc)
            )
 
+    refute Enum.any?(retained, &(&1.queue == :decision_expiry))
+    refute Enum.any?(classifications, &(to_string(&1[:worker]) =~ "DecisionExpiryWorker"))
     assert Enum.any?(classifications, &(&1.worker == Mezzanine.ExecutionDispatchWorker))
     assert Enum.any?(classifications, &(&1.worker == Mezzanine.ExecutionCancelWorker))
 
@@ -130,6 +132,41 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecisionTest do
 
     valid = DurableOrchestrationDecision.valid_oban_classifications()
     assert Enum.all?(retained, &(&1.classification in valid))
+  end
+
+  test "operator signals and decision timers are registered as workflow-owned controls" do
+    registry = DurableOrchestrationDecision.operator_signal_registry()
+
+    assert Enum.any?(
+             registry,
+             &match?(%{signal_name: "operator.cancel", signal_version: "operator-cancel.v1"}, &1)
+           )
+
+    assert Enum.any?(
+             registry,
+             &match?(%{signal_name: "operator.pause", signal_version: "operator-pause.v1"}, &1)
+           )
+
+    assert Enum.any?(
+             registry,
+             &match?(%{signal_name: "operator.resume", signal_version: "operator-resume.v1"}, &1)
+           )
+
+    assert Enum.any?(
+             registry,
+             &match?(%{signal_name: "operator.retry", signal_version: "operator-retry.v1"}, &1)
+           )
+
+    assert Enum.any?(
+             registry,
+             &match?(%{signal_name: "operator.replan", signal_version: "operator-replan.v1"}, &1)
+           )
+
+    assert %{
+             contract: "Mezzanine.WorkflowDecisionTimer.v1",
+             timer_semantics: :temporal_workflow_timer,
+             forbidden_queue: :decision_expiry
+           } = DurableOrchestrationDecision.decision_timer_policy()
   end
 
   test "workflow history policy keeps claim-check bodies and raw SDK objects out of history" do

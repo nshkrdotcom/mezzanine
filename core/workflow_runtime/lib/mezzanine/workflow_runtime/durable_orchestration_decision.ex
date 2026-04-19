@@ -132,8 +132,7 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
       queue: :workflow_signal_outbox,
       classification: :valid_outbox
     },
-    %{role: :claim_check_gc, queue: :claim_check_gc, classification: :valid_claim_check_gc},
-    %{role: :bounded_local_job, queue: :decision_expiry, classification: :valid_bounded_local_job}
+    %{role: :claim_check_gc, queue: :claim_check_gc, classification: :valid_claim_check_gc}
   ]
 
   @oban_scope [
@@ -142,12 +141,6 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
       queue: :workflow_start_outbox,
       classification: :valid_outbox,
       reason: "post-commit workflow start dispatcher, not workflow business state"
-    },
-    %{
-      worker: Mezzanine.DecisionExpiryWorker,
-      queue: :decision_expiry,
-      classification: :valid_bounded_local_job,
-      reason: "short local decision expiry, not a multi-step saga"
     },
     %{
       worker: Mezzanine.ExecutionDispatchWorker,
@@ -233,6 +226,34 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
     :semantic_retry_class,
     :terminal_class,
     :next_step
+  ]
+
+  @operator_signal_registry [
+    %{
+      signal_name: "operator.cancel",
+      signal_version: "operator-cancel.v1",
+      handler: :handle_operator_cancel
+    },
+    %{
+      signal_name: "operator.pause",
+      signal_version: "operator-pause.v1",
+      handler: :handle_operator_pause
+    },
+    %{
+      signal_name: "operator.resume",
+      signal_version: "operator-resume.v1",
+      handler: :handle_operator_resume
+    },
+    %{
+      signal_name: "operator.retry",
+      signal_version: "operator-retry.v1",
+      handler: :handle_operator_retry
+    },
+    %{
+      signal_name: "operator.replan",
+      signal_version: "operator-replan.v1",
+      handler: :handle_operator_replan
+    }
   ]
 
   @doc "Direct Temporalex integration mode selected for Phase 4."
@@ -339,6 +360,22 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
     }
   end
 
+  @doc "Registered operator signal names, versions, and workflow handlers."
+  @spec operator_signal_registry() :: [map()]
+  def operator_signal_registry, do: @operator_signal_registry
+
+  @doc "Decision expiry policy for migrated workflows."
+  @spec decision_timer_policy() :: map()
+  def decision_timer_policy do
+    %{
+      contract: "Mezzanine.WorkflowDecisionTimer.v1",
+      timer_owner: Mezzanine.Workflows.DecisionReview,
+      timer_semantics: :temporal_workflow_timer,
+      forbidden_worker: "Mezzanine.DecisionExpiryWorker",
+      forbidden_queue: :decision_expiry
+    }
+  end
+
   @doc "Source-boundary rules used by Stack Lab scans."
   @spec source_boundary() :: map()
   def source_boundary do
@@ -355,6 +392,8 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
         "core/workflow_runtime/lib/mezzanine/workflow_runtime/durable_orchestration_decision.ex",
         "core/workflow_runtime/lib/mezzanine/workflow_runtime/workflow_starter_outbox.ex",
         "core/workflow_runtime/lib/mezzanine/workflow_runtime/execution_lifecycle_workflow.ex",
+        "core/workflow_runtime/lib/mezzanine/workflow_runtime/operator_signal_control.ex",
+        "core/workflow_runtime/test/mezzanine/workflow_runtime/operator_signal_control_test.exs",
         "core/workflow_runtime/test/mezzanine/workflow_runtime/durable_orchestration_decision_test.exs"
       ],
       public_dto_forbidden_fragments: Enum.map(@workflow_history_forbidden, &Atom.to_string/1)
@@ -368,6 +407,8 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
       integration_mode() == :direct_temporalex_beam_workers,
       length(workflow_types()) == 5,
       length(activity_registrations()) >= 6,
+      length(operator_signal_registry()) == 5,
+      decision_timer_policy().timer_semantics == :temporal_workflow_timer,
       Enum.all?(search_attribute_registry(), &(&1.type in allowed_search_attribute_types())),
       Enum.any?(oban_scope(), &(&1.classification == :invalid_saga_orchestration))
     ]
@@ -512,7 +553,7 @@ defmodule Mezzanine.Workflows.DecisionReview do
   @moduledoc "Phase 4 human decision-review workflow skeleton."
   @behaviour Temporalex.Workflow
 
-  alias Mezzanine.Workflows.Support
+  alias Mezzanine.WorkflowRuntime.OperatorSignalControl
 
   @doc false
   def __workflow_type__, do: __MODULE__ |> Module.split() |> Enum.join(".")
@@ -521,7 +562,7 @@ defmodule Mezzanine.Workflows.DecisionReview do
   def __workflow_defaults__, do: [task_queue: "mezzanine.review"]
 
   @impl Temporalex.Workflow
-  def run(input), do: {:ok, Support.compact_result(:decision_review, input)}
+  def run(input), do: OperatorSignalControl.run_decision_review(input)
 end
 
 defmodule Mezzanine.Workflows.JoinBarrier do

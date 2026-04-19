@@ -298,7 +298,6 @@ defmodule Mezzanine.Archival.Snapshot do
       resolved_at,
       trace_id,
       causation_id,
-      expiry_job_id::text,
       row_version,
       inserted_at,
       updated_at

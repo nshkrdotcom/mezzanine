@@ -17,7 +17,7 @@ config :mezzanine_execution_engine, Oban,
   engine: Oban.Engines.Basic,
   notifier: Oban.Notifiers.Postgres,
   peer: false,
-  queues: [dispatch: 10, receipt: 10, reconcile: 10, cancel: 10, decision_expiry: 10],
+  queues: [dispatch: 10, receipt: 10, reconcile: 10, cancel: 10],
   plugins: []
 
 config :mezzanine_object_engine,

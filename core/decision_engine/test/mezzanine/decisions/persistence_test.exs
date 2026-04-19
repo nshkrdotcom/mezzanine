@@ -2,11 +2,10 @@ defmodule Mezzanine.Decisions.PersistenceTest do
   use Mezzanine.Decisions.DataCase, async: false
 
   alias Mezzanine.DecisionCommands
-  alias Mezzanine.DecisionExpiryWorker
   alias Mezzanine.Execution.ExecutionRecord
   alias Mezzanine.Execution.Repo
 
-  test "create_pending persists the decision ledger and emits audit" do
+  test "create_pending persists the decision ledger and emits workflow timer evidence" do
     assert {:ok, subject} = ingest_subject("linear:ticket:decision-pending")
     assert {:ok, execution} = dispatch_execution(subject, "decision-pending")
 
@@ -24,23 +23,21 @@ defmodule Mezzanine.Decisions.PersistenceTest do
 
     assert decision.lifecycle_state == "pending"
     assert decision.execution_id == execution.id
-    assert is_integer(decision.expiry_job_id)
     assert decision_exists?(subject.id, "human_review_required")
-
-    expiry_job = expiry_job_for!(decision.id)
-    assert expiry_job.worker == Oban.Worker.to_string(DecisionExpiryWorker)
-    assert expiry_job.scheduled_at == decision.required_by
+    assert decision_expiry_jobs() == []
 
     assert [audit_fact] = audit_facts_for_trace("inst-1", "trace-decision-pending")
     assert audit_fact.fact_kind == :decision_created
     assert audit_fact.decision_id == decision.id
+    assert audit_fact.payload["workflow_timer_ref"] =~ "workflow-timer://decision/"
+    refute Map.has_key?(audit_fact.payload, "expiry_job_id")
   end
 
   test "decide resolves the row and exposes resolved-for-subject reads" do
     assert {:ok, subject} = ingest_subject("linear:ticket:decision-resolve")
     assert {:ok, execution} = dispatch_execution(subject, "decision-resolve")
     assert {:ok, decision} = create_pending_decision(subject, execution, "resolve")
-    assert expiry_job_for!(decision.id).id == decision.expiry_job_id
+    assert decision_expiry_jobs() == []
 
     assert {:ok, resolved_decision} =
              DecisionCommands.decide(decision, %{
@@ -54,8 +51,7 @@ defmodule Mezzanine.Decisions.PersistenceTest do
     assert resolved_decision.lifecycle_state == "resolved"
     assert resolved_decision.decision_value == "accept"
     assert resolved_decision.reason == "approved by reviewer"
-    assert is_nil(resolved_decision.expiry_job_id)
-    refute expiry_job_exists?(decision.expiry_job_id)
+    assert decision_expiry_jobs() == []
 
     assert [resolved_row] = resolved_decisions_for_subject(subject.id)
     assert resolved_row.id == resolved_decision.id
@@ -90,15 +86,13 @@ defmodule Mezzanine.Decisions.PersistenceTest do
 
     assert expired_decision.lifecycle_state == "expired"
     assert expired_decision.decision_value == "expired"
-    assert is_nil(expired_decision.expiry_job_id)
+    assert decision_expiry_jobs() == []
   end
 
-  test "expiry worker discards cleanly when a decision was resolved before the worker ran" do
+  test "workflow timer expiry is idempotent when a decision was resolved before expiry" do
     assert {:ok, subject} = ingest_subject("linear:ticket:decision-expire-race")
     assert {:ok, execution} = dispatch_execution(subject, "decision-expire-race")
     assert {:ok, decision} = create_pending_decision(subject, execution, "expire-race")
-
-    expiry_job = expiry_job_for!(decision.id)
 
     assert {:ok, _resolved_decision} =
              DecisionCommands.decide(decision, %{
@@ -109,12 +103,11 @@ defmodule Mezzanine.Decisions.PersistenceTest do
                actor_ref: %{kind: :reviewer}
              })
 
-    assert :discard =
-             DecisionExpiryWorker.perform(%Oban.Job{
-               id: expiry_job.id,
-               attempt: 1,
-               queue: expiry_job.queue,
-               args: expiry_job.args
+    assert {:error, {:decision_not_pending, "resolved"}} =
+             DecisionCommands.expire(decision, %{
+               trace_id: "trace-decision-expire-race-expire",
+               causation_id: "cause-decision-expire-race-expire",
+               actor_ref: %{kind: :workflow_timer}
              })
   end
 
@@ -190,21 +183,9 @@ defmodule Mezzanine.Decisions.PersistenceTest do
     })
   end
 
-  defp expiry_job_for!(decision_id) do
+  defp decision_expiry_jobs do
     Repo.all(Oban.Job)
-    |> Enum.find(fn job ->
-      job.worker == Oban.Worker.to_string(DecisionExpiryWorker) and
-        job.args["decision_id"] == decision_id
-    end)
-    |> case do
-      nil -> flunk("expected a decision expiry job for decision #{decision_id}")
-      job -> job
-    end
-  end
-
-  defp expiry_job_exists?(job_id) do
-    Repo.all(Oban.Job)
-    |> Enum.any?(&(&1.id == job_id))
+    |> Enum.filter(&(&1.worker == "Elixir.Mezzanine.DecisionExpiryWorker"))
   end
 
   defp decision_exists?(subject_id, decision_kind) do
@@ -255,7 +236,7 @@ defmodule Mezzanine.Decisions.PersistenceTest do
   defp audit_facts_for_trace(installation_id, trace_id) do
     Repo.query!(
       """
-      SELECT fact_kind, decision_id
+      SELECT fact_kind, decision_id, payload
       FROM audit_facts
       WHERE installation_id = $1
         AND trace_id = $2
@@ -263,10 +244,11 @@ defmodule Mezzanine.Decisions.PersistenceTest do
       """,
       [installation_id, trace_id]
     ).rows
-    |> Enum.map(fn [fact_kind, decision_id] ->
+    |> Enum.map(fn [fact_kind, decision_id, payload] ->
       %{
         fact_kind: String.to_atom(fact_kind),
-        decision_id: normalize_uuid(decision_id)
+        decision_id: normalize_uuid(decision_id),
+        payload: payload
       }
     end)
   end

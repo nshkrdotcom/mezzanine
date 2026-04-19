@@ -243,16 +243,27 @@ defmodule Mezzanine.WorkflowSignalReceipt do
   @fields [
     :contract_name,
     :tenant_ref,
+    :installation_ref,
+    :workspace_ref,
+    :project_ref,
+    :environment_ref,
+    :principal_ref,
+    :system_actor_ref,
+    :operator_ref,
+    :resource_ref,
     :signal_id,
     :workflow_id,
     :workflow_run_id,
     :signal_name,
     :signal_version,
+    :signal_sequence,
     :command_id,
     :authority_packet_ref,
     :permission_decision_ref,
     :idempotency_key,
     :trace_id,
+    :correlation_id,
+    :release_manifest_ref,
     :payload_hash,
     :payload_ref,
     :authority_state,
@@ -279,6 +290,8 @@ defmodule Mezzanine.WorkflowSignalReceipt do
         @fields,
         [
           :tenant_ref,
+          :installation_ref,
+          :resource_ref,
           :signal_id,
           :workflow_id,
           :signal_name,
@@ -288,6 +301,8 @@ defmodule Mezzanine.WorkflowSignalReceipt do
           :permission_decision_ref,
           :idempotency_key,
           :trace_id,
+          :correlation_id,
+          :release_manifest_ref,
           :authority_state,
           :local_state,
           :dispatch_state,
@@ -500,6 +515,293 @@ defmodule Mezzanine.WorkflowTerminalReceiptPolicy do
           :release_manifest_ref
         ],
         attrs
+      )
+end
+
+defmodule Mezzanine.WorkflowDecisionTimer do
+  @moduledoc "Durable workflow timer contract for human or operator decision expiry."
+
+  alias Mezzanine.EnterprisePrecutSupport
+
+  @fields [
+    :contract_name,
+    :tenant_ref,
+    :installation_ref,
+    :workspace_ref,
+    :project_ref,
+    :environment_ref,
+    :principal_ref,
+    :system_actor_ref,
+    :resource_ref,
+    :subject_ref,
+    :workflow_id,
+    :workflow_run_id,
+    :decision_id,
+    :decision_kind,
+    :timer_id,
+    :timer_version,
+    :timer_duration_ms,
+    :expires_at,
+    :authority_packet_ref,
+    :permission_decision_ref,
+    :idempotency_key,
+    :trace_id,
+    :correlation_id,
+    :release_manifest_ref,
+    :workflow_history_ref,
+    :projection_ref,
+    :timer_state
+  ]
+  defstruct @fields
+
+  @type t :: %__MODULE__{}
+
+  def new(attrs),
+    do:
+      EnterprisePrecutSupport.build(
+        __MODULE__,
+        "Mezzanine.WorkflowDecisionTimer.v1",
+        @fields,
+        [
+          :tenant_ref,
+          :installation_ref,
+          :system_actor_ref,
+          :resource_ref,
+          :subject_ref,
+          :workflow_id,
+          :decision_id,
+          :decision_kind,
+          :timer_id,
+          :timer_version,
+          :timer_duration_ms,
+          :expires_at,
+          :authority_packet_ref,
+          :permission_decision_ref,
+          :idempotency_key,
+          :trace_id,
+          :correlation_id,
+          :release_manifest_ref,
+          :workflow_history_ref,
+          :projection_ref,
+          :timer_state
+        ],
+        attrs,
+        non_neg_integer_fields: [:timer_duration_ms]
+      )
+end
+
+defmodule Mezzanine.OperatorWorkflowSignal do
+  @moduledoc "Authorized operator workflow signal contract for cancel, pause, resume, retry, and replan."
+
+  alias Mezzanine.EnterprisePrecutSupport
+
+  @fields [
+    :contract_name,
+    :tenant_ref,
+    :installation_ref,
+    :workspace_ref,
+    :project_ref,
+    :environment_ref,
+    :principal_ref,
+    :system_actor_ref,
+    :operator_ref,
+    :resource_ref,
+    :workflow_id,
+    :workflow_run_id,
+    :signal_id,
+    :signal_name,
+    :signal_version,
+    :signal_sequence,
+    :signal_effect,
+    :authority_packet_ref,
+    :permission_decision_ref,
+    :idempotency_key,
+    :trace_id,
+    :correlation_id,
+    :release_manifest_ref,
+    :acknowledgement_ttl_ms,
+    :reason,
+    :payload_hash,
+    :payload_ref
+  ]
+  defstruct @fields
+
+  @type t :: %__MODULE__{}
+
+  def new(attrs),
+    do:
+      EnterprisePrecutSupport.build(
+        __MODULE__,
+        "Mezzanine.OperatorWorkflowSignal.v1",
+        @fields,
+        [
+          :tenant_ref,
+          :installation_ref,
+          :principal_ref,
+          :operator_ref,
+          :resource_ref,
+          :workflow_id,
+          :signal_id,
+          :signal_name,
+          :signal_version,
+          :signal_sequence,
+          :signal_effect,
+          :authority_packet_ref,
+          :permission_decision_ref,
+          :idempotency_key,
+          :trace_id,
+          :correlation_id,
+          :release_manifest_ref,
+          :acknowledgement_ttl_ms,
+          :payload_hash,
+          :payload_ref
+        ],
+        attrs,
+        non_neg_integer_fields: [:signal_sequence, :acknowledgement_ttl_ms]
+      )
+end
+
+defmodule Mezzanine.WorkflowSignalOutboxRow do
+  @moduledoc "Local transactional signal outbox row committed before Temporal delivery."
+
+  alias Mezzanine.EnterprisePrecutSupport
+
+  @fields [
+    :contract_name,
+    :outbox_id,
+    :tenant_ref,
+    :installation_ref,
+    :workspace_ref,
+    :project_ref,
+    :environment_ref,
+    :principal_ref,
+    :system_actor_ref,
+    :operator_ref,
+    :resource_ref,
+    :signal_id,
+    :workflow_id,
+    :workflow_run_id,
+    :signal_name,
+    :signal_version,
+    :signal_sequence,
+    :authority_packet_ref,
+    :permission_decision_ref,
+    :idempotency_key,
+    :trace_id,
+    :correlation_id,
+    :release_manifest_ref,
+    :dispatch_state,
+    :workflow_effect_state,
+    :projection_state,
+    :available_at,
+    :dispatch_attempt_count,
+    :last_error_class,
+    :oban_job_ref
+  ]
+  defstruct @fields
+
+  @type t :: %__MODULE__{}
+
+  def new(attrs),
+    do:
+      EnterprisePrecutSupport.build(
+        __MODULE__,
+        "Mezzanine.WorkflowSignalOutboxRow.v1",
+        @fields,
+        [
+          :outbox_id,
+          :tenant_ref,
+          :installation_ref,
+          :principal_ref,
+          :operator_ref,
+          :resource_ref,
+          :signal_id,
+          :workflow_id,
+          :signal_name,
+          :signal_version,
+          :authority_packet_ref,
+          :permission_decision_ref,
+          :idempotency_key,
+          :trace_id,
+          :correlation_id,
+          :release_manifest_ref,
+          :dispatch_state,
+          :workflow_effect_state,
+          :projection_state,
+          :available_at,
+          :dispatch_attempt_count
+        ],
+        attrs,
+        non_neg_integer_fields: [:dispatch_attempt_count]
+      )
+end
+
+defmodule Mezzanine.WorkflowSignalAcknowledgement do
+  @moduledoc "Workflow-emitted acknowledgement fact proving that a signal handler observed the signal."
+
+  alias Mezzanine.EnterprisePrecutSupport
+
+  @fields [
+    :contract_name,
+    :tenant_ref,
+    :installation_ref,
+    :workspace_ref,
+    :project_ref,
+    :environment_ref,
+    :principal_ref,
+    :system_actor_ref,
+    :operator_ref,
+    :resource_ref,
+    :workflow_id,
+    :workflow_run_id,
+    :signal_id,
+    :signal_name,
+    :signal_version,
+    :signal_sequence,
+    :signal_effect,
+    :workflow_effect_state,
+    :workflow_event_ref,
+    :authority_packet_ref,
+    :permission_decision_ref,
+    :idempotency_key,
+    :trace_id,
+    :correlation_id,
+    :release_manifest_ref,
+    :acknowledged_at,
+    :failure_class
+  ]
+  defstruct @fields
+
+  @type t :: %__MODULE__{}
+
+  def new(attrs),
+    do:
+      EnterprisePrecutSupport.build(
+        __MODULE__,
+        "Mezzanine.WorkflowSignalAcknowledgement.v1",
+        @fields,
+        [
+          :tenant_ref,
+          :installation_ref,
+          :resource_ref,
+          :workflow_id,
+          :signal_id,
+          :signal_name,
+          :signal_version,
+          :signal_sequence,
+          :signal_effect,
+          :workflow_effect_state,
+          :workflow_event_ref,
+          :authority_packet_ref,
+          :permission_decision_ref,
+          :idempotency_key,
+          :trace_id,
+          :correlation_id,
+          :release_manifest_ref,
+          :acknowledged_at
+        ],
+        attrs,
+        non_neg_integer_fields: [:signal_sequence]
       )
 end
 
