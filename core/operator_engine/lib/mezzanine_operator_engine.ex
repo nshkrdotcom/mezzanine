@@ -7,6 +7,7 @@ defmodule MezzanineOperatorEngine do
   def components do
     [
       Mezzanine.ControlRoom.IncidentBundle,
+      Mezzanine.ControlRoom.IncidentExportBundle,
       Mezzanine.OperatorCommands,
       Mezzanine.ExecutionCancelWorker
     ]

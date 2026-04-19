@@ -91,6 +91,11 @@ Current posture:
   `Mezzanine.ControlRoom.IncidentBundle` to carry compact tenant, authority,
   trace, workflow, lower-fact, semantic, projection, staleness, and release
   references without embedding raw workflow history or lower/provider payloads
+- incident export bundles now use
+  `Mezzanine.ControlRoom.IncidentExportBundle` to carry redacted export,
+  redaction-manifest, checksum, operator, tenant, authority, trace, and
+  release-manifest evidence without embedding raw workflow history, lower
+  payloads, provider bodies, prompts, artifacts, or tenant-sensitive secrets
 - internal/operator pack authoring enters through deterministic
   `Mezzanine.Authoring.Bundle` imports; the config registry validates checksum,
   configured signature, policy refs, binding descriptors, lifecycle hints,
