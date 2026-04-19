@@ -13,7 +13,8 @@ defmodule MezzanineExecutionEngine.MixProject do
       deps: deps(),
       aliases: aliases(),
       dialyzer: [plt_add_deps: :apps_tree],
-      description: "Durable execution ledger and JobOutbox-backed dispatch workers for Mezzanine",
+      description:
+        "Durable execution ledger and Temporal workflow handoff contracts for Mezzanine",
       docs: [main: "readme", extras: ["README.md"]],
       name: "Mezzanine Execution Engine",
       source_url: @source_url,

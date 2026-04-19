@@ -9,6 +9,6 @@ This package owns:
 - exact child-completion dedupe
 - atomic barrier-close transitions
 
-It does not own lifecycle advancement directly. Closed barriers re-enter
-`LifecycleEvaluator` through `JoinAdvanceWorker` on the lifecycle side of the
-package graph.
+It does not own lifecycle advancement through an Oban join worker. Closed
+barriers re-enter lifecycle through the Temporal fan-out/fan-in contract and
+`Mezzanine.WorkflowRuntime` handoff path.

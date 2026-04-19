@@ -154,9 +154,15 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
     %{
       role: :workflow_signal_outbox,
       queue: :workflow_signal_outbox,
+      worker: Mezzanine.WorkflowRuntime.WorkflowSignalOutboxWorker,
       classification: :valid_outbox
     },
-    %{role: :claim_check_gc, queue: :claim_check_gc, classification: :valid_claim_check_gc}
+    %{
+      role: :claim_check_gc,
+      queue: :claim_check_gc,
+      worker: Mezzanine.WorkflowRuntime.ClaimCheckGcWorker,
+      classification: :valid_claim_check_gc
+    }
   ]
 
   @oban_scope [
@@ -167,46 +173,68 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
       reason: "post-commit workflow start dispatcher, not workflow business state"
     },
     %{
-      worker: Mezzanine.ExecutionDispatchWorker,
-      queue: :dispatch,
-      classification: :invalid_saga_orchestration,
-      replacement_milestone: 31,
-      reason: "execution dispatch becomes Temporal activity/workflow control"
+      worker: Mezzanine.WorkflowRuntime.WorkflowSignalOutboxWorker,
+      queue: :workflow_signal_outbox,
+      classification: :valid_outbox,
+      reason: "post-commit workflow signal dispatcher, not workflow business state"
     },
     %{
-      worker: Mezzanine.ExecutionReceiptWorker,
-      queue: :receipt,
-      classification: :invalid_saga_orchestration,
+      worker: Mezzanine.WorkflowRuntime.ClaimCheckGcWorker,
+      queue: :claim_check_gc,
+      classification: :valid_claim_check_gc,
+      reason: "local Postgres claim-check retention, not workflow business state"
+    }
+  ]
+
+  @retired_oban_saga_workers [
+    %{
+      worker: "Mezzanine.ExecutionDispatchWorker",
+      retired_queue: :dispatch,
+      classification: :retired_temporal_saga,
       replacement_milestone: 31,
-      reason: "execution receipt continuation becomes workflow activity result handling"
+      replacement:
+        "Mezzanine.Workflows.ExecutionAttempt + Mezzanine.Activities.SubmitJidoLowerActivity",
+      envelope: "Mezzanine.WorkflowExecutionLifecycleInput.v1"
     },
     %{
-      worker: Mezzanine.ExecutionReconcileWorker,
-      queue: :reconcile,
-      classification: :invalid_saga_orchestration,
+      worker: "Mezzanine.ExecutionReceiptWorker",
+      retired_queue: :receipt,
+      classification: :retired_temporal_saga,
       replacement_milestone: 31,
-      reason: "long-running reconciliation belongs in Temporal workflow state"
+      replacement: "Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow.receipt_signal/1",
+      envelope: "Mezzanine.WorkflowReceiptSignal.v1"
     },
     %{
-      worker: Mezzanine.JoinAdvanceWorker,
-      queue: :join,
-      classification: :invalid_saga_orchestration,
+      worker: "Mezzanine.ExecutionReconcileWorker",
+      retired_queue: :reconcile,
+      classification: :retired_temporal_saga,
       replacement_milestone: 31,
-      reason: "join barrier advancement becomes Temporal fan-in state"
+      replacement: "Mezzanine.Activities.ReconcileLowerRun",
+      envelope: "Mezzanine.WorkflowExecutionLifecycleInput.v1"
     },
     %{
-      worker: Mezzanine.LifecycleContinuationWorker,
-      queue: :lifecycle,
-      classification: :invalid_saga_orchestration,
+      worker: "Mezzanine.JoinAdvanceWorker",
+      retired_queue: :join,
+      classification: :retired_temporal_saga,
       replacement_milestone: 31,
-      reason: "post-commit lifecycle continuations become workflow transitions"
+      replacement: "Mezzanine.Workflows.JoinBarrier",
+      envelope: "Mezzanine.WorkflowFanoutFanin.v1"
     },
     %{
-      worker: Mezzanine.ExecutionCancelWorker,
-      queue: :cancel,
-      classification: :invalid_saga_orchestration,
+      worker: "Mezzanine.LifecycleContinuationWorker",
+      retired_queue: :lifecycle,
+      classification: :retired_temporal_saga,
       replacement_milestone: 31,
-      reason: "operator cancel becomes authorized Temporal signal dispatch"
+      replacement: "Mezzanine.Workflows.ExecutionAttempt lifecycle transitions",
+      envelope: "Mezzanine.WorkflowExecutionLifecycleInput.v1"
+    },
+    %{
+      worker: "Mezzanine.ExecutionCancelWorker",
+      retired_queue: :cancel,
+      classification: :retired_temporal_saga,
+      replacement_milestone: 31,
+      replacement: "Mezzanine.WorkflowRuntime.OperatorSignalControl operator.cancel",
+      envelope: "Mezzanine.OperatorWorkflowSignal.v1"
     }
   ]
 
@@ -364,6 +392,10 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
   @spec oban_scope() :: [map()]
   def oban_scope, do: @oban_scope
 
+  @doc "Oban saga workers retired by the final Temporal cutover."
+  @spec retired_oban_saga_workers() :: [map()]
+  def retired_oban_saga_workers, do: @retired_oban_saga_workers
+
   @doc "Classifications that are valid permanent Oban uses."
   @spec valid_oban_classifications() :: [atom()]
   def valid_oban_classifications do
@@ -372,7 +404,7 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
 
   @doc "Classifications that must be eliminated by the cutover milestone."
   @spec cutover_oban_classifications() :: [atom()]
-  def cutover_oban_classifications, do: [:invalid_saga_orchestration]
+  def cutover_oban_classifications, do: []
 
   @doc "Workflow history payload policy."
   @spec workflow_history_policy() :: map()
@@ -434,7 +466,8 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
       length(operator_signal_registry()) == 5,
       decision_timer_policy().timer_semantics == :temporal_workflow_timer,
       Enum.all?(search_attribute_registry(), &(&1.type in allowed_search_attribute_types())),
-      Enum.any?(oban_scope(), &(&1.classification == :invalid_saga_orchestration))
+      Enum.all?(oban_scope(), &(&1.classification in valid_oban_classifications())),
+      Enum.all?(retired_oban_saga_workers(), &(&1.classification == :retired_temporal_saga))
     ]
     |> Enum.all?()
   end

@@ -9,10 +9,12 @@ This package now owns the first real Phase `2.7.3` runtime-scheduler slice:
 - stale compiled-pack revision rejection with attempted/current revision and
   fencing diagnostics
 - reconcile-on-start for dispatches stranded in `:dispatching`
-- startup reconcile enqueue for executions stranded in `:awaiting_receipt`
+- startup reconcile handoff claims for executions stranded in
+  `:awaiting_receipt`
 - installation-scoped recovery summaries for restart orchestration across both
   dispatch and accepted-without-receipt recovery
-- durable replay handoff back into the execution-engine dispatch worker
+- durable replay handoff back into `Mezzanine.WorkflowRuntime` without
+  reintroducing Oban saga workers
 
 Primary modules:
 

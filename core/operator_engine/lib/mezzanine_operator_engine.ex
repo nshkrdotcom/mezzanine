@@ -9,8 +9,7 @@ defmodule MezzanineOperatorEngine do
       Mezzanine.ControlRoom.ForensicReplay,
       Mezzanine.ControlRoom.IncidentBundle,
       Mezzanine.ControlRoom.IncidentExportBundle,
-      Mezzanine.OperatorCommands,
-      Mezzanine.ExecutionCancelWorker
+      Mezzanine.OperatorCommands
     ]
   end
 end

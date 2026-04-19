@@ -80,8 +80,9 @@ into neutral packages with current naming.
 Current posture:
 
 - new reusable substrate work lands in the neutral package graph
-- dispatch ownership now belongs to `Mezzanine.JobOutbox` plus lower-gateway
-  workers, not to a bespoke SQL outbox
+- durable dispatch ownership now belongs to `Mezzanine.WorkflowRuntime`
+  workflow handoff contracts plus lower-gateway activities; Oban remains only
+  for the explicit WorkflowRuntime outbox and local GC queues
 - lower-facts reads are tenant-scoped at both lease authorization and
   Jido Integration substrate-read boundaries; `Mezzanine.Leasing` checks the
   caller-carried authorization scope before token validation, and

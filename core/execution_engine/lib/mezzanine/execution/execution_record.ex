@@ -1,7 +1,6 @@
 defmodule Mezzanine.Execution.ExecutionRecord do
   @moduledoc """
-  Durable substrate execution ledger row owned by JobOutbox-backed dispatch
-  workers.
+  Durable substrate execution ledger row owned by Temporal workflow execution.
   """
 
   use Ash.Resource,
@@ -10,7 +9,6 @@ defmodule Mezzanine.Execution.ExecutionRecord do
 
   alias Mezzanine.Audit.{AuditFact, ExecutionLineage, ExecutionLineageStore}
   alias Mezzanine.Execution.Repo
-  alias Mezzanine.JobOutbox
 
   @active_dispatch_states [
     :pending_dispatch,
@@ -34,7 +32,6 @@ defmodule Mezzanine.Execution.ExecutionRecord do
     :pack_revision_change,
     :manual_retry
   ]
-  @default_dispatch_queue :dispatch
 
   postgres do
     table("execution_records")
@@ -687,7 +684,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
     actor_ref = fetch_required!(attrs, :actor_ref)
     create_attrs = Map.drop(attrs, [:actor_ref, "actor_ref"])
 
-    case create_dispatch_record_and_enqueue(create_attrs) do
+    case create_dispatch_record_for_workflow(create_attrs) do
       {:ok, {execution, notifications}} ->
         Ash.Notifier.notify(notifications)
 
@@ -711,19 +708,23 @@ defmodule Mezzanine.Execution.ExecutionRecord do
     end
   end
 
-  @spec enqueue_dispatch(t() | Ecto.UUID.t(), keyword()) ::
-          {:ok, JobOutbox.job_ref()} | {:error, term()}
+  @spec enqueue_dispatch(t() | Ecto.UUID.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def enqueue_dispatch(execution_or_id, opts \\ []) do
     with {:ok, execution} <- load_execution(execution_or_id) do
-      scheduled_at =
-        Keyword.get(opts, :scheduled_at, execution.next_dispatch_at || DateTime.utc_now())
-
-      JobOutbox.enqueue(
-        Keyword.get(opts, :queue, @default_dispatch_queue),
-        Mezzanine.ExecutionDispatchWorker,
-        %{execution_id: execution.id},
-        scheduled_at: scheduled_at
-      )
+      {:ok,
+       %{
+         provider: :temporal_workflow,
+         workflow_type: :execution_attempt,
+         workflow_module: "Mezzanine.Workflows.ExecutionAttempt",
+         workflow_runtime_boundary: "Mezzanine.WorkflowRuntime",
+         task_queue: "mezzanine.hazmat",
+         execution_id: execution.id,
+         tenant_id: execution.tenant_id,
+         installation_id: execution.installation_id,
+         trace_id: execution.trace_id,
+         release_manifest_ref:
+           Keyword.get(opts, :release_manifest_ref, "phase4-v6-milestone31-temporal-cutover")
+       }}
     end
   end
 
@@ -838,14 +839,12 @@ defmodule Mezzanine.Execution.ExecutionRecord do
     })
   end
 
-  defp create_dispatch_record_and_enqueue(create_attrs) do
+  defp create_dispatch_record_for_workflow(create_attrs) do
     Repo.transaction(fn ->
       changeset = Ash.Changeset.for_create(__MODULE__, :create_dispatch_record, create_attrs)
 
-      with {:ok, execution, notifications} <- create_dispatch_record(changeset),
-           {:ok, _job_ref} <- enqueue_dispatch(execution) do
-        {execution, notifications}
-      else
+      case create_dispatch_record(changeset) do
+        {:ok, execution, notifications} -> {execution, notifications}
         {:error, error} -> Repo.rollback(error)
       end
     end)
@@ -877,7 +876,9 @@ defmodule Mezzanine.Execution.ExecutionRecord do
       %{
         recipe_ref: execution.recipe_ref,
         dispatch_state: execution.dispatch_state,
-        submission_dedupe_key: execution.submission_dedupe_key
+        submission_dedupe_key: execution.submission_dedupe_key,
+        workflow_runtime_boundary: "Mezzanine.WorkflowRuntime",
+        temporal_workflow: "Mezzanine.Workflows.ExecutionAttempt"
       }
     )
   end

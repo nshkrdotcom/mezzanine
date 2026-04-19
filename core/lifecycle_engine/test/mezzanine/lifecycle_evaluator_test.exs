@@ -14,36 +14,7 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
     SubjectKindSpec
   }
 
-  defmodule FailingJobOutbox do
-    @behaviour Mezzanine.JobOutbox
-
-    @impl true
-    def enqueue(_queue, _worker_module, _args, _opts), do: {:error, :boom}
-
-    @impl true
-    def cancel(_job_ref), do: :ok
-
-    @impl true
-    def reschedule(_job_ref, _scheduled_at), do: :ok
-
-    @impl true
-    def unique_declaration(_worker_module), do: nil
-
-    @impl true
-    def snooze_response(cooldown_ms), do: {:snooze, cooldown_ms}
-  end
-
-  setup do
-    original_job_outbox_impl = Application.get_env(:mezzanine_execution_engine, :job_outbox_impl)
-
-    on_exit(fn ->
-      restore_job_outbox_impl(original_job_outbox_impl)
-    end)
-
-    :ok
-  end
-
-  test "advance/1 moves the subject through an explicit execution request and queues durable work" do
+  test "advance/1 moves the subject through an explicit execution request and records Temporal work" do
     installation = active_installation_fixture()
 
     subject =
@@ -65,6 +36,13 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
     assert is_binary(result.execution_id)
     assert is_binary(result.submission_dedupe_key)
     assert is_binary(result.trace_id)
+    assert result.workflow_handoff.provider == :temporal_workflow
+    assert result.workflow_handoff.workflow_module == "Mezzanine.Workflows.ExecutionAttempt"
+    assert result.workflow_handoff.workflow_runtime_boundary == "Mezzanine.WorkflowRuntime"
+    assert result.workflow_handoff.execution_id == result.execution_id
+
+    assert result.workflow_handoff.release_manifest_ref ==
+             "phase4-v6-milestone31-temporal-cutover"
 
     assert %{lifecycle_state: "processing"} = fetch_subject(subject.id)
 
@@ -103,14 +81,7 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
              "dispatch_envelope" => execution.dispatch_envelope
            }
 
-    [job] =
-      Repo.all(Oban.Job)
-      |> Enum.filter(fn job ->
-        job.worker == Oban.Worker.to_string(Mezzanine.ExecutionDispatchWorker) and
-          job.args["execution_id"] == result.execution_id
-      end)
-
-    assert job.queue == "dispatch"
+    assert Repo.aggregate(Oban.Job, :count, :id) == 0
 
     assert list_trace_fact_kinds(subject.id, result.trace_id) == [
              "subject_ingested",
@@ -145,33 +116,6 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
 
     assert %{lifecycle_state: "submitted"} = fetch_subject(subject.id)
     assert Repo.aggregate(Oban.Job, :count, :id) == 0
-  end
-
-  test "advance/1 rolls back the subject transition when dispatch enqueue fails" do
-    Application.put_env(:mezzanine_execution_engine, :job_outbox_impl, FailingJobOutbox)
-
-    installation = active_installation_fixture()
-
-    subject =
-      subject_fixture(%{
-        installation_id: installation.id,
-        source_ref: "expense:request:lifecycle-evaluator-failure",
-        subject_kind: "expense_request",
-        lifecycle_state: "submitted",
-        payload: %{"amount_cents" => 12_500},
-        trace_id: "trace-lifecycle-failure",
-        causation_id: "cause-lifecycle-failure"
-      })
-
-    assert {:error, {:job_outbox_enqueue_failed, :boom}} =
-             LifecycleEvaluator.advance(subject.id)
-
-    assert %{lifecycle_state: "submitted"} = fetch_subject(subject.id)
-
-    assert Repo.aggregate(Oban.Job, :count, :id) == 0
-
-    assert {:ok, executions} = Ash.read(ExecutionRecord)
-    assert executions == []
   end
 
   test "advance/1 captures required lifecycle hints inside the execution intent snapshot" do
@@ -914,12 +858,6 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
 
     count
   end
-
-  defp restore_job_outbox_impl(nil),
-    do: Application.delete_env(:mezzanine_execution_engine, :job_outbox_impl)
-
-  defp restore_job_outbox_impl(value),
-    do: Application.put_env(:mezzanine_execution_engine, :job_outbox_impl, value)
 
   defp dump_uuid!(value), do: Ecto.UUID.dump!(value)
 end

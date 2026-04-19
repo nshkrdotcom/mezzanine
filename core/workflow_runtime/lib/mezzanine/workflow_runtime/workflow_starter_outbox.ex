@@ -392,7 +392,7 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowStarterOutboxWorker do
     end
   end
 
-  @doc "Unique Oban declaration used by Mezzanine.JobOutbox.Oban."
+  @doc "Unique Oban declaration used by the retained workflow-start outbox worker."
   @spec unique_declaration() :: keyword()
   def unique_declaration, do: WorkflowStarterOutbox.unique_declaration()
 end

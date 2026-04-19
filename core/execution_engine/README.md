@@ -1,6 +1,6 @@
 # MezzanineExecutionEngine
 
-Neutral execution ledger and JobOutbox-backed dispatch worker engine for the
+Neutral execution ledger and Temporal workflow handoff engine for the
 Mezzanine rebuild.
 
 This package now owns the Phase `2.4.4` durable execution slice:
@@ -10,11 +10,11 @@ This package now owns the Phase `2.4.4` durable execution slice:
 - substrate-owned dispatch-state and retry metadata
 - explicit accepted-but-not-terminal `:awaiting_receipt` state
 - stable execution lineage keyed by substrate execution id
-- durable lower dispatch through `Mezzanine.JobOutbox` and
-  `Mezzanine.ExecutionDispatchWorker`
+- Temporal execution-attempt handoff through `Mezzanine.WorkflowRuntime`
+- `Mezzanine.ExecutionDispatchWorker` retained only as an M31 tombstone proving
+  the old Oban dispatch worker is retired
 - frozen lower-facing dispatch snapshots for retry and restart recovery
-- lower dedupe lookup before any fresh redispatch attempt
-- lower outcome-read seam consumed by lifecycle-side reconcile workers
+- lower dedupe and outcome reads owned by Temporal workflow activities
 - neutral control-session reads and ensures through `Mezzanine.WorkControl`
 - neutral operator command handling through `Mezzanine.OperatorActions`
 - neutral review, waiver, escalation, and gate evaluation through
@@ -26,9 +26,8 @@ Primary modules:
 
 - `Mezzanine.Execution`
 - `Mezzanine.Execution.ExecutionRecord`
-- `Mezzanine.JobOutbox`
 - `Mezzanine.LowerGateway`
-- `Mezzanine.ExecutionDispatchWorker`
+- `Mezzanine.ExecutionDispatchWorker` (retired tombstone)
 - `Mezzanine.WorkControl`
 - `Mezzanine.OperatorActions`
 - `Mezzanine.Reviews`

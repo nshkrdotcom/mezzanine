@@ -6,10 +6,7 @@ defmodule MezzanineLifecycleEngine do
   @spec components() :: [module()]
   def components do
     [
-      Mezzanine.LifecycleEvaluator,
-      Mezzanine.LifecycleContinuationWorker,
-      Mezzanine.ExecutionReceiptWorker,
-      Mezzanine.ExecutionReconcileWorker
+      Mezzanine.LifecycleEvaluator
     ]
   end
 end

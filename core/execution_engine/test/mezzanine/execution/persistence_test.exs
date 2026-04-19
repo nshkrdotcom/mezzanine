@@ -3,9 +3,8 @@ defmodule Mezzanine.Execution.PersistenceTest do
 
   alias Mezzanine.Audit.{AuditFact, ExecutionLineageStore}
   alias Mezzanine.Execution.{ExecutionRecord, Repo}
-  alias Mezzanine.ExecutionDispatchWorker
 
-  test "dispatch persists execution records, enqueues a dispatch job, and stores lineage joins" do
+  test "dispatch persists execution records, records a Temporal workflow handoff, and stores lineage joins" do
     assert {:ok, subject} = ingest_subject("linear:ticket:dispatch")
 
     assert {:ok, execution} =
@@ -48,10 +47,16 @@ defmodule Mezzanine.Execution.PersistenceTest do
              "connector_bindings" => %{"github_write" => %{"connector_key" => "github_app"}}
            }
 
-    job = dispatch_job_for!(execution.id)
-    assert job.queue == "dispatch"
-    assert job.worker == Oban.Worker.to_string(ExecutionDispatchWorker)
-    assert job.args["execution_id"] == execution.id
+    assert {:ok, handoff} = ExecutionRecord.enqueue_dispatch(execution)
+    assert handoff.provider == :temporal_workflow
+    assert handoff.workflow_type == :execution_attempt
+    assert handoff.workflow_module == "Mezzanine.Workflows.ExecutionAttempt"
+    assert handoff.workflow_runtime_boundary == "Mezzanine.WorkflowRuntime"
+    assert handoff.task_queue == "mezzanine.hazmat"
+    assert handoff.execution_id == execution.id
+    assert handoff.tenant_id == "tenant-1"
+    assert handoff.release_manifest_ref == "phase4-v6-milestone31-temporal-cutover"
+    assert retired_dispatch_jobs(execution.id) == []
 
     assert {:ok, lineage} = ExecutionLineageStore.fetch(execution.id)
     assert lineage.execution_id == execution.id
@@ -176,18 +181,6 @@ defmodule Mezzanine.Execution.PersistenceTest do
     assert Enum.any?(audit_facts, &(&1.fact_kind == :execution_failed))
   end
 
-  defp dispatch_job_for!(execution_id) do
-    Repo.all(Oban.Job)
-    |> Enum.find(fn job ->
-      job.worker == Oban.Worker.to_string(Mezzanine.ExecutionDispatchWorker) and
-        job.args["execution_id"] == execution_id
-    end)
-    |> case do
-      nil -> flunk("expected a dispatch job for execution #{execution_id}")
-      job -> job
-    end
-  end
-
   defp ingest_subject(source_ref) do
     now = DateTime.utc_now() |> DateTime.truncate(:microsecond)
     subject_id = Ecto.UUID.generate()
@@ -231,6 +224,14 @@ defmodule Mezzanine.Execution.PersistenceTest do
        lifecycle_state: "queued",
        status: "active"
      }}
+  end
+
+  defp retired_dispatch_jobs(execution_id) do
+    Repo.all(Oban.Job)
+    |> Enum.filter(fn job ->
+      job.worker == "Mezzanine.ExecutionDispatchWorker" and
+        job.args["execution_id"] == execution_id
+    end)
   end
 
   defp dispatch_execution(subject, trace_id, suffix) do

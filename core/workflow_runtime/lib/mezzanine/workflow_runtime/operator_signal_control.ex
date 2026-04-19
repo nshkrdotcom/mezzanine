@@ -485,3 +485,42 @@ defmodule Mezzanine.WorkflowRuntime.OperatorSignalControl do
   defp present?(value) when is_map(value), do: map_size(value) > 0
   defp present?(value), do: not is_nil(value)
 end
+
+defmodule Mezzanine.WorkflowRuntime.WorkflowSignalOutboxWorker do
+  @moduledoc """
+  Retained local Oban dispatcher for committed workflow-signal intents.
+
+  The worker is an outbox dispatcher only. It dispatches an already-authorized
+  local signal record through `Mezzanine.WorkflowRuntime.signal_workflow/1` and
+  never owns workflow business state.
+  """
+
+  use Oban.Worker, queue: :workflow_signal_outbox, max_attempts: 20
+
+  @impl true
+  def perform(%Oban.Job{args: args}) do
+    case Mezzanine.WorkflowRuntime.signal_workflow(signal_request(args)) do
+      {:ok, _receipt} -> :ok
+      {:error, :workflow_runtime_unconfigured} -> {:snooze, 30}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @spec unique_declaration() :: keyword()
+  def unique_declaration do
+    [
+      keys: [:signal_id, :workflow_id, :idempotency_key],
+      states: [:available, :scheduled, :executing, :retryable],
+      period: :infinity
+    ]
+  end
+
+  defp signal_request(args) do
+    args
+    |> Enum.map(fn {key, value} -> {normalize_key(key), value} end)
+    |> Map.new()
+  end
+
+  defp normalize_key(key) when is_atom(key), do: key
+  defp normalize_key(key) when is_binary(key), do: String.to_atom(key)
+end

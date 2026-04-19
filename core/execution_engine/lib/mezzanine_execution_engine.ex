@@ -1,6 +1,6 @@
 defmodule MezzanineExecutionEngine do
   @moduledoc """
-  Neutral execution-ledger and dispatch-worker entrypoint for the Mezzanine
+  Neutral execution-ledger and Temporal workflow handoff entrypoint for the Mezzanine
   rebuild.
   """
 
@@ -10,9 +10,7 @@ defmodule MezzanineExecutionEngine do
       Mezzanine.Execution,
       Mezzanine.Execution.ExecutionRecord,
       Mezzanine.Execution.LifecycleContinuation,
-      Mezzanine.JobOutbox,
       Mezzanine.LowerGateway,
-      Mezzanine.ExecutionDispatchWorker,
       Mezzanine.Installations,
       Mezzanine.WorkControl,
       Mezzanine.WorkQueries,

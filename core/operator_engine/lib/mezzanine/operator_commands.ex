@@ -6,12 +6,8 @@ defmodule Mezzanine.OperatorCommands do
   alias Ecto.Adapters.SQL
   alias Ecto.UUID
   alias Mezzanine.Execution.Repo
-  alias Mezzanine.JobOutbox
   alias Mezzanine.Leasing
 
-  @dispatch_worker Oban.Worker.to_string(Mezzanine.ExecutionDispatchWorker)
-  @cancel_queue :cancel
-  @pause_sentinel ~U[9999-12-31 00:00:00.000000Z]
   @active_dispatch_states [
     "pending_dispatch",
     "dispatching",
@@ -50,65 +46,6 @@ defmodule Mezzanine.OperatorCommands do
   WHERE subject_id = $1::uuid
     AND dispatch_state = ANY($2)
   ORDER BY inserted_at ASC
-  """
-
-  @pause_dispatch_jobs_sql """
-  WITH target_execution_ids AS (
-    SELECT unnest($2::text[]) AS execution_id
-  )
-  UPDATE oban_jobs AS job
-  SET state = 'scheduled',
-      scheduled_at = $1,
-      meta = jsonb_set(
-        COALESCE(job.meta, '{}'::jsonb),
-        '{pause_scheduled_at}',
-        to_jsonb(
-          to_char(
-            job.scheduled_at,
-            'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
-          )
-        ),
-        true
-      )
-  FROM target_execution_ids AS target
-  WHERE target.execution_id = job.args->>'execution_id'
-    AND job.queue = 'dispatch'
-    AND job.worker = $3
-    AND job.state IN ('available', 'scheduled', 'retryable')
-    AND NOT (COALESCE(job.meta, '{}'::jsonb) ? 'pause_scheduled_at')
-  RETURNING job.id
-  """
-
-  @resume_dispatch_jobs_sql """
-  WITH target_execution_ids AS (
-    SELECT unnest($1::text[]) AS execution_id
-  )
-  UPDATE oban_jobs AS job
-  SET state = 'scheduled',
-      scheduled_at = (job.meta->>'pause_scheduled_at')::timestamp,
-      meta = COALESCE(job.meta, '{}'::jsonb) - 'pause_scheduled_at'
-  FROM target_execution_ids AS target
-  WHERE target.execution_id = job.args->>'execution_id'
-    AND job.queue = 'dispatch'
-    AND job.worker = $2
-    AND job.state IN ('available', 'scheduled', 'retryable')
-    AND COALESCE(job.meta, '{}'::jsonb) ? 'pause_scheduled_at'
-  RETURNING job.id
-  """
-
-  @cancel_dispatch_jobs_sql """
-  WITH target_execution_ids AS (
-    SELECT unnest($2::text[]) AS execution_id
-  )
-  UPDATE oban_jobs AS job
-  SET state = 'cancelled',
-      cancelled_at = $1
-  FROM target_execution_ids AS target
-  WHERE target.execution_id = job.args->>'execution_id'
-    AND job.queue = 'dispatch'
-    AND job.worker = $3
-    AND job.state IN ('available', 'scheduled', 'retryable')
-  RETURNING job.id
   """
 
   @cancel_execution_rows_sql """
@@ -227,7 +164,7 @@ defmodule Mezzanine.OperatorCommands do
   defp pause_locked_subject(subject_id, subject, opts, now) do
     case subject.status do
       "paused" ->
-        build_result(:pause, subject, paused_job_ids: [], noop?: true)
+        build_result(:pause, subject, workflow_signal_refs: [], noop?: true)
 
       "cancelled" ->
         Repo.rollback({:subject_terminal, subject_id, "cancelled"})
@@ -239,7 +176,7 @@ defmodule Mezzanine.OperatorCommands do
 
   defp pause_active_subject(subject_id, opts, now) do
     active_executions = fetch_active_executions(subject_id)
-    paused_job_ids = pause_dispatch_jobs(active_executions, now)
+    workflow_signal_refs = workflow_signal_refs(active_executions, "operator.pause")
 
     {:ok, updated_subject} =
       update_subject_status(subject_id, "paused", keyword_reason(opts), now, nil)
@@ -252,10 +189,10 @@ defmodule Mezzanine.OperatorCommands do
         now
       )
 
-    :ok = record_subject_paused(updated_subject, paused_job_ids, opts, now)
+    :ok = record_subject_paused(updated_subject, workflow_signal_refs, opts, now)
 
     build_result(:pause, updated_subject,
-      paused_job_ids: paused_job_ids,
+      workflow_signal_refs: workflow_signal_refs,
       invalidated_lease_ids: Enum.map(invalidations, & &1.lease_id),
       noop?: false
     )
@@ -264,7 +201,7 @@ defmodule Mezzanine.OperatorCommands do
   defp resume_locked_subject(subject_id, subject, opts, now) do
     case subject.status do
       "active" ->
-        build_result(:resume, subject, resumed_job_ids: [], noop?: true)
+        build_result(:resume, subject, workflow_signal_refs: [], noop?: true)
 
       "cancelled" ->
         Repo.rollback({:subject_terminal, subject_id, "cancelled"})
@@ -276,13 +213,17 @@ defmodule Mezzanine.OperatorCommands do
 
   defp resume_paused_subject(subject_id, subject, opts, now) do
     active_executions = fetch_active_executions(subject_id)
-    resumed_job_ids = resume_dispatch_jobs(active_executions)
+    workflow_signal_refs = workflow_signal_refs(active_executions, "operator.resume")
 
     {:ok, updated_subject} =
       update_subject_status(subject_id, "active", nil, now, subject.terminal_at)
 
-    :ok = record_subject_resumed(updated_subject, resumed_job_ids, opts, now)
-    build_result(:resume, updated_subject, resumed_job_ids: resumed_job_ids, noop?: false)
+    :ok = record_subject_resumed(updated_subject, workflow_signal_refs, opts, now)
+
+    build_result(:resume, updated_subject,
+      workflow_signal_refs: workflow_signal_refs,
+      noop?: false
+    )
   end
 
   defp cancel_locked_subject(
@@ -298,7 +239,7 @@ defmodule Mezzanine.OperatorCommands do
       "cancelled" ->
         build_result(:cancel, subject,
           cancelled_execution_ids: [],
-          cancel_job_refs: [],
+          workflow_signal_refs: [],
           noop?: true
         )
 
@@ -325,12 +266,10 @@ defmodule Mezzanine.OperatorCommands do
          now
        ) do
     active_executions = fetch_active_executions(subject_id)
-    cancelled_dispatch_job_ids = cancel_dispatch_jobs(active_executions, now)
+    workflow_signal_refs = workflow_signal_refs(active_executions, "operator.cancel")
 
     cancelled_execution_ids =
       cancel_execution_rows(subject_id, cancel_reason, now, trace_id, causation_id)
-
-    cancel_job_refs = enqueue_cancel_jobs(active_executions, cancel_reason, now)
 
     invalidations =
       invalidate_subject_leases!(
@@ -358,9 +297,8 @@ defmodule Mezzanine.OperatorCommands do
       record_subject_cancelled(
         updated_subject,
         %{
-          cancelled_dispatch_job_ids: cancelled_dispatch_job_ids,
           cancelled_execution_ids: cancelled_execution_ids,
-          cancel_job_refs: cancel_job_refs,
+          workflow_signal_refs: workflow_signal_refs,
           invalidated_lease_ids: Enum.map(invalidations, & &1.lease_id),
           trace_id: trace_id,
           causation_id: causation_id,
@@ -372,9 +310,8 @@ defmodule Mezzanine.OperatorCommands do
     build_result(
       :cancel,
       updated_subject,
-      cancelled_dispatch_job_ids: cancelled_dispatch_job_ids,
       cancelled_execution_ids: cancelled_execution_ids,
-      cancel_job_refs: cancel_job_refs,
+      workflow_signal_refs: workflow_signal_refs,
       invalidated_lease_ids: Enum.map(invalidations, & &1.lease_id),
       noop?: false
     )
@@ -393,7 +330,7 @@ defmodule Mezzanine.OperatorCommands do
     end
   end
 
-  defp record_subject_paused(updated_subject, paused_job_ids, opts, now) do
+  defp record_subject_paused(updated_subject, workflow_signal_refs, opts, now) do
     insert_audit_fact(%{
       installation_id: updated_subject.installation_id,
       subject_id: updated_subject.id,
@@ -406,13 +343,13 @@ defmodule Mezzanine.OperatorCommands do
         "lifecycle_state" => updated_subject.lifecycle_state,
         "status" => updated_subject.status,
         "status_reason" => updated_subject.status_reason,
-        "paused_dispatch_job_ids" => paused_job_ids
+        "workflow_signal_refs" => workflow_signal_refs
       },
       occurred_at: now
     })
   end
 
-  defp record_subject_resumed(updated_subject, resumed_job_ids, opts, now) do
+  defp record_subject_resumed(updated_subject, workflow_signal_refs, opts, now) do
     insert_audit_fact(%{
       installation_id: updated_subject.installation_id,
       subject_id: updated_subject.id,
@@ -424,7 +361,7 @@ defmodule Mezzanine.OperatorCommands do
       payload: %{
         "lifecycle_state" => updated_subject.lifecycle_state,
         "status" => updated_subject.status,
-        "resumed_dispatch_job_ids" => resumed_job_ids
+        "workflow_signal_refs" => workflow_signal_refs
       },
       occurred_at: now
     })
@@ -473,9 +410,8 @@ defmodule Mezzanine.OperatorCommands do
         "lifecycle_state" => updated_subject.lifecycle_state,
         "status" => updated_subject.status,
         "status_reason" => updated_subject.status_reason,
-        "cancelled_dispatch_job_ids" => audit_context.cancelled_dispatch_job_ids,
         "cancelled_execution_ids" => audit_context.cancelled_execution_ids,
-        "cancel_job_ids" => Enum.map(audit_context.cancel_job_refs, & &1.job_id),
+        "workflow_signal_refs" => audit_context.workflow_signal_refs,
         "invalidated_lease_ids" => audit_context.invalidated_lease_ids
       },
       occurred_at: audit_context.occurred_at
@@ -567,43 +503,6 @@ defmodule Mezzanine.OperatorCommands do
     end)
   end
 
-  defp pause_dispatch_jobs(executions, _now) do
-    execution_ids = Enum.map(executions, & &1.id)
-
-    if execution_ids == [] do
-      []
-    else
-      SQL.query!(Repo, @pause_dispatch_jobs_sql, [
-        @pause_sentinel,
-        execution_ids,
-        @dispatch_worker
-      ]).rows
-      |> Enum.map(fn [job_id] -> job_id end)
-    end
-  end
-
-  defp resume_dispatch_jobs(executions) do
-    execution_ids = Enum.map(executions, & &1.id)
-
-    if execution_ids == [] do
-      []
-    else
-      SQL.query!(Repo, @resume_dispatch_jobs_sql, [execution_ids, @dispatch_worker]).rows
-      |> Enum.map(fn [job_id] -> job_id end)
-    end
-  end
-
-  defp cancel_dispatch_jobs(executions, now) do
-    execution_ids = Enum.map(executions, & &1.id)
-
-    if execution_ids == [] do
-      []
-    else
-      SQL.query!(Repo, @cancel_dispatch_jobs_sql, [now, execution_ids, @dispatch_worker]).rows
-      |> Enum.map(fn [job_id] -> job_id end)
-    end
-  end
-
   defp cancel_execution_rows(subject_id, reason, now, trace_id, causation_id) do
     SQL.query!(Repo, @cancel_execution_rows_sql, [
       dump_uuid!(subject_id),
@@ -616,28 +515,12 @@ defmodule Mezzanine.OperatorCommands do
     |> Enum.map(fn [execution_id] -> normalize_uuid(execution_id) end)
   end
 
-  defp enqueue_cancel_jobs(executions, reason, now) do
+  defp workflow_signal_refs(executions, signal_name) do
     executions
     |> Enum.filter(fn execution ->
       execution.dispatch_state in @accepted_dispatch_states and execution.submission_ref != %{}
     end)
-    |> Enum.map(fn execution ->
-      case JobOutbox.enqueue(
-             @cancel_queue,
-             Mezzanine.ExecutionCancelWorker,
-             %{
-               execution_id: execution.id,
-               reason: reason
-             },
-             scheduled_at: now
-           ) do
-        {:ok, job_ref} ->
-          job_ref
-
-        {:error, error} ->
-          Repo.rollback({:cancel_job_enqueue_failed, execution.id, error})
-      end
-    end)
+    |> Enum.map(fn execution -> "workflow-signal://#{signal_name}/#{execution.id}" end)
   end
 
   defp insert_audit_fact(attrs) do

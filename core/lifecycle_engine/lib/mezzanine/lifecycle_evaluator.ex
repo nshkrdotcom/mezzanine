@@ -4,13 +4,12 @@ defmodule Mezzanine.LifecycleEvaluator do
   transitions.
 
   This module owns the same-database transaction that moves subject truth to the
-  next lifecycle state, seeds a queued `ExecutionRecord`, and inserts the
-  durable dispatch job through `Mezzanine.JobOutbox`.
+  next lifecycle state, seeds a queued `ExecutionRecord`, and records the
+  Temporal workflow handoff owned by `Mezzanine.WorkflowRuntime`.
   """
 
   alias Ecto.{Adapters.SQL, Multi}
   alias Mezzanine.Execution.Repo
-  alias Mezzanine.JobOutbox
   alias Mezzanine.Lifecycle.Evaluator, as: PackEvaluator
   alias Mezzanine.Lifecycle.SubjectSnapshot
   alias Mezzanine.Pack.{CompiledPack, ExecutionRecipeSpec, Serializer}
@@ -528,8 +527,8 @@ defmodule Mezzanine.LifecycleEvaluator do
           now
         )
       end)
-      |> Multi.run(:dispatch_job, fn _repo, %{execution_id: execution_id} ->
-        enqueue_dispatch_job(execution_id, now)
+      |> Multi.run(:workflow_handoff, fn _repo, %{execution_id: execution_id} ->
+        workflow_handoff(execution_id, now)
       end)
       |> Multi.run(:audit_lifecycle_advanced, fn repo, %{execution_id: execution_id} ->
         insert_audit_fact(
@@ -568,6 +567,7 @@ defmodule Mezzanine.LifecycleEvaluator do
               execution_dispatched_payload(
                 recipe_ref,
                 changes.submission_dedupe_key,
+                changes.workflow_handoff,
                 supersession_context
               )
           },
@@ -594,7 +594,8 @@ defmodule Mezzanine.LifecycleEvaluator do
            recipe_ref: recipe_ref,
            to_state: to_state,
            submission_dedupe_key: changes.submission_dedupe_key,
-           trace_id: trace_id
+           trace_id: trace_id,
+           workflow_handoff: changes.workflow_handoff
          }}
       end)
     end
@@ -964,16 +965,17 @@ defmodule Mezzanine.LifecycleEvaluator do
     end
   end
 
-  defp enqueue_dispatch_job(execution_id, now) do
-    case JobOutbox.enqueue(
-           :dispatch,
-           Mezzanine.ExecutionDispatchWorker,
-           %{execution_id: execution_id},
-           scheduled_at: now
-         ) do
-      {:ok, job_ref} -> {:ok, job_ref}
-      {:error, error} -> {:error, {:job_outbox_enqueue_failed, error}}
-    end
+  defp workflow_handoff(execution_id, now) do
+    {:ok,
+     %{
+       provider: :temporal_workflow,
+       workflow_type: :execution_attempt,
+       workflow_module: "Mezzanine.Workflows.ExecutionAttempt",
+       workflow_runtime_boundary: "Mezzanine.WorkflowRuntime",
+       execution_id: execution_id,
+       scheduled_at: now,
+       release_manifest_ref: "phase4-v6-milestone31-temporal-cutover"
+     }}
   end
 
   defp insert_audit_fact(repo, audit_attrs, occurred_at) do
@@ -1036,11 +1038,19 @@ defmodule Mezzanine.LifecycleEvaluator do
     |> maybe_put_supersession_payload(supersession_context)
   end
 
-  defp execution_dispatched_payload(recipe_ref, submission_dedupe_key, supersession_context) do
+  defp execution_dispatched_payload(
+         recipe_ref,
+         submission_dedupe_key,
+         workflow_handoff,
+         supersession_context
+       ) do
     %{
       "recipe_ref" => recipe_ref,
       "dispatch_state" => "pending_dispatch",
-      "submission_dedupe_key" => submission_dedupe_key
+      "submission_dedupe_key" => submission_dedupe_key,
+      "workflow_runtime_boundary" => workflow_handoff.workflow_runtime_boundary,
+      "temporal_workflow" => workflow_handoff.workflow_module,
+      "release_manifest_ref" => workflow_handoff.release_manifest_ref
     }
     |> maybe_put_supersession_payload(supersession_context)
   end

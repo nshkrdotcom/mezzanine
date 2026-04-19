@@ -116,22 +116,36 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecisionTest do
 
     assert Enum.any?(
              retained,
-             &(&1.role == :workflow_signal_outbox and &1.classification == :valid_outbox)
+             &(&1.role == :workflow_signal_outbox and
+                 &1.worker == Mezzanine.WorkflowRuntime.WorkflowSignalOutboxWorker and
+                 &1.classification == :valid_outbox)
            )
 
     assert Enum.any?(
              retained,
-             &(&1.role == :claim_check_gc and &1.classification == :valid_claim_check_gc)
+             &(&1.role == :claim_check_gc and
+                 &1.worker == Mezzanine.WorkflowRuntime.ClaimCheckGcWorker and
+                 &1.classification == :valid_claim_check_gc)
            )
 
     refute Enum.any?(retained, &(&1.queue == :decision_expiry))
     refute Enum.any?(classifications, &(to_string(&1[:worker]) =~ "DecisionExpiryWorker"))
-    assert Enum.any?(classifications, &(&1.worker == Mezzanine.ExecutionDispatchWorker))
-    assert Enum.any?(classifications, &(&1.worker == Mezzanine.ExecutionCancelWorker))
 
-    invalid = Enum.filter(classifications, &(&1.classification == :invalid_saga_orchestration))
-    assert invalid != []
-    assert Enum.all?(invalid, &(&1.replacement_milestone == 31))
+    refute Enum.any?(classifications, &(&1.classification == :invalid_saga_orchestration))
+
+    retired = DurableOrchestrationDecision.retired_oban_saga_workers()
+
+    assert Enum.map(retired, & &1.worker) == [
+             "Mezzanine.ExecutionDispatchWorker",
+             "Mezzanine.ExecutionReceiptWorker",
+             "Mezzanine.ExecutionReconcileWorker",
+             "Mezzanine.JoinAdvanceWorker",
+             "Mezzanine.LifecycleContinuationWorker",
+             "Mezzanine.ExecutionCancelWorker"
+           ]
+
+    assert Enum.all?(retired, &(&1.classification == :retired_temporal_saga))
+    assert Enum.all?(retired, &(&1.replacement_milestone == 31))
 
     valid = DurableOrchestrationDecision.valid_oban_classifications()
     assert Enum.all?(retained, &(&1.classification in valid))

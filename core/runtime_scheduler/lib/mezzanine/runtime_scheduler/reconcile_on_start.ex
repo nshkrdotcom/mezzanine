@@ -1,14 +1,12 @@
 defmodule Mezzanine.RuntimeScheduler.ReconcileOnStart do
   @moduledoc """
-  Requeues dispatch workers for executions stranded in `:dispatching` when the
-  runtime restarts and enqueues reconciliation for executions already awaiting
-  lower receipts.
+  Records Temporal workflow handoffs for executions stranded in `:dispatching`
+  when the runtime restarts and claims receipt-reconciliation waves without
+  reintroducing Oban saga queues.
   """
 
   alias Ecto.Adapters.SQL
   alias Mezzanine.Execution.{ExecutionRecord, Repo}
-  alias Mezzanine.ExecutionReconcileWorker
-  alias Mezzanine.JobOutbox
   alias Mezzanine.Telemetry
 
   @default_actor_ref %{kind: :runtime_scheduler, phase: :reconcile_on_start}
@@ -16,8 +14,8 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStart do
   @type summary :: %{
           dispatch_recovered_count: non_neg_integer(),
           dispatch_recovered_execution_ids: [Ecto.UUID.t()],
-          reconcile_enqueued_count: non_neg_integer(),
-          reconcile_execution_ids: [Ecto.UUID.t()]
+          reconcile_handoff_count: non_neg_integer(),
+          reconcile_handoff_execution_ids: [Ecto.UUID.t()]
         }
 
   @claim_reconcile_wave_sql """
@@ -45,8 +43,8 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStart do
     summary = %{
       dispatch_recovered_count: 0,
       dispatch_recovered_execution_ids: [],
-      reconcile_enqueued_count: 0,
-      reconcile_execution_ids: []
+      reconcile_handoff_count: 0,
+      reconcile_handoff_execution_ids: []
     }
 
     Enum.reduce_while(candidates, {:ok, summary}, fn candidate, {:ok, summary} ->
@@ -74,7 +72,8 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStart do
            recovered_summary
            | dispatch_recovered_execution_ids:
                Enum.reverse(recovered_summary.dispatch_recovered_execution_ids),
-             reconcile_execution_ids: Enum.reverse(recovered_summary.reconcile_execution_ids)
+             reconcile_handoff_execution_ids:
+               Enum.reverse(recovered_summary.reconcile_handoff_execution_ids)
          }}
 
       {:error, error} ->
@@ -88,7 +87,7 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStart do
              execution,
              restart_recovery_attrs(execution, now, actor_ref)
            ),
-         {:ok, _job_ref} <-
+         {:ok, _workflow_handoff} <-
            ExecutionRecord.enqueue_dispatch(updated_execution, scheduled_at: now) do
       Telemetry.emit(
         [:dispatch, :ambiguous],
@@ -155,7 +154,7 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStart do
     Repo.transaction(fn ->
       case SQL.query(Repo, @claim_reconcile_wave_sql, [dumped_execution_id, wave_id, now]) do
         {:ok, %{rows: [[_claimed_execution_id]]}} ->
-          enqueue_reconcile_job!(execution_id, now)
+          temporal_receipt_reconcile_handoff!(execution_id, now)
 
         {:ok, %{rows: []}} ->
           false
@@ -166,23 +165,18 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStart do
     end)
   end
 
-  defp enqueue_reconcile_job!(execution_id, now) do
-    case JobOutbox.enqueue(
-           :reconcile,
-           ExecutionReconcileWorker,
-           %{execution_id: execution_id},
-           scheduled_at: now
-         ) do
-      {:ok, _job_ref} -> true
-      {:error, error} -> Repo.rollback(error)
-    end
+  defp temporal_receipt_reconcile_handoff!(execution_id, _now) do
+    # The execution workflow owns lower receipt reconciliation after M31. The
+    # scheduler only claims the startup wave so duplicate nodes do not all emit
+    # the same recovery intent.
+    if is_binary(execution_id), do: true, else: Repo.rollback(:invalid_execution_id)
   end
 
   defp reconcile_summary(summary, execution_id, claimed?) do
     %{
       summary
-      | reconcile_enqueued_count: summary.reconcile_enqueued_count + if(claimed?, do: 1, else: 0),
-        reconcile_execution_ids: [execution_id | summary.reconcile_execution_ids]
+      | reconcile_handoff_count: summary.reconcile_handoff_count + if(claimed?, do: 1, else: 0),
+        reconcile_handoff_execution_ids: [execution_id | summary.reconcile_handoff_execution_ids]
     }
   end
 
@@ -204,9 +198,10 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStart do
 
   defp emit_startup_reconcile(%ExecutionRecord{} = execution, wave_id, true) do
     Telemetry.emit(
-      [:startup, :reconcile, :enqueued],
+      [:startup, :reconcile, :handoff_recorded],
       %{count: 1},
       %{
+        event_name: "startup.reconcile.handoff_recorded",
         trace_id: execution.trace_id,
         subject_id: execution.subject_id,
         execution_id: execution.id,
@@ -223,6 +218,7 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStart do
       [:startup, :reconcile, :unique_drop],
       %{count: 1},
       %{
+        event_name: "startup.reconcile.unique_drop",
         trace_id: execution.trace_id,
         subject_id: execution.subject_id,
         execution_id: execution.id,
