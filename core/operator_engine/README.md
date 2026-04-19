@@ -15,6 +15,7 @@ Primary modules:
 - `Mezzanine.ControlRoom.IncidentExportBundle`
 - `Mezzanine.ControlRoom.QueuePressurePolicy`
 - `Mezzanine.ControlRoom.RetryPosture`
+- `Mezzanine.ControlRoom.SuppressionVisibility`
 
 `Mezzanine.ControlRoom.IncidentBundle` implements
 `Mezzanine.IncidentBundle.v1` as a compact reference envelope. It requires
@@ -44,3 +45,11 @@ workflow, activity, lower integration, and retained local-job failure paths. It
 requires owner repo, producer, consumer, operation, retry class, failure class,
 bounded attempts, backoff policy, idempotency scope, dead-letter ref, safe
 action, and the same enterprise scope refs as other Phase 4 contracts.
+
+`Mezzanine.ControlRoom.SuppressionVisibility` implements
+`Platform.SuppressionVisibility.v1` for operator-visible suppression and
+quarantine records. It requires tenant, installation, workspace, project,
+environment, principal-or-system-actor, resource, authority, idempotency,
+trace, release manifest, suppression, target, reason, diagnostics, and at
+least one recovery action ref before hidden work can be treated as safely
+visible to operators.
