@@ -87,6 +87,11 @@ Current posture:
   caller-carried authorization scope before token validation, and
   `bridges/integration_bridge` forwards only typed `TenantScope` reads to the
   lower store
+- internal/operator pack authoring enters through deterministic
+  `Mezzanine.Authoring.Bundle` imports; the config registry validates checksum,
+  configured signature, policy refs, binding descriptors, lifecycle hints,
+  trusted context adapter descriptors, and stale installation revision before
+  runtime activation
 - the remaining `ops_*` packages are explicit semantic-host carryovers, not a
   reusable extension surface
 

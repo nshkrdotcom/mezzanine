@@ -558,7 +558,7 @@ defmodule Mezzanine.Pack.Serializer do
 
   defp serialize_value(value) when is_map(value), do: serialize_map(value)
   defp serialize_value(value) when is_list(value), do: Enum.map(value, &serialize_value/1)
-  defp serialize_value(value) when is_boolean(value), do: value
+  defp serialize_value(value) when is_boolean(value) or is_nil(value), do: value
   defp serialize_value(value) when is_atom(value), do: Atom.to_string(value)
   defp serialize_value(value), do: value
 
