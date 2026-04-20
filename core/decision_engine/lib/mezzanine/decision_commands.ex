@@ -11,6 +11,16 @@ defmodule Mezzanine.DecisionCommands do
   alias Mezzanine.Decisions.DecisionRecord
 
   @terminal_actions [:decide, :waive, :expire, :accept, :reject, :escalate]
+  @conflict_outcomes [
+    :duplicate_same_decision,
+    :conflict_rejected,
+    :stale_expiry,
+    :stale_row_version,
+    :unsupported_transition,
+    :unique_constraint_conflict,
+    :lock_conflict,
+    :optimistic_lock_conflict
+  ]
 
   @spec create_pending(map()) :: {:ok, DecisionRecord.t()} | {:error, term()}
   def create_pending(attrs) when is_map(attrs) do
@@ -92,6 +102,7 @@ defmodule Mezzanine.DecisionCommands do
 
     with {:ok, decision} <- load_current_decision(decision_or_id),
          :ok <- ensure_pending_or_record_conflict(decision, action, attrs),
+         :ok <- ensure_expected_row_version_or_record_conflict(decision, action, attrs),
          :ok <- reject_legacy_expiry_job_ref(decision, action, current_job_id) do
       decision
       |> apply_terminal_action(action, attrs)
@@ -171,8 +182,7 @@ defmodule Mezzanine.DecisionCommands do
     observed_decision = reload_decision(decision)
     outcome = failed_terminal_outcome(error, observed_decision, action, attrs)
 
-    with {:ok, _fact} <-
-           append_terminal_attempt(decision, observed_decision, action, attrs, outcome, error) do
+    with :ok <- append_losing_attempts(decision, observed_decision, action, attrs, outcome, error) do
       {:error, {:decision_terminal_resolution_failed, error, outcome}}
     end
   end
@@ -200,9 +210,37 @@ defmodule Mezzanine.DecisionCommands do
       {:error, error} ->
         outcome = failed_terminal_outcome(error, decision, action, attrs)
 
-        with {:ok, _fact} <-
-               append_terminal_attempt(decision, decision, action, attrs, outcome, error) do
+        with :ok <- append_losing_attempts(decision, decision, action, attrs, outcome, error) do
           {:error, {:decision_terminal_resolution_failed, error, outcome}}
+        end
+    end
+  end
+
+  defp ensure_expected_row_version_or_record_conflict(
+         %DecisionRecord{} = decision,
+         action,
+         attrs
+       ) do
+    case expected_row_version_attr(attrs) do
+      nil ->
+        :ok
+
+      expected_row_version when expected_row_version == decision.row_version ->
+        :ok
+
+      expected_row_version ->
+        error = {:stale_row_version, expected_row_version, decision.row_version}
+
+        with :ok <-
+               append_losing_attempts(
+                 decision,
+                 decision,
+                 action,
+                 attrs,
+                 :stale_row_version,
+                 error
+               ) do
+          {:error, {:decision_terminal_resolution_failed, error, :stale_row_version}}
         end
     end
   end
@@ -245,6 +283,87 @@ defmodule Mezzanine.DecisionCommands do
           outcome,
           error
         ),
+      occurred_at: attempted_at(attrs)
+    })
+  end
+
+  defp append_losing_attempts(
+         %DecisionRecord{} = original_decision,
+         %DecisionRecord{} = observed_decision,
+         action,
+         attrs,
+         outcome,
+         error
+       )
+       when outcome in @conflict_outcomes do
+    with {:ok, _terminal_fact} <-
+           append_terminal_attempt(
+             original_decision,
+             observed_decision,
+             action,
+             attrs,
+             outcome,
+             error
+           ),
+         {:ok, _conflict_fact} <-
+           append_conflict_attempt(
+             original_decision,
+             observed_decision,
+             action,
+             attrs,
+             outcome,
+             error
+           ) do
+      :ok
+    end
+  end
+
+  defp append_losing_attempts(
+         %DecisionRecord{} = original_decision,
+         %DecisionRecord{} = observed_decision,
+         action,
+         attrs,
+         outcome,
+         error
+       ) do
+    with {:ok, _terminal_fact} <-
+           append_terminal_attempt(
+             original_decision,
+             observed_decision,
+             action,
+             attrs,
+             outcome,
+             error
+           ) do
+      :ok
+    end
+  end
+
+  defp append_conflict_attempt(
+         %DecisionRecord{} = original_decision,
+         %DecisionRecord{} = observed_decision,
+         action,
+         attrs,
+         outcome,
+         error
+       ) do
+    AuditFact.record(%{
+      installation_id: original_decision.installation_id,
+      subject_id: original_decision.subject_id,
+      execution_id: original_decision.execution_id,
+      decision_id: original_decision.id,
+      trace_id: fetch_required!(attrs, :trace_id),
+      causation_id: fetch_required!(attrs, :causation_id),
+      fact_kind: :decision_conflict_attempt,
+      actor_ref: normalize_map(fetch_required!(attrs, :actor_ref)),
+      payload:
+        original_decision
+        |> terminal_attempt_payload(observed_decision, action, attrs, outcome, error)
+        |> Map.merge(%{
+          conflict_attempt?: true,
+          terminal_attempt_fact_kind: "decision_terminal_resolution_attempt",
+          conflict_error_class: Atom.to_string(outcome)
+        }),
       occurred_at: attempted_at(attrs)
     })
   end
@@ -295,8 +414,26 @@ defmodule Mezzanine.DecisionCommands do
     end
   end
 
-  defp failed_terminal_outcome(_error, _observed_decision, _action, _attrs),
-    do: :optimistic_lock_conflict
+  defp failed_terminal_outcome(error, _observed_decision, _action, _attrs),
+    do: classify_terminal_error(error)
+
+  defp classify_terminal_error(error) do
+    error_text = error |> inspect() |> String.downcase()
+
+    cond do
+      String.contains?(error_text, ["unique", "constraint"]) ->
+        :unique_constraint_conflict
+
+      String.contains?(error_text, ["lock", "stale", "row_version"]) ->
+        :lock_conflict
+
+      String.contains?(error_text, ["unsupported", "invalid_transition"]) ->
+        :unsupported_transition
+
+      true ->
+        :optimistic_lock_conflict
+    end
+  end
 
   defp same_terminal_decision?(%DecisionRecord{} = decision, action, attrs) do
     requested = requested_decision(action, attrs)
@@ -349,8 +486,25 @@ defmodule Mezzanine.DecisionCommands do
   defp expected_row_version(%DecisionRecord{row_version: row_version}, attrs),
     do: map_value(attrs, :expected_row_version) || row_version
 
+  defp expected_row_version_attr(attrs) do
+    case map_value(attrs, :expected_row_version) do
+      nil -> nil
+      value when is_integer(value) -> value
+      value when is_binary(value) -> String.to_integer(value)
+    end
+  end
+
   defp winner_decision_id(%DecisionRecord{id: id}, outcome)
-       when outcome in [:duplicate_same_decision, :conflict_rejected, :stale_expiry],
+       when outcome in [
+              :duplicate_same_decision,
+              :conflict_rejected,
+              :stale_expiry,
+              :stale_row_version,
+              :unsupported_transition,
+              :unique_constraint_conflict,
+              :lock_conflict,
+              :optimistic_lock_conflict
+            ],
        do: id
 
   defp winner_decision_id(_decision, _outcome), do: nil
