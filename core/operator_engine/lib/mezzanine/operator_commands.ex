@@ -5,17 +5,12 @@ defmodule Mezzanine.OperatorCommands do
 
   alias Ecto.Adapters.SQL
   alias Ecto.UUID
+  alias Mezzanine.Execution.DispatchState
   alias Mezzanine.Execution.Repo
   alias Mezzanine.Leasing
 
-  @active_dispatch_states [
-    "pending_dispatch",
-    "dispatching",
-    "dispatching_retry",
-    "awaiting_receipt",
-    "running"
-  ]
-  @accepted_dispatch_states ["awaiting_receipt", "running"]
+  @active_dispatch_states DispatchState.active_state_strings()
+  @accepted_dispatch_states DispatchState.accepted_active_state_strings()
 
   @subject_lock_sql """
   SELECT pg_advisory_xact_lock(hashtext('mezzanine.subject:' || $1))

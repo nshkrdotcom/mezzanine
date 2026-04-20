@@ -29,7 +29,7 @@ defmodule Mezzanine.Execution.PersistenceTest do
                actor_ref: %{kind: :scheduler}
              })
 
-    assert execution.dispatch_state == :pending_dispatch
+    assert execution.dispatch_state == :queued
     assert execution.dispatch_attempt_count == 0
     assert execution.trace_id == "trace-dispatch"
     assert execution.compiled_pack_revision == 7
@@ -86,7 +86,7 @@ defmodule Mezzanine.Execution.PersistenceTest do
                actor_ref: %{kind: :dispatcher}
              })
 
-    assert accepted_execution.dispatch_state == :awaiting_receipt
+    assert accepted_execution.dispatch_state == :accepted_active
     assert accepted_execution.submission_ref == %{"id" => "sub-1"}
 
     assert accepted_execution.lower_receipt == %{
@@ -116,7 +116,7 @@ defmodule Mezzanine.Execution.PersistenceTest do
                actor_ref: %{kind: :dispatcher}
              })
 
-    assert retryable_execution.dispatch_state == :dispatching_retry
+    assert retryable_execution.dispatch_state == :in_flight
     assert retryable_execution.dispatch_attempt_count == 1
     assert retryable_execution.next_dispatch_at == retry_at
     assert retryable_execution.last_dispatch_error_kind == "bridge_unavailable"

@@ -34,7 +34,7 @@ defmodule Mezzanine.OperatorCommandsTest do
              Enum.sort([read_lease.lease_id, stream_lease.lease_id])
 
     assert {:ok, pending_reloaded} = Ash.get(ExecutionRecord, pending_execution.id)
-    assert pending_reloaded.dispatch_state == :pending_dispatch
+    assert pending_reloaded.dispatch_state == :queued
 
     assert Repo.aggregate(Oban.Job, :count, :id) == 0
 

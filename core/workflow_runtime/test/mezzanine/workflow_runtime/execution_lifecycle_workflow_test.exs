@@ -19,7 +19,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
        %{
          workflow_id: request.workflow_id,
          query_name: request.query_name,
-         workflow_state: "awaiting_receipt",
+         workflow_state: "accepted_active",
          projection_state: "fresh",
          raw_temporalex_result: :forbidden
        }}
@@ -74,7 +74,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
   test "workflow run emits compact lifecycle history and no raw lower payloads" do
     assert {:ok, result} = ExecutionAttempt.run(lifecycle_attrs())
 
-    assert result.workflow_state == "awaiting_receipt"
+    assert result.workflow_state == "accepted_active"
     assert result.workflow_id == "workflow-093"
 
     assert result.activity_refs == [
@@ -156,7 +156,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     assert {:ok, query} = ExecutionLifecycleWorkflow.query_operator_state(lifecycle_attrs())
 
     assert query.workflow_id == "workflow-093"
-    assert query.workflow_state == "awaiting_receipt"
+    assert query.workflow_state == "accepted_active"
     refute Map.has_key?(query, :raw_temporalex_result)
 
     assert {:ok, recovery} =

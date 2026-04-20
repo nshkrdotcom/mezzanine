@@ -164,7 +164,7 @@ defmodule Mezzanine.WorkflowRuntime.ProjectionReconciliationTest do
 
   test "outbox drain and retirement gates deny legacy workflow-start ownership" do
     assert %{
-             retryable_states: ["queued", "retryable_failure", "dispatching"],
+             retryable_states: ["queued", "retryable_failure", "in_flight", "dispatching"],
              evidence_only_states: ["started", "duplicate_started"],
              start_authority: :mezzanine_workflow_runtime_idempotency,
              forbidden_worker_authority: :workflow_lifecycle_decision

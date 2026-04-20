@@ -19,7 +19,7 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStartTest do
              })
 
     recovery_now = DateTime.add(DateTime.utc_now(), 5, :second)
-    assert dispatching_execution.dispatch_state == :dispatching
+    assert dispatching_execution.dispatch_state == :in_flight
 
     summary =
       try do
@@ -42,7 +42,7 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStartTest do
     assert summary.reconcile_handoff_execution_ids == []
 
     assert {:ok, recovered_execution} = Ash.get(ExecutionRecord, execution.id)
-    assert recovered_execution.dispatch_state == :dispatching_retry
+    assert recovered_execution.dispatch_state == :in_flight
     assert recovered_execution.dispatch_attempt_count == 1
     assert recovered_execution.next_dispatch_at == recovery_now
     assert recovered_execution.last_dispatch_error_kind == "restart_recovery"

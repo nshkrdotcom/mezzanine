@@ -1,15 +1,18 @@
 defmodule Mezzanine.RuntimeScheduler.ReconcileOnStart do
   @moduledoc """
-  Records Temporal workflow handoffs for executions stranded in `:dispatching`
-  when the runtime restarts and claims receipt-reconciliation waves without
-  reintroducing Oban saga queues.
+  Records Temporal workflow handoffs for executions stranded in in-flight
+  dispatch states when the runtime restarts and claims receipt-reconciliation
+  waves without reintroducing Oban saga queues.
   """
 
   alias Ecto.Adapters.SQL
-  alias Mezzanine.Execution.{ExecutionRecord, Repo}
+  alias Mezzanine.Execution.{DispatchState, ExecutionRecord, Repo}
   alias Mezzanine.Telemetry
 
   @default_actor_ref %{kind: :runtime_scheduler, phase: :reconcile_on_start}
+  @in_flight_states DispatchState.in_flight_state_strings()
+  @accepted_active_states DispatchState.accepted_active_state_strings()
+  @startup_candidate_states DispatchState.startup_reconcile_candidate_state_strings()
 
   @type summary :: %{
           dispatch_recovered_count: non_neg_integer(),
@@ -23,7 +26,7 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStart do
   SET last_reconcile_wave_id = $2,
       updated_at = $3
   WHERE id = $1::uuid
-    AND dispatch_state = 'awaiting_receipt'
+    AND dispatch_state = ANY($4)
     AND COALESCE(last_reconcile_wave_id, '') <> $2
   RETURNING id
   """
@@ -81,7 +84,8 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStart do
     end
   end
 
-  defp recover_candidate(execution, "dispatching", now, actor_ref, _wave_id, summary) do
+  defp recover_candidate(execution, dispatch_state, now, actor_ref, _wave_id, summary)
+       when dispatch_state in @in_flight_states do
     with {:ok, updated_execution} <-
            ExecutionRecord.record_restart_recovery(
              execution,
@@ -114,7 +118,8 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStart do
     end
   end
 
-  defp recover_candidate(execution, "awaiting_receipt", now, _actor_ref, wave_id, summary) do
+  defp recover_candidate(execution, dispatch_state, now, _actor_ref, wave_id, summary)
+       when dispatch_state in @accepted_active_states do
     with {:ok, claimed?} <- claim_and_enqueue_reconcile(execution.id, wave_id, now) do
       emit_startup_reconcile(execution, wave_id, claimed?)
       {:ok, reconcile_summary(summary, execution.id, claimed?)}
@@ -122,7 +127,7 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStart do
   end
 
   defp candidate_executions(installation_id) do
-    case SQL.query(Repo, candidate_query(), [installation_id]) do
+    case SQL.query(Repo, candidate_query(), [installation_id, @startup_candidate_states]) do
       {:ok, %{rows: rows}} ->
         {:ok,
          Enum.map(rows, fn [execution_id, dispatch_state] ->
@@ -152,7 +157,12 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStart do
     dumped_execution_id = Ecto.UUID.dump!(execution_id)
 
     Repo.transaction(fn ->
-      case SQL.query(Repo, @claim_reconcile_wave_sql, [dumped_execution_id, wave_id, now]) do
+      case SQL.query(Repo, @claim_reconcile_wave_sql, [
+             dumped_execution_id,
+             wave_id,
+             now,
+             @accepted_active_states
+           ]) do
         {:ok, %{rows: [[_claimed_execution_id]]}} ->
           temporal_receipt_reconcile_handoff!(execution_id, now)
 
@@ -191,7 +201,7 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStart do
     SELECT id, dispatch_state
     FROM execution_records
     WHERE installation_id = $1
-      AND dispatch_state IN ('dispatching', 'awaiting_receipt')
+      AND dispatch_state = ANY($2)
     ORDER BY inserted_at ASC, id ASC
     """
   end

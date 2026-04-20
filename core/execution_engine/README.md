@@ -8,7 +8,9 @@ This package now owns the Phase `2.4.4` durable execution slice:
 - durable `ExecutionRecord` persistence
 - durable dispatch identity on `ExecutionRecord`
 - substrate-owned dispatch-state and retry metadata
-- explicit accepted-but-not-terminal `:awaiting_receipt` state
+- reduced active dispatch states `:queued`, `:in_flight`, and
+  `:accepted_active`, with legacy active values retained only as read aliases
+  during live-row drains
 - stable execution lineage keyed by substrate execution id
 - Temporal execution-attempt handoff through `Mezzanine.WorkflowRuntime`
 - `Mezzanine.ExecutionDispatchWorker` retained only as an M31 tombstone proving

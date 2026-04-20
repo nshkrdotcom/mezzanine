@@ -8,15 +8,9 @@ defmodule Mezzanine.Execution.ExecutionRecord do
     data_layer: AshPostgres.DataLayer
 
   alias Mezzanine.Audit.{AuditFact, ExecutionLineage, ExecutionLineageStore}
-  alias Mezzanine.Execution.Repo
+  alias Mezzanine.Execution.{DispatchState, Repo}
 
-  @active_dispatch_states [
-    :pending_dispatch,
-    :dispatching,
-    :dispatching_retry,
-    :awaiting_receipt,
-    :running
-  ]
+  @active_dispatch_states DispatchState.active_states()
   @failure_kinds [
     :transient_failure,
     :timeout,
@@ -83,7 +77,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
         :supersession_depth
       ])
 
-      change(set_attribute(:dispatch_state, :pending_dispatch))
+      change(set_attribute(:dispatch_state, :queued))
       change(set_attribute(:dispatch_attempt_count, 0))
       change(set_attribute(:next_dispatch_at, &DateTime.utc_now/0, set_when_nil?: false))
     end
@@ -96,7 +90,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
       argument(:causation_id, :string, allow_nil?: false)
 
       change(optimistic_lock(:row_version))
-      change(set_attribute(:dispatch_state, :dispatching))
+      change(set_attribute(:dispatch_state, :in_flight))
       change(set_attribute(:causation_id, arg(:causation_id)))
     end
 
@@ -111,7 +105,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
       argument(:actor_ref, :map, allow_nil?: false)
 
       change(optimistic_lock(:row_version))
-      change(set_attribute(:dispatch_state, :awaiting_receipt))
+      change(set_attribute(:dispatch_state, :accepted_active))
       change(set_attribute(:submission_ref, arg(:submission_ref)))
       change(set_attribute(:lower_receipt, arg(:lower_receipt)))
       change(set_attribute(:causation_id, arg(:causation_id)))
@@ -152,7 +146,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
       argument(:actor_ref, :map, allow_nil?: false)
 
       change(optimistic_lock(:row_version))
-      change(set_attribute(:dispatch_state, :dispatching_retry))
+      change(set_attribute(:dispatch_state, :in_flight))
       change(increment(:dispatch_attempt_count))
       change(set_attribute(:next_dispatch_at, arg(:next_dispatch_at)))
       change(set_attribute(:last_dispatch_error_kind, arg(:last_dispatch_error_kind)))
@@ -409,7 +403,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
       argument(:actor_ref, :map, allow_nil?: false)
 
       change(optimistic_lock(:row_version))
-      change(set_attribute(:dispatch_state, :dispatching_retry))
+      change(set_attribute(:dispatch_state, :in_flight))
       change(increment(:dispatch_attempt_count))
       change(set_attribute(:next_dispatch_at, arg(:next_dispatch_at)))
       change(set_attribute(:last_dispatch_error_kind, "restart_recovery"))
@@ -427,7 +421,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
                    :execution_recovered,
                    %{
                      classification: "restart_recovery",
-                     recovered_from: "dispatching"
+                     recovered_from: "in_flight"
                    }
                  ) do
             {:ok, execution}
@@ -585,20 +579,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
     attribute :dispatch_state, :atom do
       allow_nil?(false)
 
-      constraints(
-        one_of: [
-          :pending_dispatch,
-          :dispatching,
-          :dispatching_retry,
-          :awaiting_receipt,
-          :running,
-          :completed,
-          :cancelled,
-          :failed,
-          :rejected,
-          :stalled
-        ]
-      )
+      constraints(one_of: DispatchState.all_states())
 
       public?(true)
     end

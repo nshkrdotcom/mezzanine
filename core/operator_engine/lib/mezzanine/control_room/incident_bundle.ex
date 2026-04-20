@@ -11,7 +11,7 @@ defmodule Mezzanine.ControlRoom.IncidentBundle do
   @contract_name "Mezzanine.IncidentBundle.v1"
   @staleness_classes [
     :queued,
-    :dispatching,
+    :in_flight,
     :delivered_to_temporal,
     :pending_workflow_ack,
     :processed,

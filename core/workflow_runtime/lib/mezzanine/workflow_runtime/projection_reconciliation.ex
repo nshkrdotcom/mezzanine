@@ -196,7 +196,7 @@ defmodule Mezzanine.WorkflowRuntime.ProjectionReconciliation do
   ]
 
   @drain_plan %{
-    retryable_states: ["queued", "retryable_failure", "dispatching"],
+    retryable_states: ["queued", "retryable_failure", "in_flight", "dispatching"],
     evidence_only_states: ["started", "duplicate_started"],
     invalid_row_action: :quarantine_or_dead_letter,
     start_authority: :mezzanine_workflow_runtime_idempotency,

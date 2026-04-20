@@ -62,7 +62,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
          workflow_id: input.workflow_id,
          workflow_type: input.workflow_type,
          workflow_version: input.workflow_version,
-         workflow_state: "awaiting_receipt",
+         workflow_state: "accepted_active",
          activity_refs: [
            authority.activity_call_ref,
            lower.activity_call_ref
@@ -84,7 +84,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     %{
       workflow_id: attrs.workflow_id,
       workflow_run_id: attrs[:workflow_run_id],
-      workflow_state: "awaiting_receipt",
+      workflow_state: "accepted_active",
       tenant_ref: attrs.tenant_ref,
       resource_ref: attrs.resource_ref,
       authority_packet_ref: attrs.authority_packet_ref,
@@ -304,7 +304,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
   end
 
   defp terminal_state(%WorkflowReceiptSignal{terminal?: true, receipt_state: state}), do: state
-  defp terminal_state(_signal), do: "awaiting_receipt"
+  defp terminal_state(_signal), do: "accepted_active"
 
   defp receipt_signal_request(%WorkflowReceiptSignal{} = signal) do
     %{

@@ -9,6 +9,7 @@ defmodule Mezzanine.LifecycleEvaluator do
   """
 
   alias Ecto.{Adapters.SQL, Multi}
+  alias Mezzanine.Execution.DispatchState
   alias Mezzanine.Execution.Repo
   alias Mezzanine.Lifecycle.Evaluator, as: PackEvaluator
   alias Mezzanine.Lifecycle.SubjectSnapshot
@@ -22,13 +23,7 @@ defmodule Mezzanine.LifecycleEvaluator do
     {:nowarn_function, build_result_multi: 1}
   ]
 
-  @active_dispatch_states [
-    "pending_dispatch",
-    "dispatching",
-    "dispatching_retry",
-    "awaiting_receipt",
-    "running"
-  ]
+  @active_dispatch_states DispatchState.active_state_strings()
   @blocked_on_cycle_state "blocked_on_cycle"
   @default_max_supersession_depth 8
   @supersession_reasons [
@@ -138,7 +133,7 @@ defmodule Mezzanine.LifecycleEvaluator do
     $11,
     $12,
     $13,
-    'pending_dispatch',
+    'queued',
     0,
     $14,
     $15,
@@ -1046,7 +1041,7 @@ defmodule Mezzanine.LifecycleEvaluator do
        ) do
     %{
       "recipe_ref" => recipe_ref,
-      "dispatch_state" => "pending_dispatch",
+      "dispatch_state" => "queued",
       "submission_dedupe_key" => submission_dedupe_key,
       "workflow_runtime_boundary" => workflow_handoff.workflow_runtime_boundary,
       "temporal_workflow" => workflow_handoff.workflow_module,

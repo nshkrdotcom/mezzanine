@@ -51,7 +51,7 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
     assert execution.subject_id == subject.id
     assert execution.recipe_ref == "expense_capture"
     assert execution.compiled_pack_revision == installation.compiled_pack_revision
-    assert execution.dispatch_state == :pending_dispatch
+    assert execution.dispatch_state == :queued
     assert execution.submission_dedupe_key == result.submission_dedupe_key
     assert execution.trace_id == result.trace_id
 
