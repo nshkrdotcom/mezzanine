@@ -55,3 +55,13 @@ Child completions enter the parent through the `child.completed`
 once, suppresses duplicate completions by completion idempotency key, exposes a
 raw-payload-free `fanout.branch_state` query projection, and emits child cancel
 signals only for unfinished branches with the original authority context.
+
+Phase 5 hardening keeps this as a parent-workflow contract and adds explicit
+close policy evidence for existing fan-out/fan-in paths. Supported close
+policies are `all_required`, `k_of_n`, `at_least_one`,
+`best_effort_with_required`, and `fail_fast`. A close decision may be
+`succeeded`, `partial_success`, or `failed`; duplicate and late child
+completions after close emit evidence but cannot increment `close_count` or
+change the close decision. Heterogeneous branch failures are reported by
+branch ref, failure class, safe action, and compensation ref without storing
+raw child payloads in workflow history or Postgres projections.
