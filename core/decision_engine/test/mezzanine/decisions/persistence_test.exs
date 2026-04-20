@@ -1,9 +1,11 @@
 defmodule Mezzanine.Decisions.PersistenceTest do
   use Mezzanine.Decisions.DataCase, async: false
 
+  alias Mezzanine.Audit.Repo, as: AuditRepo
   alias Mezzanine.DecisionCommands
+  alias Mezzanine.Decisions.Repo, as: DecisionsRepo
   alias Mezzanine.Execution.ExecutionRecord
-  alias Mezzanine.Execution.Repo
+  alias Mezzanine.Execution.Repo, as: ExecutionRepo
 
   test "create_pending persists the decision ledger and emits workflow timer evidence" do
     assert {:ok, subject} = ingest_subject("linear:ticket:decision-pending")
@@ -115,7 +117,7 @@ defmodule Mezzanine.Decisions.PersistenceTest do
     now = DateTime.utc_now() |> DateTime.truncate(:microsecond)
     subject_id = Ecto.UUID.generate()
 
-    Repo.query!(
+    ExecutionRepo.query!(
       """
       INSERT INTO subject_records (
         id,
@@ -184,12 +186,12 @@ defmodule Mezzanine.Decisions.PersistenceTest do
   end
 
   defp decision_expiry_jobs do
-    Repo.all(Oban.Job)
+    ExecutionRepo.all(Oban.Job)
     |> Enum.filter(&(&1.worker == "Elixir.Mezzanine.DecisionExpiryWorker"))
   end
 
   defp decision_exists?(subject_id, decision_kind) do
-    Repo.query!(
+    DecisionsRepo.query!(
       """
       SELECT 1
       FROM decision_records
@@ -202,7 +204,7 @@ defmodule Mezzanine.Decisions.PersistenceTest do
   end
 
   defp resolved_decisions_for_subject(subject_id) do
-    Repo.query!(
+    DecisionsRepo.query!(
       """
       SELECT id, lifecycle_state
       FROM decision_records
@@ -218,7 +220,7 @@ defmodule Mezzanine.Decisions.PersistenceTest do
   end
 
   defp overdue_decisions(installation_id, now) do
-    Repo.query!(
+    DecisionsRepo.query!(
       """
       SELECT id
       FROM decision_records
@@ -234,7 +236,7 @@ defmodule Mezzanine.Decisions.PersistenceTest do
   end
 
   defp audit_facts_for_trace(installation_id, trace_id) do
-    Repo.query!(
+    AuditRepo.query!(
       """
       SELECT fact_kind, decision_id, payload
       FROM audit_facts

@@ -30,6 +30,17 @@ defmodule Mezzanine.Decisions.DecisionRecord do
     define(:waive, action: :waive)
     define(:escalate, action: :escalate)
     define(:expire, action: :expire)
+
+    define(:by_identity,
+      action: :by_identity,
+      args: [:installation_id, :subject_id, :execution_id, :decision_kind]
+    )
+
+    define(:by_identity_without_execution,
+      action: :by_identity_without_execution,
+      args: [:installation_id, :subject_id, :decision_kind]
+    )
+
     define(:for_subject_kind, action: :for_subject_kind, args: [:subject_id, :decision_kind])
     define(:resolved_for_subject, action: :resolved_for_subject, args: [:subject_id])
     define(:pending_for_installation, action: :pending_for_installation, args: [:installation_id])
@@ -65,7 +76,8 @@ defmodule Mezzanine.Decisions.DecisionRecord do
             %{
               decision_kind: decision.decision_kind,
               lifecycle_state: decision.lifecycle_state,
-              required_by: decision.required_by
+              required_by: decision.required_by,
+              workflow_timer_ref: workflow_timer_ref(decision)
             }
           )
           |> case do
@@ -229,6 +241,37 @@ defmodule Mezzanine.Decisions.DecisionRecord do
       prepare(build(sort: [inserted_at: :desc], limit: 1))
     end
 
+    read :by_identity do
+      argument(:installation_id, :string, allow_nil?: false)
+      argument(:subject_id, :uuid, allow_nil?: false)
+      argument(:execution_id, :uuid, allow_nil?: false)
+      argument(:decision_kind, :string, allow_nil?: false)
+
+      filter(
+        expr(
+          installation_id == ^arg(:installation_id) and subject_id == ^arg(:subject_id) and
+            execution_id == ^arg(:execution_id) and decision_kind == ^arg(:decision_kind)
+        )
+      )
+
+      prepare(build(limit: 1))
+    end
+
+    read :by_identity_without_execution do
+      argument(:installation_id, :string, allow_nil?: false)
+      argument(:subject_id, :uuid, allow_nil?: false)
+      argument(:decision_kind, :string, allow_nil?: false)
+
+      filter(
+        expr(
+          installation_id == ^arg(:installation_id) and subject_id == ^arg(:subject_id) and
+            is_nil(execution_id) and decision_kind == ^arg(:decision_kind)
+        )
+      )
+
+      prepare(build(limit: 1))
+    end
+
     read :resolved_for_subject do
       argument(:subject_id, :uuid, allow_nil?: false)
       filter(expr(subject_id == ^arg(:subject_id) and lifecycle_state in ^@resolved_states))
@@ -345,5 +388,11 @@ defmodule Mezzanine.Decisions.DecisionRecord do
       payload: payload,
       occurred_at: DateTime.utc_now()
     })
+  end
+
+  defp workflow_timer_ref(%{required_by: nil}), do: nil
+
+  defp workflow_timer_ref(%{id: id, required_by: %DateTime{} = required_by}) do
+    "workflow-timer://decision/#{id}/#{DateTime.to_unix(required_by, :millisecond)}"
   end
 end
