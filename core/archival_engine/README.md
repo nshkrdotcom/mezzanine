@@ -15,6 +15,9 @@ This package now owns the durable Stage-11 substrate archival slice for:
 - Phase 4 release contracts for cold restore by trace id, cold restore by
   artifact id, hot/cold conflict quarantine, and archival sweep retry
   quarantine
+- audit inclusion proof joins for restore evidence, with diagnostic quarantine
+  when tenant/installation, trace, audit fact, checkpoint, release manifest,
+  and restore-consistency evidence cannot be joined
 
 Primary public surfaces:
 
@@ -25,6 +28,7 @@ Primary public surfaces:
 - `Mezzanine.Archival.ColdRestoreArtifactQuery`
 - `Mezzanine.Archival.ColdRestoreTraceQuery`
 - `Mezzanine.Archival.Query`
+- `Mezzanine.Archival.RestoreAuditJoin`
 
 Internal implementation files:
 

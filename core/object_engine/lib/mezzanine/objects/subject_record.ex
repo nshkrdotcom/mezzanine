@@ -7,7 +7,8 @@ defmodule Mezzanine.Objects.SubjectRecord do
     domain: Mezzanine.Objects,
     data_layer: AshPostgres.DataLayer
 
-  alias Mezzanine.Audit.AuditFact
+  alias Mezzanine.Audit.AuditAppend
+  alias Mezzanine.Objects.SubjectPayloadSchema
 
   postgres do
     table("subject_records")
@@ -62,28 +63,24 @@ defmodule Mezzanine.Objects.SubjectRecord do
       change(set_attribute(:opened_at, &DateTime.utc_now/0, set_when_nil?: false))
       change(set_attribute(:status, "active", set_when_nil?: false))
       change(set_attribute(:status_updated_at, &DateTime.utc_now/0, set_when_nil?: false))
+      change(&bind_payload_schema/2)
 
       change(
         after_action(fn changeset, subject, _context ->
-          AuditFact.record(%{
-            installation_id: subject.installation_id,
-            subject_id: subject.id,
-            fact_kind: :subject_ingested,
-            actor_ref: Ash.Changeset.get_argument(changeset, :actor_ref),
-            trace_id: Ash.Changeset.get_argument(changeset, :trace_id),
-            causation_id: Ash.Changeset.get_argument(changeset, :causation_id),
-            payload: %{
-              subject_kind: subject.subject_kind,
-              lifecycle_state: subject.lifecycle_state,
-              status: subject.status,
-              source_ref: subject.source_ref
-            },
-            occurred_at: DateTime.utc_now()
+          append_audit_fact(changeset, subject, :subject_ingested, %{
+            subject_kind: subject.subject_kind,
+            lifecycle_state: subject.lifecycle_state,
+            status: subject.status,
+            source_ref: subject.source_ref,
+            schema_ref: subject.schema_ref,
+            schema_version: subject.schema_version,
+            schema_hash:
+              SubjectPayloadSchema.schema_hash!(
+                subject.subject_kind,
+                subject.schema_ref,
+                subject.schema_version
+              )
           })
-          |> case do
-            {:ok, _fact} -> {:ok, subject}
-            {:error, error} -> {:error, error}
-          end
         end)
       )
     end
@@ -109,22 +106,9 @@ defmodule Mezzanine.Objects.SubjectRecord do
 
       change(
         after_action(fn changeset, subject, _context ->
-          AuditFact.record(%{
-            installation_id: subject.installation_id,
-            subject_id: subject.id,
-            fact_kind: :lifecycle_advanced,
-            actor_ref: Ash.Changeset.get_argument(changeset, :actor_ref),
-            trace_id: Ash.Changeset.get_argument(changeset, :trace_id),
-            causation_id: Ash.Changeset.get_argument(changeset, :causation_id),
-            payload: %{
-              lifecycle_state: subject.lifecycle_state
-            },
-            occurred_at: DateTime.utc_now()
+          append_audit_fact(changeset, subject, :lifecycle_advanced, %{
+            lifecycle_state: subject.lifecycle_state
           })
-          |> case do
-            {:ok, _fact} -> {:ok, subject}
-            {:error, error} -> {:error, error}
-          end
         end)
       )
     end
@@ -144,23 +128,10 @@ defmodule Mezzanine.Objects.SubjectRecord do
 
       change(
         after_action(fn changeset, subject, _context ->
-          AuditFact.record(%{
-            installation_id: subject.installation_id,
-            subject_id: subject.id,
-            fact_kind: :subject_blocked,
-            actor_ref: Ash.Changeset.get_argument(changeset, :actor_ref),
-            trace_id: Ash.Changeset.get_argument(changeset, :trace_id),
-            causation_id: Ash.Changeset.get_argument(changeset, :causation_id),
-            payload: %{
-              lifecycle_state: subject.lifecycle_state,
-              block_reason: subject.block_reason
-            },
-            occurred_at: DateTime.utc_now()
+          append_audit_fact(changeset, subject, :subject_blocked, %{
+            lifecycle_state: subject.lifecycle_state,
+            block_reason: subject.block_reason
           })
-          |> case do
-            {:ok, _fact} -> {:ok, subject}
-            {:error, error} -> {:error, error}
-          end
         end)
       )
     end
@@ -183,22 +154,9 @@ defmodule Mezzanine.Objects.SubjectRecord do
 
       change(
         after_action(fn changeset, subject, _context ->
-          AuditFact.record(%{
-            installation_id: subject.installation_id,
-            subject_id: subject.id,
-            fact_kind: :subject_unblocked,
-            actor_ref: Ash.Changeset.get_argument(changeset, :actor_ref),
-            trace_id: Ash.Changeset.get_argument(changeset, :trace_id),
-            causation_id: Ash.Changeset.get_argument(changeset, :causation_id),
-            payload: %{
-              lifecycle_state: subject.lifecycle_state
-            },
-            occurred_at: DateTime.utc_now()
+          append_audit_fact(changeset, subject, :subject_unblocked, %{
+            lifecycle_state: subject.lifecycle_state
           })
-          |> case do
-            {:ok, _fact} -> {:ok, subject}
-            {:error, error} -> {:error, error}
-          end
         end)
       )
     end
@@ -358,22 +316,50 @@ defmodule Mezzanine.Objects.SubjectRecord do
     identity(:unique_installation_source_ref, [:installation_id, :source_ref])
   end
 
+  defp bind_payload_schema(changeset, _context) do
+    attrs = %{
+      subject_kind: Ash.Changeset.get_attribute(changeset, :subject_kind),
+      schema_ref: Ash.Changeset.get_attribute(changeset, :schema_ref),
+      schema_version: Ash.Changeset.get_attribute(changeset, :schema_version),
+      payload: Ash.Changeset.get_attribute(changeset, :payload)
+    }
+
+    case SubjectPayloadSchema.validate_ingest(attrs) do
+      {:ok, %{payload: payload}} ->
+        Ash.Changeset.change_attribute(changeset, :payload, payload)
+
+      {:error, reason} ->
+        Ash.Changeset.add_error(
+          changeset,
+          field: :payload,
+          message: "subject payload must match a source-owned schema: #{inspect(reason)}"
+        )
+    end
+  end
+
   defp record_status_audit(changeset, subject, fact_kind) do
-    AuditFact.record(%{
-      installation_id: subject.installation_id,
-      subject_id: subject.id,
-      fact_kind: fact_kind,
-      actor_ref: Ash.Changeset.get_argument(changeset, :actor_ref),
-      trace_id: Ash.Changeset.get_argument(changeset, :trace_id),
-      causation_id: Ash.Changeset.get_argument(changeset, :causation_id),
-      payload: %{
-        lifecycle_state: subject.lifecycle_state,
-        status: subject.status,
-        status_reason: subject.status_reason,
-        terminal_at: subject.terminal_at
-      },
-      occurred_at: DateTime.utc_now()
+    append_audit_fact(changeset, subject, fact_kind, %{
+      lifecycle_state: subject.lifecycle_state,
+      status: subject.status,
+      status_reason: subject.status_reason,
+      terminal_at: subject.terminal_at
     })
+  end
+
+  defp append_audit_fact(changeset, subject, fact_kind, payload) do
+    AuditAppend.append_fact(
+      %{
+        installation_id: subject.installation_id,
+        subject_id: subject.id,
+        fact_kind: fact_kind,
+        actor_ref: Ash.Changeset.get_argument(changeset, :actor_ref),
+        trace_id: Ash.Changeset.get_argument(changeset, :trace_id),
+        causation_id: Ash.Changeset.get_argument(changeset, :causation_id),
+        payload: payload,
+        occurred_at: DateTime.utc_now()
+      },
+      []
+    )
     |> case do
       {:ok, _fact} -> {:ok, subject}
       {:error, error} -> {:error, error}

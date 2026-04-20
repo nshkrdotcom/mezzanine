@@ -221,8 +221,8 @@ defmodule Mezzanine.Archival.SchedulerTest do
     SQL.query!(
       Repo,
       """
-      INSERT INTO subject_records (id, installation_id, source_ref, subject_kind, lifecycle_state, status, status_updated_at, terminal_at, schema_version, payload, opened_at, inserted_at, updated_at, row_version)
-      VALUES ($1::uuid, $2, $3, 'ticket', 'completed', 'cancelled', NOW(), $4, 1, '{}'::jsonb, NOW(), NOW(), NOW(), 1)
+      INSERT INTO subject_records (id, installation_id, source_ref, subject_kind, lifecycle_state, status, status_updated_at, terminal_at, schema_ref, schema_version, payload, opened_at, inserted_at, updated_at, row_version)
+      VALUES ($1::uuid, $2, $3, 'ticket', 'completed', 'cancelled', NOW(), $4, 'mezzanine.subject.ticket.payload.v1', 1, '{}'::jsonb, NOW(), NOW(), NOW(), 1)
       """,
       [dump_uuid!(subject_id), installation_id, source_ref, terminal_at]
     )

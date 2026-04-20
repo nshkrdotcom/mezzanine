@@ -7,7 +7,7 @@ defmodule Mezzanine.EvidenceLedger.EvidenceRecord do
     domain: Mezzanine.EvidenceLedger,
     data_layer: AshPostgres.DataLayer
 
-  alias Mezzanine.Audit.AuditFact
+  alias Mezzanine.Audit.AuditAppend
 
   @complete_statuses ["collected", "verified"]
 
@@ -69,7 +69,7 @@ defmodule Mezzanine.EvidenceLedger.EvidenceRecord do
 
       change(
         after_action(fn changeset, evidence, _context ->
-          record_audit_fact(
+          append_audit_fact(
             evidence,
             Ash.Changeset.get_argument(changeset, :actor_ref),
             :evidence_collected,
@@ -116,7 +116,7 @@ defmodule Mezzanine.EvidenceLedger.EvidenceRecord do
 
       change(
         after_action(fn changeset, evidence, _context ->
-          record_audit_fact(
+          append_audit_fact(
             evidence,
             Ash.Changeset.get_argument(changeset, :actor_ref),
             :evidence_verified,
@@ -151,7 +151,7 @@ defmodule Mezzanine.EvidenceLedger.EvidenceRecord do
 
       change(
         after_action(fn changeset, evidence, _context ->
-          record_audit_fact(
+          append_audit_fact(
             evidence,
             Ash.Changeset.get_argument(changeset, :actor_ref),
             :evidence_collected,
@@ -303,18 +303,21 @@ defmodule Mezzanine.EvidenceLedger.EvidenceRecord do
 
   defp set_collection_timestamps(changeset, _status), do: changeset
 
-  defp record_audit_fact(evidence, actor_ref, fact_kind, payload) do
-    AuditFact.record(%{
-      installation_id: evidence.installation_id,
-      subject_id: evidence.subject_id,
-      execution_id: evidence.execution_id,
-      evidence_id: evidence.id,
-      trace_id: evidence.trace_id,
-      causation_id: evidence.causation_id,
-      fact_kind: fact_kind,
-      actor_ref: actor_ref,
-      payload: payload,
-      occurred_at: DateTime.utc_now()
-    })
+  defp append_audit_fact(evidence, actor_ref, fact_kind, payload) do
+    AuditAppend.append_fact(
+      %{
+        installation_id: evidence.installation_id,
+        subject_id: evidence.subject_id,
+        execution_id: evidence.execution_id,
+        evidence_id: evidence.id,
+        trace_id: evidence.trace_id,
+        causation_id: evidence.causation_id,
+        fact_kind: fact_kind,
+        actor_ref: actor_ref,
+        payload: payload,
+        occurred_at: DateTime.utc_now()
+      },
+      []
+    )
   end
 end

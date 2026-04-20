@@ -121,6 +121,7 @@ defmodule Mezzanine.OperatorCommandsTest do
         lifecycle_state,
         status,
         payload,
+        schema_ref,
         schema_version,
         opened_at,
         status_updated_at,
@@ -128,7 +129,7 @@ defmodule Mezzanine.OperatorCommandsTest do
         inserted_at,
         updated_at
       )
-      VALUES ($1::uuid, $2, $3, $4, $5, 'active', $6, 1, $7, $7, 1, $7, $7)
+      VALUES ($1::uuid, $2, $3, $4, $5, 'active', $6, $7, 1, $8, $8, 1, $8, $8)
       """,
       [
         Ecto.UUID.dump!(subject_id),
@@ -137,6 +138,7 @@ defmodule Mezzanine.OperatorCommandsTest do
         "linear_coding_ticket",
         "queued",
         %{},
+        "mezzanine.subject.linear_coding_ticket.payload.v1",
         now
       ]
     )

@@ -78,6 +78,7 @@ defmodule MezzanineOperatorEngine.MixProject do
 
   defp deps do
     [
+      {:mezzanine_audit_engine, path: "../audit_engine"},
       {:mezzanine_core, path: "../mezzanine_core"},
       {:mezzanine_object_engine, path: "../object_engine"},
       {:mezzanine_execution_engine, path: "../execution_engine"},

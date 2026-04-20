@@ -677,13 +677,14 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
         source_ref,
         subject_kind,
         lifecycle_state,
+        schema_ref,
         schema_version,
         opened_at,
         row_version,
         inserted_at,
         updated_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       """,
       [
         dump_uuid!(subject_id),
@@ -692,6 +693,7 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
         Map.fetch!(attrs, :source_ref),
         Map.fetch!(attrs, :subject_kind),
         Map.fetch!(attrs, :lifecycle_state),
+        "mezzanine.subject.#{Map.fetch!(attrs, :subject_kind)}.payload.v1",
         1,
         now,
         1,

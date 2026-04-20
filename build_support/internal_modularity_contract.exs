@@ -79,6 +79,7 @@ defmodule Mezzanine.Build.InternalModularityContract do
     %{
       path: "core/operator_engine",
       allowed_internal_deps: [
+        "core/audit_engine",
         "core/execution_engine",
         "core/leasing",
         "core/mezzanine_core",

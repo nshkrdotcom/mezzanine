@@ -7,7 +7,7 @@ defmodule Mezzanine.DecisionCommands do
   and their optimistic row-version lock.
   """
 
-  alias Mezzanine.Audit.AuditFact
+  alias Mezzanine.Audit.{AuditAppend, AuditQuery}
   alias Mezzanine.Decisions.DecisionRecord
 
   require Ash.Query
@@ -267,26 +267,29 @@ defmodule Mezzanine.DecisionCommands do
          outcome,
          error \\ nil
        ) do
-    AuditFact.record(%{
-      installation_id: original_decision.installation_id,
-      subject_id: original_decision.subject_id,
-      execution_id: original_decision.execution_id,
-      decision_id: original_decision.id,
-      trace_id: fetch_required!(attrs, :trace_id),
-      causation_id: fetch_required!(attrs, :causation_id),
-      fact_kind: :decision_terminal_resolution_attempt,
-      actor_ref: normalize_map(fetch_required!(attrs, :actor_ref)),
-      payload:
-        terminal_attempt_payload(
-          original_decision,
-          observed_decision,
-          action,
-          attrs,
-          outcome,
-          error
-        ),
-      occurred_at: attempted_at(attrs)
-    })
+    AuditAppend.append_fact(
+      %{
+        installation_id: original_decision.installation_id,
+        subject_id: original_decision.subject_id,
+        execution_id: original_decision.execution_id,
+        decision_id: original_decision.id,
+        trace_id: fetch_required!(attrs, :trace_id),
+        causation_id: fetch_required!(attrs, :causation_id),
+        fact_kind: :decision_terminal_resolution_attempt,
+        actor_ref: normalize_map(fetch_required!(attrs, :actor_ref)),
+        payload:
+          terminal_attempt_payload(
+            original_decision,
+            observed_decision,
+            action,
+            attrs,
+            outcome,
+            error
+          ),
+        occurred_at: attempted_at(attrs)
+      },
+      []
+    )
   end
 
   defp append_losing_attempts(
@@ -349,25 +352,28 @@ defmodule Mezzanine.DecisionCommands do
          outcome,
          error
        ) do
-    AuditFact.record(%{
-      installation_id: original_decision.installation_id,
-      subject_id: original_decision.subject_id,
-      execution_id: original_decision.execution_id,
-      decision_id: original_decision.id,
-      trace_id: fetch_required!(attrs, :trace_id),
-      causation_id: fetch_required!(attrs, :causation_id),
-      fact_kind: :decision_conflict_attempt,
-      actor_ref: normalize_map(fetch_required!(attrs, :actor_ref)),
-      payload:
-        original_decision
-        |> terminal_attempt_payload(observed_decision, action, attrs, outcome, error)
-        |> Map.merge(%{
-          conflict_attempt?: true,
-          terminal_attempt_fact_kind: "decision_terminal_resolution_attempt",
-          conflict_error_class: Atom.to_string(outcome)
-        }),
-      occurred_at: attempted_at(attrs)
-    })
+    AuditAppend.append_fact(
+      %{
+        installation_id: original_decision.installation_id,
+        subject_id: original_decision.subject_id,
+        execution_id: original_decision.execution_id,
+        decision_id: original_decision.id,
+        trace_id: fetch_required!(attrs, :trace_id),
+        causation_id: fetch_required!(attrs, :causation_id),
+        fact_kind: :decision_conflict_attempt,
+        actor_ref: normalize_map(fetch_required!(attrs, :actor_ref)),
+        payload:
+          original_decision
+          |> terminal_attempt_payload(observed_decision, action, attrs, outcome, error)
+          |> Map.merge(%{
+            conflict_attempt?: true,
+            terminal_attempt_fact_kind: "decision_terminal_resolution_attempt",
+            conflict_error_class: Atom.to_string(outcome)
+          }),
+        occurred_at: attempted_at(attrs)
+      },
+      []
+    )
   end
 
   defp terminal_attempt_payload(
@@ -482,12 +488,7 @@ defmodule Mezzanine.DecisionCommands do
          id: decision_id,
          installation_id: installation_id
        }) do
-    AuditFact
-    |> Ash.Query.filter(
-      installation_id == ^installation_id and decision_id == ^decision_id and
-        fact_kind == :decision_terminal_resolution_attempt
-    )
-    |> Ash.read(authorize?: false, domain: Mezzanine.Audit)
+    AuditQuery.decision_terminal_resolution_attempts(installation_id, decision_id)
     |> case do
       {:ok, facts} -> facts
       {:error, _error} -> []

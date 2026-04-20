@@ -248,6 +248,171 @@ defmodule Mezzanine.Archival.ColdRestoreArtifactQuery do
   end
 end
 
+defmodule Mezzanine.Archival.RestoreAuditJoin do
+  @moduledoc """
+  Contract for joining archival restore evidence to audit inclusion proof.
+
+  Contract: `Mezzanine.RestoreAuditJoin.v1`.
+  """
+
+  alias Mezzanine.Archival.ReleaseContractSupport
+  alias Mezzanine.Audit.AuditInclusionProof
+
+  @contract_name "Mezzanine.RestoreAuditJoin.v1"
+  @required_binary_fields [
+    :tenant_ref,
+    :installation_ref,
+    :trace_id,
+    :audit_fact_id,
+    :checkpoint_ref,
+    :release_manifest_ref,
+    :restore_consistency_hash,
+    :restore_request_ref
+  ]
+  @optional_binary_fields [:audit_inclusion_proof_ref, :quarantine_ref]
+
+  defstruct [
+    :contract_name,
+    :tenant_ref,
+    :installation_ref,
+    :workspace_ref,
+    :project_ref,
+    :environment_ref,
+    :principal_ref,
+    :system_actor_ref,
+    :resource_ref,
+    :authority_packet_ref,
+    :permission_decision_ref,
+    :idempotency_key,
+    :trace_id,
+    :correlation_id,
+    :audit_fact_id,
+    :checkpoint_ref,
+    :release_manifest_ref,
+    :restore_consistency_hash,
+    :restore_request_ref,
+    :audit_inclusion_proof_ref,
+    :quarantine_ref,
+    :quarantine_reason,
+    join_status: :authoritative,
+    missing_fields: []
+  ]
+
+  @type t :: %__MODULE__{}
+
+  @spec contract_name() :: String.t()
+  def contract_name, do: @contract_name
+
+  @spec new(map() | keyword()) ::
+          {:ok, t()}
+          | {:error, {:missing_required_fields, [atom()]}}
+          | {:error, :invalid_restore_audit_join}
+  def new(attrs) do
+    with {:ok, attrs} <- ReleaseContractSupport.normalize_attrs(attrs),
+         [] <- ReleaseContractSupport.missing_required_fields(attrs, @required_binary_fields, []),
+         true <- ReleaseContractSupport.optional_binary_fields?(attrs, @optional_binary_fields),
+         true <- ReleaseContractSupport.sha256?(Map.get(attrs, :restore_consistency_hash)) do
+      {:ok, build(attrs, :authoritative)}
+    else
+      fields when is_list(fields) -> {:error, {:missing_required_fields, fields}}
+      _error -> {:error, :invalid_restore_audit_join}
+    end
+  end
+
+  @spec from_proof(map() | keyword(), struct()) ::
+          {:ok, t()}
+          | {:error, {:audit_restore_join_mismatch, [atom()]}}
+          | {:error, {:missing_required_fields, [atom()]}}
+          | {:error, :invalid_restore_audit_join}
+          | {:error, :invalid_attrs}
+  def from_proof(attrs, %AuditInclusionProof{} = proof) do
+    with {:ok, attrs} <- ReleaseContractSupport.normalize_attrs(attrs),
+         :ok <- validate_proof_match(attrs, proof) do
+      attrs
+      |> put_proof_fields(proof)
+      |> new()
+    end
+  end
+
+  @spec classify(map() | keyword()) :: {:ok, t()} | {:error, :invalid_attrs}
+  def classify(attrs) do
+    case new(attrs) do
+      {:ok, join} ->
+        {:ok, join}
+
+      {:error, {:missing_required_fields, fields}} ->
+        build_quarantine(attrs, {:missing_required_fields, fields}, fields)
+
+      {:error, reason} ->
+        build_quarantine(attrs, reason, [])
+    end
+  end
+
+  defp build(attrs, status) do
+    struct!(
+      __MODULE__,
+      attrs
+      |> Map.put(:contract_name, @contract_name)
+      |> Map.put(:join_status, status)
+      |> Map.put_new(:missing_fields, [])
+    )
+  end
+
+  defp build_quarantine(attrs, reason, missing_fields) do
+    with {:ok, attrs} <- ReleaseContractSupport.normalize_attrs(attrs) do
+      {:ok,
+       build(
+         attrs
+         |> Map.put(:quarantine_ref, quarantine_ref(attrs))
+         |> Map.put(:quarantine_reason, inspect(reason))
+         |> Map.put(:missing_fields, missing_fields),
+         :diagnostic_quarantined
+       )}
+    end
+  end
+
+  defp validate_proof_match(attrs, proof) do
+    mismatched =
+      proof_join_fields(proof)
+      |> Enum.filter(fn {field, proof_value} ->
+        value = Map.get(attrs, field)
+        ReleaseContractSupport.present_binary?(value) and value != proof_value
+      end)
+      |> Enum.map(fn {field, _proof_value} -> field end)
+
+    case mismatched do
+      [] -> :ok
+      fields -> {:error, {:audit_restore_join_mismatch, fields}}
+    end
+  end
+
+  defp put_proof_fields(attrs, proof) do
+    Enum.reduce(proof_join_fields(proof), attrs, fn {field, value}, acc ->
+      Map.put_new(acc, field, value)
+    end)
+  end
+
+  defp proof_join_fields(%AuditInclusionProof{} = proof) do
+    [
+      installation_ref: proof.installation_id,
+      trace_id: proof.trace_id,
+      audit_fact_id: proof.audit_fact_id,
+      checkpoint_ref: proof.checkpoint_ref,
+      release_manifest_ref: proof.release_manifest_ref
+    ]
+  end
+
+  defp quarantine_ref(attrs) do
+    case Map.get(attrs, :quarantine_ref) do
+      value when is_binary(value) and value != "" ->
+        value
+
+      _other ->
+        "quarantine:restore-audit-join:#{Map.get(attrs, :restore_request_ref, "missing")}"
+    end
+  end
+end
+
 defmodule Mezzanine.Archival.ArchivalConflict do
   @moduledoc """
   Contract for deterministic hot/cold archival conflict quarantine.

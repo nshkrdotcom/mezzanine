@@ -18,7 +18,10 @@ defmodule MezzanineAuditEngine do
   def durable_modules do
     [
       Mezzanine.Audit,
+      Mezzanine.Audit.AuditAppend,
       Mezzanine.Audit.AuditFact,
+      Mezzanine.Audit.AuditInclusionProof,
+      Mezzanine.Audit.AuditQuery,
       Mezzanine.Audit.ExecutionLineageRecord,
       Mezzanine.Audit.ExecutionLineageStore,
       Mezzanine.Audit.WorkAudit

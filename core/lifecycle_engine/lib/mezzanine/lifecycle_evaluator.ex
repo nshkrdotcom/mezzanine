@@ -9,6 +9,7 @@ defmodule Mezzanine.LifecycleEvaluator do
   """
 
   alias Ecto.{Adapters.SQL, Multi}
+  alias Mezzanine.Audit.AuditAppend
   alias Mezzanine.Execution.DispatchState
   alias Mezzanine.Execution.Repo
   alias Mezzanine.Lifecycle.Evaluator, as: PackEvaluator
@@ -147,37 +148,6 @@ defmodule Mezzanine.LifecycleEvaluator do
     $14
   )
   RETURNING id
-  """
-
-  @insert_audit_fact_sql """
-  INSERT INTO audit_facts (
-    id,
-    installation_id,
-    subject_id,
-    execution_id,
-    trace_id,
-    causation_id,
-    fact_kind,
-    actor_ref,
-    payload,
-    occurred_at,
-    inserted_at,
-    updated_at
-  )
-  VALUES (
-    gen_random_uuid(),
-    $1,
-    $2,
-    $3,
-    $4,
-    $5,
-    $6,
-    $7,
-    $8,
-    $9,
-    $9,
-    $9
-  )
   """
 
   @upsert_lineage_sql """
@@ -385,7 +355,7 @@ defmodule Mezzanine.LifecycleEvaluator do
       update_subject_lifecycle(repo, subject, to_state, now)
     end)
     |> Multi.run(:audit_lifecycle_advanced, fn repo, _changes ->
-      insert_audit_fact(
+      append_audit_fact(
         repo,
         %{
           installation_id: installation.id,
@@ -526,7 +496,7 @@ defmodule Mezzanine.LifecycleEvaluator do
         workflow_handoff(execution_id, now)
       end)
       |> Multi.run(:audit_lifecycle_advanced, fn repo, %{execution_id: execution_id} ->
-        insert_audit_fact(
+        append_audit_fact(
           repo,
           %{
             installation_id: installation.id,
@@ -548,7 +518,7 @@ defmodule Mezzanine.LifecycleEvaluator do
         )
       end)
       |> Multi.run(:audit_execution_dispatched, fn repo, changes ->
-        insert_audit_fact(
+        append_audit_fact(
           repo,
           %{
             installation_id: installation.id,
@@ -617,7 +587,7 @@ defmodule Mezzanine.LifecycleEvaluator do
       update_subject_lifecycle(repo, subject, @blocked_on_cycle_state, now)
     end)
     |> Multi.run(:audit_lifecycle_advanced, fn repo, _changes ->
-      insert_audit_fact(
+      append_audit_fact(
         repo,
         %{
           installation_id: installation.id,
@@ -639,7 +609,7 @@ defmodule Mezzanine.LifecycleEvaluator do
       )
     end)
     |> Multi.run(:audit_cycle_bound_reached, fn repo, _changes ->
-      insert_audit_fact(
+      append_audit_fact(
         repo,
         %{
           installation_id: installation.id,
@@ -973,19 +943,12 @@ defmodule Mezzanine.LifecycleEvaluator do
      }}
   end
 
-  defp insert_audit_fact(repo, audit_attrs, occurred_at) do
-    case SQL.query(repo, @insert_audit_fact_sql, [
-           audit_attrs.installation_id,
-           audit_attrs.subject_id,
-           audit_attrs.execution_id,
-           audit_attrs.trace_id,
-           audit_attrs.causation_id,
-           audit_attrs.fact_kind,
-           audit_attrs.actor_ref,
-           audit_attrs.payload,
-           occurred_at
-         ]) do
-      {:ok, _result} -> {:ok, :recorded}
+  defp append_audit_fact(repo, audit_attrs, occurred_at) do
+    audit_attrs
+    |> Map.put(:occurred_at, occurred_at)
+    |> AuditAppend.append_fact(repo: repo)
+    |> case do
+      {:ok, _fact} -> {:ok, :recorded}
       {:error, error} -> {:error, error}
     end
   end

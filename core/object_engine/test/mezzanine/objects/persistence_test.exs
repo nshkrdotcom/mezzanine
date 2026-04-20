@@ -2,7 +2,7 @@ defmodule Mezzanine.Objects.PersistenceTest do
   use Mezzanine.Objects.DataCase, async: false
 
   alias Mezzanine.Audit.AuditFact
-  alias Mezzanine.Objects.SubjectRecord
+  alias Mezzanine.Objects.{SubjectPayloadSchema, SubjectRecord}
 
   test "ingest persists subject records with installation scoping and source refs" do
     assert {:ok, subject} =
@@ -12,7 +12,14 @@ defmodule Mezzanine.Objects.PersistenceTest do
                subject_kind: "linear_coding_ticket",
                lifecycle_state: "queued",
                title: "Triage user report",
-               payload: %{priority: "high"},
+               schema_ref: SubjectPayloadSchema.default_schema_ref!("linear_coding_ticket"),
+               schema_version:
+                 SubjectPayloadSchema.default_schema_version!("linear_coding_ticket"),
+               payload: %{
+                 identifier: "linear:ticket:123",
+                 source_kind: "linear",
+                 title: "Triage user report"
+               },
                trace_id: "trace-ingest",
                causation_id: "cause-ingest",
                actor_ref: %{kind: :intake}
@@ -20,6 +27,15 @@ defmodule Mezzanine.Objects.PersistenceTest do
 
     assert subject.installation_id == "inst-1"
     assert subject.source_ref == "linear:ticket:123"
+    assert subject.schema_ref == "mezzanine.subject.linear_coding_ticket.payload.v1"
+    assert subject.schema_version == 1
+
+    assert subject.payload == %{
+             "identifier" => "linear:ticket:123",
+             "source_kind" => "linear",
+             "title" => "Triage user report"
+           }
+
     assert subject.status == "active"
     assert subject.row_version == 1
 
@@ -35,6 +51,44 @@ defmodule Mezzanine.Objects.PersistenceTest do
     assert {:ok, [audit_fact]} = AuditFact.list_trace("inst-1", "trace-ingest")
     assert audit_fact.fact_kind == :subject_ingested
     assert audit_fact.subject_id == subject.id
+    assert audit_fact.payload["schema_ref"] == subject.schema_ref
+    assert audit_fact.payload["schema_version"] == subject.schema_version
+    assert audit_fact.payload["schema_hash"] =~ "sha256:"
+  end
+
+  test "ingest rejects unbound or incompatible subject payload maps" do
+    assert {:error, missing_schema_error} =
+             SubjectRecord.ingest(%{
+               installation_id: "inst-1",
+               source_ref: "linear:ticket:missing-schema",
+               subject_kind: "linear_coding_ticket",
+               lifecycle_state: "queued",
+               payload: %{identifier: "linear:ticket:missing-schema"},
+               trace_id: "trace-missing-schema",
+               causation_id: "cause-missing-schema",
+               actor_ref: %{kind: :intake}
+             })
+
+    assert Exception.message(missing_schema_error) =~
+             "subject payload must match a source-owned schema"
+
+    assert {:error, invalid_payload_error} =
+             SubjectRecord.ingest(%{
+               installation_id: "inst-1",
+               source_ref: "linear:ticket:bad-payload",
+               subject_kind: "linear_coding_ticket",
+               lifecycle_state: "queued",
+               schema_ref: SubjectPayloadSchema.default_schema_ref!("linear_coding_ticket"),
+               schema_version:
+                 SubjectPayloadSchema.default_schema_version!("linear_coding_ticket"),
+               payload: %{identifier: 123},
+               trace_id: "trace-bad-payload",
+               causation_id: "cause-bad-payload",
+               actor_ref: %{kind: :intake}
+             })
+
+    assert Exception.message(invalid_payload_error) =~
+             "subject payload must match a source-owned schema"
   end
 
   test "pause, resume, and cancel mutate durable operator status without rewriting lifecycle truth" do
@@ -44,6 +98,9 @@ defmodule Mezzanine.Objects.PersistenceTest do
                source_ref: "linear:ticket:operator-status",
                subject_kind: "linear_coding_ticket",
                lifecycle_state: "awaiting_execution",
+               schema_ref: SubjectPayloadSchema.default_schema_ref!("linear_coding_ticket"),
+               schema_version:
+                 SubjectPayloadSchema.default_schema_version!("linear_coding_ticket"),
                payload: %{},
                trace_id: "trace-status-bootstrap",
                causation_id: "cause-status-bootstrap",
@@ -104,6 +161,9 @@ defmodule Mezzanine.Objects.PersistenceTest do
                source_ref: "linear:ticket:456",
                subject_kind: "linear_coding_ticket",
                lifecycle_state: "queued",
+               schema_ref: SubjectPayloadSchema.default_schema_ref!("linear_coding_ticket"),
+               schema_version:
+                 SubjectPayloadSchema.default_schema_version!("linear_coding_ticket"),
                payload: %{},
                trace_id: "trace-bootstrap",
                causation_id: "cause-bootstrap",
@@ -143,6 +203,9 @@ defmodule Mezzanine.Objects.PersistenceTest do
                source_ref: "linear:ticket:789",
                subject_kind: "linear_coding_ticket",
                lifecycle_state: "awaiting_decision",
+               schema_ref: SubjectPayloadSchema.default_schema_ref!("linear_coding_ticket"),
+               schema_version:
+                 SubjectPayloadSchema.default_schema_version!("linear_coding_ticket"),
                payload: %{},
                trace_id: "trace-block-bootstrap",
                causation_id: "cause-block-bootstrap",

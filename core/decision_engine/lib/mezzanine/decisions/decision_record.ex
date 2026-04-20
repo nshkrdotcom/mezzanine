@@ -7,7 +7,7 @@ defmodule Mezzanine.Decisions.DecisionRecord do
     domain: Mezzanine.Decisions,
     data_layer: AshPostgres.DataLayer
 
-  alias Mezzanine.Audit.AuditFact
+  alias Mezzanine.Audit.AuditAppend
 
   @resolved_states ["resolved", "waived", "expired"]
 
@@ -69,7 +69,7 @@ defmodule Mezzanine.Decisions.DecisionRecord do
 
       change(
         after_action(fn changeset, decision, _context ->
-          record_audit_fact(
+          append_audit_fact(
             decision,
             Ash.Changeset.get_argument(changeset, :actor_ref),
             :decision_created,
@@ -107,7 +107,7 @@ defmodule Mezzanine.Decisions.DecisionRecord do
 
       change(
         after_action(fn changeset, decision, _context ->
-          record_audit_fact(
+          append_audit_fact(
             decision,
             Ash.Changeset.get_argument(changeset, :actor_ref),
             :decision_resolved,
@@ -144,7 +144,7 @@ defmodule Mezzanine.Decisions.DecisionRecord do
 
       change(
         after_action(fn changeset, decision, _context ->
-          record_audit_fact(
+          append_audit_fact(
             decision,
             Ash.Changeset.get_argument(changeset, :actor_ref),
             :decision_waived,
@@ -179,7 +179,7 @@ defmodule Mezzanine.Decisions.DecisionRecord do
 
       change(
         after_action(fn changeset, decision, _context ->
-          record_audit_fact(
+          append_audit_fact(
             decision,
             Ash.Changeset.get_argument(changeset, :actor_ref),
             :decision_escalated,
@@ -215,7 +215,7 @@ defmodule Mezzanine.Decisions.DecisionRecord do
 
       change(
         after_action(fn changeset, decision, _context ->
-          record_audit_fact(
+          append_audit_fact(
             decision,
             Ash.Changeset.get_argument(changeset, :actor_ref),
             :decision_expired,
@@ -375,19 +375,22 @@ defmodule Mezzanine.Decisions.DecisionRecord do
     overdue(installation_id, now)
   end
 
-  defp record_audit_fact(decision, actor_ref, fact_kind, payload) do
-    AuditFact.record(%{
-      installation_id: decision.installation_id,
-      subject_id: decision.subject_id,
-      execution_id: decision.execution_id,
-      decision_id: decision.id,
-      trace_id: decision.trace_id,
-      causation_id: decision.causation_id,
-      fact_kind: fact_kind,
-      actor_ref: actor_ref,
-      payload: payload,
-      occurred_at: DateTime.utc_now()
-    })
+  defp append_audit_fact(decision, actor_ref, fact_kind, payload) do
+    AuditAppend.append_fact(
+      %{
+        installation_id: decision.installation_id,
+        subject_id: decision.subject_id,
+        execution_id: decision.execution_id,
+        decision_id: decision.id,
+        trace_id: decision.trace_id,
+        causation_id: decision.causation_id,
+        fact_kind: fact_kind,
+        actor_ref: actor_ref,
+        payload: payload,
+        occurred_at: DateTime.utc_now()
+      },
+      []
+    )
   end
 
   defp workflow_timer_ref(%{required_by: nil}), do: nil

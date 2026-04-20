@@ -17,6 +17,8 @@ defmodule Mezzanine.Decisions.DecisionCommandsBoundaryTest do
 
     refute source =~ "Ecto.Adapters.SQL"
     refute source =~ "Mezzanine.Execution.Repo"
+    refute source =~ "AuditFact"
+    assert source =~ "AuditQuery.decision_terminal_resolution_attempts"
 
     for token <- @forbidden_sql_tokens do
       refute source =~ token

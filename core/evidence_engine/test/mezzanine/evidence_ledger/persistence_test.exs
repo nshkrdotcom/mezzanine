@@ -120,6 +120,8 @@ defmodule Mezzanine.EvidenceLedger.PersistenceTest do
       source_ref: source_ref,
       subject_kind: "linear_coding_ticket",
       lifecycle_state: "queued",
+      schema_ref: "mezzanine.subject.linear_coding_ticket.payload.v1",
+      schema_version: 1,
       payload: %{},
       trace_id: "trace-subject-#{source_ref}",
       causation_id: "cause-subject-#{source_ref}",

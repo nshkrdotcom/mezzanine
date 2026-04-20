@@ -5,6 +5,7 @@ defmodule Mezzanine.OperatorCommands do
 
   alias Ecto.Adapters.SQL
   alias Ecto.UUID
+  alias Mezzanine.Audit.AuditAppend
   alias Mezzanine.Execution.DispatchState
   alias Mezzanine.Execution.Repo
   alias Mezzanine.Leasing
@@ -57,37 +58,6 @@ defmodule Mezzanine.OperatorCommands do
   WHERE subject_id = $1::uuid
     AND dispatch_state = ANY($6)
   RETURNING id
-  """
-
-  @insert_audit_fact_sql """
-  INSERT INTO audit_facts (
-    id,
-    installation_id,
-    subject_id,
-    execution_id,
-    trace_id,
-    causation_id,
-    fact_kind,
-    actor_ref,
-    payload,
-    occurred_at,
-    inserted_at,
-    updated_at
-  )
-  VALUES (
-    gen_random_uuid(),
-    $1,
-    $2::uuid,
-    $3::uuid,
-    $4,
-    $5,
-    $6,
-    $7,
-    $8,
-    $9,
-    $9,
-    $9
-  )
   """
 
   @type result :: {:ok, map()} | {:error, term()}
@@ -326,7 +296,7 @@ defmodule Mezzanine.OperatorCommands do
   end
 
   defp record_subject_paused(updated_subject, workflow_signal_refs, opts, now) do
-    insert_audit_fact(%{
+    append_audit_fact(%{
       installation_id: updated_subject.installation_id,
       subject_id: updated_subject.id,
       execution_id: nil,
@@ -345,7 +315,7 @@ defmodule Mezzanine.OperatorCommands do
   end
 
   defp record_subject_resumed(updated_subject, workflow_signal_refs, opts, now) do
-    insert_audit_fact(%{
+    append_audit_fact(%{
       installation_id: updated_subject.installation_id,
       subject_id: updated_subject.id,
       execution_id: nil,
@@ -373,7 +343,7 @@ defmodule Mezzanine.OperatorCommands do
        ) do
     Enum.each(cancelled_execution_ids, fn execution_id ->
       :ok =
-        insert_audit_fact(%{
+        append_audit_fact(%{
           installation_id: subject.installation_id,
           subject_id: subject.id,
           execution_id: execution_id,
@@ -393,7 +363,7 @@ defmodule Mezzanine.OperatorCommands do
   end
 
   defp record_subject_cancelled(updated_subject, audit_context) do
-    insert_audit_fact(%{
+    append_audit_fact(%{
       installation_id: updated_subject.installation_id,
       subject_id: updated_subject.id,
       execution_id: nil,
@@ -518,19 +488,9 @@ defmodule Mezzanine.OperatorCommands do
     |> Enum.map(fn execution -> "workflow-signal://#{signal_name}/#{execution.id}" end)
   end
 
-  defp insert_audit_fact(attrs) do
-    case SQL.query(Repo, @insert_audit_fact_sql, [
-           attrs.installation_id,
-           dump_uuid!(attrs.subject_id),
-           maybe_dump_uuid(attrs.execution_id),
-           attrs.trace_id,
-           attrs.causation_id,
-           attrs.fact_kind,
-           attrs.actor_ref,
-           normalize_map(attrs.payload),
-           attrs.occurred_at
-         ]) do
-      {:ok, _result} -> :ok
+  defp append_audit_fact(attrs) do
+    case AuditAppend.append_fact(attrs, repo: Repo) do
+      {:ok, _fact} -> :ok
       {:error, error} -> Repo.rollback(error)
     end
   end
@@ -601,7 +561,4 @@ defmodule Mezzanine.OperatorCommands do
   defp normalize_uuid(value), do: value
 
   defp dump_uuid!(uuid), do: UUID.dump!(uuid)
-  defp maybe_dump_uuid(nil), do: nil
-  defp maybe_dump_uuid(uuid) when is_binary(uuid) and byte_size(uuid) == 16, do: uuid
-  defp maybe_dump_uuid(uuid), do: dump_uuid!(uuid)
 end

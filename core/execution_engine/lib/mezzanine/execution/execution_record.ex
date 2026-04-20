@@ -7,7 +7,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
     domain: Mezzanine.Execution,
     data_layer: AshPostgres.DataLayer
 
-  alias Mezzanine.Audit.{AuditFact, ExecutionLineage, ExecutionLineageStore}
+  alias Mezzanine.Audit.{AuditAppend, ExecutionLineage, ExecutionLineageStore}
   alias Mezzanine.Execution.{DispatchState, Repo}
 
   @active_dispatch_states DispatchState.active_states()
@@ -119,7 +119,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
         after_action(fn changeset, execution, _context ->
           with {:ok, _lineage} <- store_lineage_update(execution),
                {:ok, _fact} <-
-                 record_audit_fact(
+                 append_audit_fact(
                    execution,
                    Ash.Changeset.get_argument(changeset, :actor_ref),
                    :execution_dispatched,
@@ -158,7 +158,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
       change(
         after_action(fn changeset, execution, _context ->
           with {:ok, _fact} <-
-                 record_audit_fact(
+                 append_audit_fact(
                    execution,
                    Ash.Changeset.get_argument(changeset, :actor_ref),
                    :execution_failed,
@@ -195,7 +195,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
       change(
         after_action(fn changeset, execution, _context ->
           with {:ok, _fact} <-
-                 record_audit_fact(
+                 append_audit_fact(
                    execution,
                    Ash.Changeset.get_argument(changeset, :actor_ref),
                    :execution_failed,
@@ -240,7 +240,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
                    artifact_refs: Ash.Changeset.get_argument(changeset, :artifact_refs)
                  ),
                {:ok, _fact} <-
-                 record_audit_fact(
+                 append_audit_fact(
                    execution,
                    Ash.Changeset.get_argument(changeset, :actor_ref),
                    :execution_completed,
@@ -287,7 +287,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
                    artifact_refs: Ash.Changeset.get_argument(changeset, :artifact_refs)
                  ),
                {:ok, _fact} <-
-                 record_audit_fact(
+                 append_audit_fact(
                    execution,
                    Ash.Changeset.get_argument(changeset, :actor_ref),
                    :execution_failed,
@@ -335,7 +335,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
                    artifact_refs: Ash.Changeset.get_argument(changeset, :artifact_refs)
                  ),
                {:ok, _fact} <-
-                 record_audit_fact(
+                 append_audit_fact(
                    execution,
                    Ash.Changeset.get_argument(changeset, :actor_ref),
                    :execution_cancelled,
@@ -377,7 +377,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
       change(
         after_action(fn changeset, execution, _context ->
           with {:ok, _fact} <-
-                 record_audit_fact(
+                 append_audit_fact(
                    execution,
                    Ash.Changeset.get_argument(changeset, :actor_ref),
                    :execution_cancelled,
@@ -415,7 +415,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
       change(
         after_action(fn changeset, execution, _context ->
           with {:ok, _fact} <-
-                 record_audit_fact(
+                 append_audit_fact(
                    execution,
                    Ash.Changeset.get_argument(changeset, :actor_ref),
                    :execution_recovered,
@@ -451,7 +451,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
       change(
         after_action(fn changeset, execution, _context ->
           with {:ok, _fact} <-
-                 record_audit_fact(
+                 append_audit_fact(
                    execution,
                    Ash.Changeset.get_argument(changeset, :actor_ref),
                    :execution_failed,
@@ -489,7 +489,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
       change(
         after_action(fn changeset, execution, _context ->
           with {:ok, _fact} <-
-                 record_audit_fact(
+                 append_audit_fact(
                    execution,
                    Ash.Changeset.get_argument(changeset, :actor_ref),
                    :execution_failed,
@@ -670,7 +670,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
         Ash.Notifier.notify(notifications)
 
         with {:ok, _lineage} <- store_lineage(execution),
-             {:ok, _fact} <- record_dispatch_audit_fact(execution, actor_ref) do
+             {:ok, _fact} <- append_dispatch_audit_fact(execution, actor_ref) do
           {:ok, execution}
         end
 
@@ -806,18 +806,21 @@ defmodule Mezzanine.Execution.ExecutionRecord do
 
   defp lineage_missing?(_error), do: false
 
-  defp record_audit_fact(execution, actor_ref, fact_kind, payload) do
-    AuditFact.record(%{
-      installation_id: execution.installation_id,
-      subject_id: execution.subject_id,
-      execution_id: execution.id,
-      trace_id: execution.trace_id,
-      causation_id: execution.causation_id,
-      fact_kind: fact_kind,
-      actor_ref: actor_ref,
-      payload: payload,
-      occurred_at: DateTime.utc_now()
-    })
+  defp append_audit_fact(execution, actor_ref, fact_kind, payload) do
+    AuditAppend.append_fact(
+      %{
+        installation_id: execution.installation_id,
+        subject_id: execution.subject_id,
+        execution_id: execution.id,
+        trace_id: execution.trace_id,
+        causation_id: execution.causation_id,
+        fact_kind: fact_kind,
+        actor_ref: actor_ref,
+        payload: payload,
+        occurred_at: DateTime.utc_now()
+      },
+      []
+    )
   end
 
   defp create_dispatch_record_for_workflow(create_attrs) do
@@ -849,8 +852,8 @@ defmodule Mezzanine.Execution.ExecutionRecord do
     )
   end
 
-  defp record_dispatch_audit_fact(execution, actor_ref) do
-    record_audit_fact(
+  defp append_dispatch_audit_fact(execution, actor_ref) do
+    append_audit_fact(
       execution,
       actor_ref,
       :execution_dispatched,
