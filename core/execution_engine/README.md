@@ -33,6 +33,9 @@ This package now owns the Phase `2.4.4` durable execution slice:
   unless ops-domain source registers a specific authority policy
 - durable `LifecycleContinuation` records for post-commit lifecycle work that
   must retry, dead-letter, or be waived without recursive transactions
+- `LifecycleContinuation.process/2` dispatch restricted to declared
+  owner-command or workflow-signal targets recorded on the continuation;
+  anonymous callback handlers are rejected before claim
 
 Primary modules:
 

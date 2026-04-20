@@ -77,6 +77,12 @@ defmodule Mezzanine.Execution.LifecycleContinuation do
   @terminal_error_classes ["invalid_transition", "retry_budget_exhausted", "operator_waived"]
   @default_max_attempts 3
   @default_backoff_ms 5_000
+  @target_key "continuation_target"
+  @target_kinds ["owner_command", "workflow_signal"]
+  @target_required_fields %{
+    "owner_command" => ["owner", "command", "idempotency_key"],
+    "workflow_signal" => ["workflow_id", "signal", "idempotency_key"]
+  }
 
   @spec changeset(t(), map()) :: Ecto.Changeset.t()
   def changeset(%__MODULE__{} = continuation, attrs) when is_map(attrs) do
@@ -171,21 +177,26 @@ defmodule Mezzanine.Execution.LifecycleContinuation do
           | {:error, term()}
   def process(continuation_id, opts \\ []) when is_binary(continuation_id) and is_list(opts) do
     now = Keyword.get(opts, :now, DateTime.utc_now() |> DateTime.truncate(:microsecond))
-    handler = Keyword.fetch!(opts, :handler)
 
-    case claim_for_processing(continuation_id, now) do
-      {:ok, %__MODULE__{} = continuation} ->
-        case handler.(continuation) do
-          :ok -> mark_completed(continuation, now)
-          {:ok, _result} -> mark_completed(continuation, now)
-          {:error, reason} -> record_failure(continuation, reason, now, opts)
-        end
+    with {:ok, dispatcher} <- fetch_dispatcher(opts) do
+      case claim_for_processing(continuation_id, now) do
+        {:ok, %__MODULE__{} = continuation} ->
+          dispatch_continuation(dispatcher, continuation, now, opts)
 
-      {:ok, terminal_status} ->
-        {:ok, terminal_status}
+        {:ok, terminal_status} ->
+          {:ok, terminal_status}
 
-      {:error, reason} ->
-        {:error, reason}
+        {:error, reason} ->
+          {:error, reason}
+      end
+    end
+  end
+
+  @spec dispatch_target(t()) :: {:ok, map()} | {:error, term()}
+  def dispatch_target(%__MODULE__{metadata: metadata}) do
+    case map_value(metadata, @target_key) do
+      %{} = target -> normalize_target(target)
+      _missing -> {:error, :missing_lifecycle_continuation_target}
     end
   end
 
@@ -284,6 +295,73 @@ defmodule Mezzanine.Execution.LifecycleContinuation do
 
   defp ensure_retryable_operator_state(%__MODULE__{status: status}),
     do: {:error, {:continuation_not_retryable, status}}
+
+  defp fetch_dispatcher(opts) do
+    case Keyword.get(opts, :dispatcher) do
+      nil ->
+        {:error, :missing_lifecycle_continuation_dispatcher}
+
+      dispatcher when is_atom(dispatcher) ->
+        if function_exported?(dispatcher, :dispatch_lifecycle_continuation, 2) do
+          {:ok, dispatcher}
+        else
+          {:error, {:invalid_lifecycle_continuation_dispatcher, dispatcher}}
+        end
+
+      _missing ->
+        {:error, :missing_lifecycle_continuation_dispatcher}
+    end
+  end
+
+  defp dispatch_continuation(dispatcher, %__MODULE__{} = continuation, now, opts) do
+    case dispatch_target(continuation) do
+      {:ok, target} ->
+        case dispatcher.dispatch_lifecycle_continuation(continuation, target) do
+          :ok -> mark_completed(continuation, now)
+          {:ok, _result} -> mark_completed(continuation, now)
+          {:error, reason} -> record_failure(continuation, reason, now, opts)
+        end
+
+      {:error, reason} ->
+        record_failure(continuation, {:invalid_transition, reason}, now, opts)
+    end
+  end
+
+  defp normalize_target(target) when is_map(target) do
+    normalized = Map.new(target, fn {key, value} -> {to_string(key), value} end)
+
+    with {:ok, kind} <- normalize_target_kind(Map.get(normalized, "kind")),
+         :ok <- ensure_target_fields(kind, normalized) do
+      {:ok, Map.put(normalized, "kind", kind)}
+    end
+  end
+
+  defp normalize_target_kind(kind) when is_atom(kind),
+    do: normalize_target_kind(Atom.to_string(kind))
+
+  defp normalize_target_kind(kind) when kind in @target_kinds, do: {:ok, kind}
+
+  defp normalize_target_kind(kind),
+    do: {:error, {:invalid_lifecycle_continuation_target_kind, kind}}
+
+  defp ensure_target_fields(kind, target) do
+    missing =
+      @target_required_fields
+      |> Map.fetch!(kind)
+      |> Enum.reject(&present_binary?(Map.get(target, &1)))
+
+    case missing do
+      [] -> :ok
+      _ -> {:error, {:missing_lifecycle_continuation_target_fields, kind, missing}}
+    end
+  end
+
+  defp present_binary?(value), do: is_binary(value) and byte_size(value) > 0
+
+  defp map_value(map, @target_key) when is_map(map),
+    do: Map.get(map, @target_key) || Map.get(map, :continuation_target)
+
+  defp map_value(_map, _key), do: nil
 
   defp mark_completed(%__MODULE__{} = continuation, now) do
     continuation

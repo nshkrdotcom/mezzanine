@@ -5,13 +5,45 @@ defmodule Mezzanine.Execution.LifecycleContinuationTest do
 
   @now ~U[2026-04-18 19:00:00Z]
 
+  defmodule LockTimeoutDispatcher do
+    def dispatch_lifecycle_continuation(_continuation, %{"kind" => "owner_command"}),
+      do: {:error, :lock_timeout}
+  end
+
+  defmodule InvalidTransitionDispatcher do
+    def dispatch_lifecycle_continuation(_continuation, %{"kind" => "owner_command"}),
+      do: {:error, {:invalid_transition, "bad-target"}}
+  end
+
+  defmodule OkOwnerCommandDispatcher do
+    def dispatch_lifecycle_continuation(_continuation, %{"kind" => "owner_command"}), do: :ok
+  end
+
+  defmodule OkWorkflowSignalDispatcher do
+    def dispatch_lifecycle_continuation(_continuation, %{"kind" => "workflow_signal"}), do: :ok
+  end
+
+  test "anonymous handlers are rejected before a continuation is claimed" do
+    continuation = continuation_fixture!("anonymous")
+
+    assert {:error, :missing_lifecycle_continuation_dispatcher} =
+             LifecycleContinuation.process(continuation.continuation_id,
+               now: @now,
+               handler: fn _continuation -> flunk("anonymous handler should not run") end
+             )
+
+    assert {:ok, fetched} = LifecycleContinuation.fetch(continuation.continuation_id)
+    assert fetched.status == :pending
+    assert fetched.attempt_count == 0
+  end
+
   test "transient failures schedule retry with operator-visible diagnostics" do
     continuation = continuation_fixture!("transient")
 
     assert {:ok, retry} =
              LifecycleContinuation.process(continuation.continuation_id,
                now: @now,
-               handler: fn _continuation -> {:error, :lock_timeout} end,
+               dispatcher: LockTimeoutDispatcher,
                backoff_ms: 10_000
              )
 
@@ -35,12 +67,48 @@ defmodule Mezzanine.Execution.LifecycleContinuationTest do
     assert {:ok, dead_lettered} =
              LifecycleContinuation.process(continuation.continuation_id,
                now: @now,
-               handler: fn _continuation -> {:error, {:invalid_transition, "bad-target"}} end
+               dispatcher: InvalidTransitionDispatcher
              )
 
     assert dead_lettered.status == :dead_lettered
     assert dead_lettered.attempt_count == 1
     assert dead_lettered.last_error_class == "invalid_transition"
+  end
+
+  test "continuations without a declared target dead-letter instead of running dispatcher code" do
+    continuation = continuation_fixture!("missing-target", metadata: %{})
+
+    assert {:ok, dead_lettered} =
+             LifecycleContinuation.process(continuation.continuation_id,
+               now: @now,
+               dispatcher: OkOwnerCommandDispatcher
+             )
+
+    assert dead_lettered.status == :dead_lettered
+    assert dead_lettered.last_error_class == "invalid_transition"
+    assert dead_lettered.last_error_message =~ "missing_lifecycle_continuation_target"
+  end
+
+  test "workflow signal targets are explicit declared dispatch targets" do
+    continuation =
+      continuation_fixture!("workflow-signal",
+        metadata: %{
+          "continuation_target" => %{
+            "kind" => "workflow_signal",
+            "workflow_id" => "workflow-execution-1",
+            "signal" => "execution_completed",
+            "idempotency_key" => "continuation-workflow-signal"
+          }
+        }
+      )
+
+    assert {:ok, completed} =
+             LifecycleContinuation.process(continuation.continuation_id,
+               now: @now,
+               dispatcher: OkWorkflowSignalDispatcher
+             )
+
+    assert completed.status == :completed
   end
 
   test "operator retry moves one dead-lettered continuation back to pending and completes once" do
@@ -49,7 +117,7 @@ defmodule Mezzanine.Execution.LifecycleContinuationTest do
     assert {:ok, dead_lettered} =
              LifecycleContinuation.process(continuation.continuation_id,
                now: @now,
-               handler: fn _continuation -> {:error, :invalid_transition} end
+               dispatcher: InvalidTransitionDispatcher
              )
 
     assert dead_lettered.status == :dead_lettered
@@ -65,7 +133,7 @@ defmodule Mezzanine.Execution.LifecycleContinuationTest do
     assert {:ok, completed} =
              LifecycleContinuation.process(retryable.continuation_id,
                now: DateTime.add(@now, 2, :second),
-               handler: fn _continuation -> :ok end
+               dispatcher: OkOwnerCommandDispatcher
              )
 
     assert completed.status == :completed
@@ -73,11 +141,11 @@ defmodule Mezzanine.Execution.LifecycleContinuationTest do
     assert {:ok, :already_completed} =
              LifecycleContinuation.process(completed.continuation_id,
                now: DateTime.add(@now, 3, :second),
-               handler: fn _continuation -> flunk("completed continuation processed twice") end
+               dispatcher: OkOwnerCommandDispatcher
              )
   end
 
-  defp continuation_fixture!(suffix) do
+  defp continuation_fixture!(suffix, opts \\ []) do
     {:ok, continuation} =
       LifecycleContinuation.enqueue(%{
         continuation_id: "continuation-#{suffix}",
@@ -90,9 +158,21 @@ defmodule Mezzanine.Execution.LifecycleContinuationTest do
         next_attempt_at: @now,
         trace_id: "trace-#{suffix}",
         status: :pending,
-        actor_ref: %{"kind" => "test"}
+        actor_ref: %{"kind" => "test"},
+        metadata: Keyword.get(opts, :metadata, owner_command_metadata(suffix))
       })
 
     continuation
+  end
+
+  defp owner_command_metadata(suffix) do
+    %{
+      "continuation_target" => %{
+        "kind" => "owner_command",
+        "owner" => "object_lifecycle",
+        "command" => "advance_after_execution",
+        "idempotency_key" => "continuation-#{suffix}"
+      }
+    }
   end
 end
