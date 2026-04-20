@@ -36,6 +36,9 @@ This package now owns the Phase `2.4.4` durable execution slice:
 - `LifecycleContinuation.process/2` dispatch restricted to declared
   owner-command or workflow-signal targets recorded on the continuation;
   anonymous callback handlers are rejected before claim
+- source-owned owner-directed compensation profile fields via
+  `Mezzanine.Execution.OwnerDirectedCompensation`; this is a validation
+  profile, not a saga runner or multi-context rollback worker
 
 Primary modules:
 
@@ -47,3 +50,4 @@ Primary modules:
 - `Mezzanine.OperatorActions`
 - `Mezzanine.Reviews`
 - `Mezzanine.Execution.LifecycleContinuation`
+- `Mezzanine.Execution.OwnerDirectedCompensation`
