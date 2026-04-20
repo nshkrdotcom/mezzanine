@@ -8,8 +8,12 @@ This package now owns the Phase `2.4.5` durable decision slice:
 - explicit pending, resolved, waived, escalated, and expired review state
 - subject and execution linkage for review truth
 - SLA-aware overdue reads for scheduler ownership
+- a single terminal-resolution command facade for `decide`, `accept`,
+  `reject`, `waive`, `expire`, and `escalate` attempts, backed by
+  `DecisionRecord` owner actions and audit-owned attempt evidence
 
 Primary modules:
 
 - `Mezzanine.Decisions`
 - `Mezzanine.Decisions.DecisionRecord`
+- `Mezzanine.DecisionCommands`

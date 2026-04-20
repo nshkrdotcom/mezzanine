@@ -7,7 +7,10 @@ defmodule Mezzanine.DecisionCommands do
   and their optimistic row-version lock.
   """
 
+  alias Mezzanine.Audit.AuditFact
   alias Mezzanine.Decisions.DecisionRecord
+
+  @terminal_actions [:decide, :waive, :expire, :accept, :reject, :escalate]
 
   @spec create_pending(map()) :: {:ok, DecisionRecord.t()} | {:error, term()}
   def create_pending(attrs) when is_map(attrs) do
@@ -47,46 +50,130 @@ defmodule Mezzanine.DecisionCommands do
   @spec decide(DecisionRecord.t() | String.t(), map()) ::
           {:ok, DecisionRecord.t()} | {:error, term()}
   def decide(decision_or_id, attrs) when is_map(attrs) do
-    with {:ok, decision} <- load_current_decision(decision_or_id),
-         :ok <- ensure_pending(decision) do
-      DecisionRecord.decide(decision, %{
-        decision_value: fetch_required!(attrs, :decision_value),
-        reason: map_value(attrs, :reason),
-        trace_id: fetch_required!(attrs, :trace_id),
-        causation_id: fetch_required!(attrs, :causation_id),
-        actor_ref: normalize_map(fetch_required!(attrs, :actor_ref))
-      })
-    end
+    resolve_terminal(decision_or_id, :decide, attrs)
+  end
+
+  @spec accept(DecisionRecord.t() | String.t(), map()) ::
+          {:ok, DecisionRecord.t()} | {:error, term()}
+  def accept(decision_or_id, attrs) when is_map(attrs) do
+    resolve_terminal(decision_or_id, :accept, attrs)
+  end
+
+  @spec reject(DecisionRecord.t() | String.t(), map()) ::
+          {:ok, DecisionRecord.t()} | {:error, term()}
+  def reject(decision_or_id, attrs) when is_map(attrs) do
+    resolve_terminal(decision_or_id, :reject, attrs)
   end
 
   @spec waive(DecisionRecord.t() | String.t(), map()) ::
           {:ok, DecisionRecord.t()} | {:error, term()}
   def waive(decision_or_id, attrs) when is_map(attrs) do
-    with {:ok, decision} <- load_current_decision(decision_or_id),
-         :ok <- ensure_pending(decision) do
-      DecisionRecord.waive(decision, %{
-        reason: map_value(attrs, :reason),
-        trace_id: fetch_required!(attrs, :trace_id),
-        causation_id: fetch_required!(attrs, :causation_id),
-        actor_ref: normalize_map(fetch_required!(attrs, :actor_ref))
-      })
-    end
+    resolve_terminal(decision_or_id, :waive, attrs)
+  end
+
+  @spec escalate(DecisionRecord.t() | String.t(), map()) ::
+          {:ok, DecisionRecord.t()} | {:error, term()}
+  def escalate(decision_or_id, attrs) when is_map(attrs) do
+    resolve_terminal(decision_or_id, :escalate, attrs)
   end
 
   @spec expire(DecisionRecord.t() | String.t(), map(), keyword()) ::
           {:ok, DecisionRecord.t()} | {:error, term()}
   def expire(decision_or_id, attrs, opts \\ []) when is_map(attrs) and is_list(opts) do
+    resolve_terminal(decision_or_id, :expire, attrs, opts)
+  end
+
+  @spec resolve_terminal(DecisionRecord.t() | String.t(), atom() | String.t(), map(), keyword()) ::
+          {:ok, DecisionRecord.t()} | {:error, term()}
+  def resolve_terminal(decision_or_id, action, attrs, opts \\ [])
+      when is_map(attrs) and is_list(opts) do
+    action = normalize_terminal_action!(action)
     current_job_id = Keyword.get(opts, :current_job_id)
 
     with {:ok, decision} <- load_current_decision(decision_or_id),
-         :ok <- ensure_pending(decision),
-         :ok <- reject_legacy_expiry_job_ref(decision, current_job_id) do
-      DecisionRecord.expire(decision, %{
-        reason: map_value(attrs, :reason),
-        trace_id: fetch_required!(attrs, :trace_id),
-        causation_id: fetch_required!(attrs, :causation_id),
-        actor_ref: normalize_map(fetch_required!(attrs, :actor_ref))
-      })
+         :ok <- ensure_pending_or_record_conflict(decision, action, attrs),
+         :ok <- reject_legacy_expiry_job_ref(decision, action, current_job_id) do
+      decision
+      |> apply_terminal_action(action, attrs)
+      |> record_terminal_attempt(decision, action, attrs)
+    end
+  end
+
+  defp normalize_terminal_action!(action) when is_atom(action) and action in @terminal_actions,
+    do: action
+
+  defp normalize_terminal_action!(action) when is_binary(action) do
+    case String.downcase(String.trim(action)) do
+      "decide" -> :decide
+      "waive" -> :waive
+      "expire" -> :expire
+      "accept" -> :accept
+      "reject" -> :reject
+      "escalate" -> :escalate
+      other -> raise(ArgumentError, "unsupported decision terminal action #{inspect(other)}")
+    end
+  end
+
+  defp normalize_terminal_action!(action),
+    do: raise(ArgumentError, "unsupported decision terminal action #{inspect(action)}")
+
+  defp apply_terminal_action(%DecisionRecord{} = decision, action, attrs)
+       when action in [:decide, :accept, :reject] do
+    DecisionRecord.decide(decision, %{
+      decision_value: requested_decision(action, attrs),
+      reason: map_value(attrs, :reason),
+      trace_id: fetch_required!(attrs, :trace_id),
+      causation_id: fetch_required!(attrs, :causation_id),
+      actor_ref: normalize_map(fetch_required!(attrs, :actor_ref))
+    })
+  end
+
+  defp apply_terminal_action(%DecisionRecord{} = decision, :waive, attrs) do
+    DecisionRecord.waive(decision, %{
+      reason: map_value(attrs, :reason),
+      trace_id: fetch_required!(attrs, :trace_id),
+      causation_id: fetch_required!(attrs, :causation_id),
+      actor_ref: normalize_map(fetch_required!(attrs, :actor_ref))
+    })
+  end
+
+  defp apply_terminal_action(%DecisionRecord{} = decision, :expire, attrs) do
+    DecisionRecord.expire(decision, %{
+      reason: map_value(attrs, :reason),
+      trace_id: fetch_required!(attrs, :trace_id),
+      causation_id: fetch_required!(attrs, :causation_id),
+      actor_ref: normalize_map(fetch_required!(attrs, :actor_ref))
+    })
+  end
+
+  defp apply_terminal_action(%DecisionRecord{} = decision, :escalate, attrs) do
+    DecisionRecord.escalate(decision, %{
+      reason: fetch_required!(attrs, :reason),
+      trace_id: fetch_required!(attrs, :trace_id),
+      causation_id: fetch_required!(attrs, :causation_id),
+      actor_ref: normalize_map(fetch_required!(attrs, :actor_ref))
+    })
+  end
+
+  defp record_terminal_attempt(
+         {:ok, %DecisionRecord{} = updated_decision},
+         decision,
+         action,
+         attrs
+       ) do
+    with {:ok, _fact} <-
+           append_terminal_attempt(decision, updated_decision, action, attrs, :accepted) do
+      {:ok, updated_decision}
+    end
+  end
+
+  defp record_terminal_attempt({:error, error}, decision, action, attrs) do
+    observed_decision = reload_decision(decision)
+    outcome = failed_terminal_outcome(error, observed_decision, action, attrs)
+
+    with {:ok, _fact} <-
+           append_terminal_attempt(decision, observed_decision, action, attrs, outcome, error) do
+      {:error, {:decision_terminal_resolution_failed, error, outcome}}
     end
   end
 
@@ -105,7 +192,22 @@ defmodule Mezzanine.DecisionCommands do
   defp ensure_pending(%DecisionRecord{lifecycle_state: lifecycle_state}),
     do: {:error, {:decision_not_pending, lifecycle_state}}
 
-  defp reject_legacy_expiry_job_ref(decision, current_job_id) do
+  defp ensure_pending_or_record_conflict(%DecisionRecord{} = decision, action, attrs) do
+    case ensure_pending(decision) do
+      :ok ->
+        :ok
+
+      {:error, error} ->
+        outcome = failed_terminal_outcome(error, decision, action, attrs)
+
+        with {:ok, _fact} <-
+               append_terminal_attempt(decision, decision, action, attrs, outcome, error) do
+          {:error, {:decision_terminal_resolution_failed, error, outcome}}
+        end
+    end
+  end
+
+  defp reject_legacy_expiry_job_ref(decision, :expire, current_job_id) do
     case Map.get(decision, :expiry_job_id) do
       nil ->
         :ok
@@ -114,6 +216,154 @@ defmodule Mezzanine.DecisionCommands do
         {:error, {:legacy_decision_expiry_job_ref_present, expiry_job_id, current_job_id}}
     end
   end
+
+  defp reject_legacy_expiry_job_ref(_decision, _action, _current_job_id), do: :ok
+
+  defp append_terminal_attempt(
+         %DecisionRecord{} = original_decision,
+         %DecisionRecord{} = observed_decision,
+         action,
+         attrs,
+         outcome,
+         error \\ nil
+       ) do
+    AuditFact.record(%{
+      installation_id: original_decision.installation_id,
+      subject_id: original_decision.subject_id,
+      execution_id: original_decision.execution_id,
+      decision_id: original_decision.id,
+      trace_id: fetch_required!(attrs, :trace_id),
+      causation_id: fetch_required!(attrs, :causation_id),
+      fact_kind: :decision_terminal_resolution_attempt,
+      actor_ref: normalize_map(fetch_required!(attrs, :actor_ref)),
+      payload:
+        terminal_attempt_payload(
+          original_decision,
+          observed_decision,
+          action,
+          attrs,
+          outcome,
+          error
+        ),
+      occurred_at: attempted_at(attrs)
+    })
+  end
+
+  defp terminal_attempt_payload(
+         original_decision,
+         observed_decision,
+         action,
+         attrs,
+         outcome,
+         error
+       ) do
+    %{
+      attempt_id: terminal_attempt_id(original_decision, action, attrs),
+      decision_id: original_decision.id,
+      tenant_id: tenant_id(attrs),
+      installation_id: original_decision.installation_id,
+      subject_id: original_decision.subject_id,
+      execution_id: original_decision.execution_id,
+      decision_kind: original_decision.decision_kind,
+      actor_ref: normalize_map(fetch_required!(attrs, :actor_ref)),
+      requested_decision: requested_decision(action, attrs),
+      reason: map_value(attrs, :reason),
+      trace_id: fetch_required!(attrs, :trace_id),
+      causation_id: fetch_required!(attrs, :causation_id),
+      idempotency_key: idempotency_key(original_decision, action, attrs),
+      observed_lifecycle_state: observed_decision.lifecycle_state,
+      observed_decision_value: observed_decision.decision_value,
+      expected_row_version: expected_row_version(original_decision, attrs),
+      observed_row_version: observed_decision.row_version,
+      winner_decision_id: winner_decision_id(observed_decision, outcome),
+      outcome: Atom.to_string(outcome),
+      attempted_at: DateTime.to_iso8601(attempted_at(attrs)),
+      error: normalize_error(error)
+    }
+  end
+
+  defp failed_terminal_outcome(
+         {:decision_not_pending, _state},
+         %DecisionRecord{} = observed_decision,
+         action,
+         attrs
+       ) do
+    cond do
+      same_terminal_decision?(observed_decision, action, attrs) -> :duplicate_same_decision
+      action == :expire -> :stale_expiry
+      true -> :conflict_rejected
+    end
+  end
+
+  defp failed_terminal_outcome(_error, _observed_decision, _action, _attrs),
+    do: :optimistic_lock_conflict
+
+  defp same_terminal_decision?(%DecisionRecord{} = decision, action, attrs) do
+    requested = requested_decision(action, attrs)
+
+    cond do
+      action == :escalate ->
+        decision.lifecycle_state == "escalated"
+
+      action == :waive ->
+        decision.lifecycle_state == "waived" and decision.decision_value == requested
+
+      action == :expire ->
+        decision.lifecycle_state == "expired" and decision.decision_value == requested
+
+      true ->
+        decision.lifecycle_state == "resolved" and decision.decision_value == requested
+    end
+  end
+
+  defp requested_decision(:accept, _attrs), do: "accept"
+  defp requested_decision(:reject, _attrs), do: "reject"
+  defp requested_decision(:waive, _attrs), do: "waive"
+  defp requested_decision(:expire, _attrs), do: "expired"
+  defp requested_decision(:escalate, _attrs), do: "escalate"
+  defp requested_decision(:decide, attrs), do: fetch_required!(attrs, :decision_value)
+
+  defp reload_decision(%DecisionRecord{id: id} = decision) do
+    case load_current_decision(id) do
+      {:ok, %DecisionRecord{} = reloaded_decision} -> reloaded_decision
+      {:error, _error} -> decision
+    end
+  end
+
+  defp terminal_attempt_id(%DecisionRecord{id: id}, action, attrs) do
+    map_value(attrs, :attempt_id) ||
+      "decision-attempt:#{id}:#{action}:#{fetch_required!(attrs, :trace_id)}:#{fetch_required!(attrs, :causation_id)}"
+  end
+
+  defp idempotency_key(%DecisionRecord{id: id}, action, attrs) do
+    map_value(attrs, :idempotency_key) ||
+      "decision-terminal:#{id}:#{action}:#{fetch_required!(attrs, :causation_id)}"
+  end
+
+  defp tenant_id(attrs) do
+    actor_ref = normalize_map(map_value(attrs, :actor_ref) || %{})
+
+    map_value(attrs, :tenant_id) || Map.get(actor_ref, "tenant_id")
+  end
+
+  defp expected_row_version(%DecisionRecord{row_version: row_version}, attrs),
+    do: map_value(attrs, :expected_row_version) || row_version
+
+  defp winner_decision_id(%DecisionRecord{id: id}, outcome)
+       when outcome in [:duplicate_same_decision, :conflict_rejected, :stale_expiry],
+       do: id
+
+  defp winner_decision_id(_decision, _outcome), do: nil
+
+  defp attempted_at(attrs) do
+    case map_value(attrs, :attempted_at) do
+      %DateTime{} = attempted_at -> DateTime.truncate(attempted_at, :microsecond)
+      _other -> DateTime.utc_now() |> DateTime.truncate(:microsecond)
+    end
+  end
+
+  defp normalize_error(nil), do: nil
+  defp normalize_error(error), do: inspect(error)
 
   defp fetch_required!(attrs, key) when is_map(attrs) do
     case map_value(attrs, key) do

@@ -57,6 +57,96 @@ defmodule Mezzanine.Decisions.PersistenceTest do
 
     assert [resolved_row] = resolved_decisions_for_subject(subject.id)
     assert resolved_row.id == resolved_decision.id
+
+    assert_terminal_attempt("trace-decision-resolve", resolved_decision, %{
+      "requested_decision" => "accept",
+      "outcome" => "accepted",
+      "observed_lifecycle_state" => "resolved"
+    })
+  end
+
+  test "terminal resolution command routes accept reject and escalate attempts" do
+    assert {:ok, accept_subject} = ingest_subject("linear:ticket:decision-terminal-accept")
+    assert {:ok, reject_subject} = ingest_subject("linear:ticket:decision-terminal-reject")
+    assert {:ok, escalate_subject} = ingest_subject("linear:ticket:decision-terminal-escalate")
+
+    assert {:ok, accept_execution} =
+             dispatch_execution(accept_subject, "decision-terminal-accept")
+
+    assert {:ok, reject_execution} =
+             dispatch_execution(reject_subject, "decision-terminal-reject")
+
+    assert {:ok, escalate_execution} =
+             dispatch_execution(escalate_subject, "decision-terminal-escalate")
+
+    assert {:ok, accept_decision} =
+             create_pending_decision(accept_subject, accept_execution, "accept")
+
+    assert {:ok, reject_decision} =
+             create_pending_decision(reject_subject, reject_execution, "reject")
+
+    assert {:ok, escalate_decision} =
+             create_pending_decision(escalate_subject, escalate_execution, "escalate")
+
+    assert {:ok, accepted_decision} =
+             DecisionCommands.resolve_terminal(accept_decision, :accept, %{
+               reason: "approved by reviewer",
+               trace_id: "trace-decision-terminal-accept",
+               causation_id: "cause-decision-terminal-accept",
+               actor_ref: %{kind: :reviewer, id: "alice", tenant_id: "tenant-1"},
+               attempt_id: "attempt-terminal-accept",
+               idempotency_key: "idem-terminal-accept"
+             })
+
+    assert {:ok, rejected_decision} =
+             DecisionCommands.reject(reject_decision, %{
+               reason: "rejected by reviewer",
+               trace_id: "trace-decision-terminal-reject",
+               causation_id: "cause-decision-terminal-reject",
+               actor_ref: %{kind: :reviewer, id: "bob", tenant_id: "tenant-1"},
+               attempt_id: "attempt-terminal-reject",
+               idempotency_key: "idem-terminal-reject"
+             })
+
+    assert {:ok, escalated_decision} =
+             DecisionCommands.escalate(escalate_decision, %{
+               reason: "requires escalation owner",
+               trace_id: "trace-decision-terminal-escalate",
+               causation_id: "cause-decision-terminal-escalate",
+               actor_ref: %{kind: :reviewer, id: "carol", tenant_id: "tenant-1"},
+               attempt_id: "attempt-terminal-escalate",
+               idempotency_key: "idem-terminal-escalate"
+             })
+
+    assert accepted_decision.lifecycle_state == "resolved"
+    assert accepted_decision.decision_value == "accept"
+    assert rejected_decision.lifecycle_state == "resolved"
+    assert rejected_decision.decision_value == "reject"
+    assert escalated_decision.lifecycle_state == "escalated"
+
+    assert_terminal_attempt("trace-decision-terminal-accept", accepted_decision, %{
+      "attempt_id" => "attempt-terminal-accept",
+      "idempotency_key" => "idem-terminal-accept",
+      "requested_decision" => "accept",
+      "outcome" => "accepted",
+      "tenant_id" => "tenant-1"
+    })
+
+    assert_terminal_attempt("trace-decision-terminal-reject", rejected_decision, %{
+      "attempt_id" => "attempt-terminal-reject",
+      "idempotency_key" => "idem-terminal-reject",
+      "requested_decision" => "reject",
+      "outcome" => "accepted",
+      "tenant_id" => "tenant-1"
+    })
+
+    assert_terminal_attempt("trace-decision-terminal-escalate", escalated_decision, %{
+      "attempt_id" => "attempt-terminal-escalate",
+      "idempotency_key" => "idem-terminal-escalate",
+      "requested_decision" => "escalate",
+      "outcome" => "accepted",
+      "tenant_id" => "tenant-1"
+    })
   end
 
   test "read_overdue and expire move pending decisions into explicit expiry state" do
@@ -105,12 +195,21 @@ defmodule Mezzanine.Decisions.PersistenceTest do
                actor_ref: %{kind: :reviewer}
              })
 
-    assert {:error, {:decision_not_pending, "resolved"}} =
+    assert {:error,
+            {:decision_terminal_resolution_failed, {:decision_not_pending, "resolved"},
+             :stale_expiry}} =
              DecisionCommands.expire(decision, %{
                trace_id: "trace-decision-expire-race-expire",
                causation_id: "cause-decision-expire-race-expire",
                actor_ref: %{kind: :workflow_timer}
              })
+
+    assert_terminal_attempt("trace-decision-expire-race-expire", decision, %{
+      "requested_decision" => "expired",
+      "outcome" => "stale_expiry",
+      "observed_lifecycle_state" => "resolved",
+      "observed_decision_value" => "accept"
+    })
   end
 
   defp ingest_subject(source_ref) do
@@ -253,6 +352,20 @@ defmodule Mezzanine.Decisions.PersistenceTest do
         payload: payload
       }
     end)
+  end
+
+  defp assert_terminal_attempt(trace_id, decision, expected_payload) do
+    attempt_fact =
+      "inst-1"
+      |> audit_facts_for_trace(trace_id)
+      |> Enum.find(&(&1.fact_kind == :decision_terminal_resolution_attempt))
+
+    assert attempt_fact
+    assert attempt_fact.decision_id == decision.id
+
+    for {key, value} <- expected_payload do
+      assert attempt_fact.payload[key] == value
+    end
   end
 
   defp normalize_uuid(<<_::128>> = uuid), do: Ecto.UUID.load!(uuid)
