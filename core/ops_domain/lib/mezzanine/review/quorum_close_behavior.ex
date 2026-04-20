@@ -3,8 +3,8 @@ defmodule Mezzanine.Review.QuorumCloseBehavior do
   Source-owned close-behavior matrix for review quorum modes.
 
   This module specifies how each supported quorum mode is allowed to close. It
-  does not evaluate `ReviewDecision` rows or transition `ReviewUnit` records;
-  that remains owner-resolver work for the next hardening slice.
+  does not transition `ReviewUnit` records; that remains the caller-owned
+  mutation after `Mezzanine.Review.QuorumResolver` evaluates decision inputs.
   """
 
   @required_fields [

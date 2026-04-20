@@ -21,6 +21,9 @@ defmodule Mezzanine.Review.QuorumProfile do
     :eligible_role_refs,
     :required_role_groups,
     :minimum_distinct_actors,
+    :actor_counting_rule,
+    :multi_role_counting_policy_ref,
+    :multi_role_counting_authority_ref,
     :requester_actor_ref,
     :self_approval_allowed?,
     :duplicate_actor_policy,
@@ -90,6 +93,9 @@ defmodule Mezzanine.Review.QuorumProfile do
       eligible_role_refs: string_list(value(profile, "eligible_role_refs")),
       required_role_groups: list_value(value(profile, "required_role_groups")),
       minimum_distinct_actors: minimum_distinct_actors,
+      actor_counting_rule: "one_actor_counts_once",
+      multi_role_counting_policy_ref: multi_role_counting_policy_ref(profile),
+      multi_role_counting_authority_ref: multi_role_counting_authority_ref(profile),
       requester_actor_ref: optional_string(value(profile, "requester_actor_ref")),
       self_approval_allowed?: boolean_value(value(profile, "self_approval_allowed"), false),
       duplicate_actor_policy:
@@ -161,6 +167,17 @@ defmodule Mezzanine.Review.QuorumProfile do
   defp distinct_actor_count(profile, default),
     do: integer_value(value(profile, "minimum_distinct_actors"), default)
 
+  defp multi_role_counting_policy_ref(profile) do
+    optional_string(
+      value(profile, "multi_role_counting_policy_ref") ||
+        value(profile, "multi_role_counting_authority_policy_ref")
+    )
+  end
+
+  defp multi_role_counting_authority_ref(profile) do
+    optional_string(value(profile, "multi_role_counting_authority_ref"))
+  end
+
   defp integer_value(value, default) do
     case value do
       value when is_integer(value) and value >= 0 -> value
@@ -227,6 +244,7 @@ defmodule Mezzanine.Review.QuorumProfile do
   defp list_value(value) when is_list(value), do: value
   defp list_value(_value), do: []
 
+  defp optional_string(nil), do: nil
   defp optional_string(value) when is_binary(value) and value != "", do: value
   defp optional_string(value) when is_atom(value), do: Atom.to_string(value)
   defp optional_string(_value), do: nil

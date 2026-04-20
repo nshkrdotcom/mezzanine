@@ -68,6 +68,53 @@ defmodule Mezzanine.Review.QuorumResolverTest do
     assert covered.quorum_state == :accepted
   end
 
+  test "one actor cannot satisfy multiple required role groups by default" do
+    review_unit =
+      review_unit(%{
+        "quorum_mode" => "role_diverse_m_of_n",
+        "required_decisions" => 1,
+        "minimum_distinct_actors" => 1,
+        "required_role_groups" => ["ops", "security"]
+      })
+
+    resolution =
+      QuorumResolver.resolve(review_unit, [
+        decision(:accept, "ops_a", "decision-1", 0, %{"role_groups" => ["ops", "security"]})
+      ])
+
+    assert resolution.terminal_action == nil
+    assert resolution.quorum_state == :pending
+    assert resolution.actor_counting.counting_rule == "one_actor_counts_once"
+    assert resolution.actor_counting.multi_role_counting_allowed? == false
+  end
+
+  test "unregistered multi-role authority policy refs still fail closed" do
+    review_unit =
+      review_unit(%{
+        "quorum_mode" => "role_diverse_m_of_n",
+        "required_decisions" => 1,
+        "minimum_distinct_actors" => 1,
+        "required_role_groups" => ["ops", "security"],
+        "multi_role_counting_policy_ref" => "authority-policy:unknown-multi-role",
+        "multi_role_counting_authority_ref" => "citadel-authority:unknown"
+      })
+
+    resolution =
+      QuorumResolver.resolve(review_unit, [
+        decision(:accept, "ops_a", "decision-1", 0, %{"role_groups" => ["ops", "security"]})
+      ])
+
+    assert resolution.terminal_action == nil
+
+    assert resolution.actor_counting.multi_role_counting_policy_ref ==
+             "authority-policy:unknown-multi-role"
+
+    assert resolution.actor_counting.multi_role_counting_authority_ref ==
+             "citadel-authority:unknown"
+
+    assert resolution.actor_counting.source_owned_multi_role_policy_refs == []
+  end
+
   test "unanimous quorum uses eligible actor decision rows as inputs" do
     review_unit =
       review_unit(%{

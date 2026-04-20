@@ -7,7 +7,7 @@ defmodule Mezzanine.Review.QuorumResolver do
   terminal action, if any, for the caller that owns `ReviewUnit` mutation.
   """
 
-  alias Mezzanine.Review.{QuorumProfile, ReviewDecision, ReviewUnit}
+  alias Mezzanine.Review.{ActorCountingPolicy, QuorumProfile, ReviewDecision, ReviewUnit}
 
   @pending_result %{
     quorum_state: :pending,
@@ -71,6 +71,7 @@ defmodule Mezzanine.Review.QuorumResolver do
       rejected_decision_refs: decision_refs(rejected_decisions),
       accepted_actor_refs: distinct_actor_refs(accepted_decisions),
       rejected_actor_refs: distinct_actor_refs(rejected_decisions),
+      actor_counting: ActorCountingPolicy.evidence(profile),
       counted_decision_refs: decision_refs(accepted_decisions ++ rejected_decisions),
       evaluated_at: DateTime.utc_now()
     }
@@ -138,10 +139,11 @@ defmodule Mezzanine.Review.QuorumResolver do
   end
 
   defp accept_met?(%{quorum_mode: "all_required_roles"} = profile, accepted_decisions) do
-    required_groups = normalize_refs(profile.required_role_groups)
+    required_groups = required_role_groups(profile.required_role_groups)
 
     required_groups != [] and
-      length(distinct_actor_refs(accepted_decisions)) >= length(required_groups) and
+      length(distinct_actor_refs(accepted_decisions)) >=
+        required_actor_count(profile, required_groups) and
       required_role_groups_met?(profile, accepted_decisions)
   end
 
@@ -175,10 +177,64 @@ defmodule Mezzanine.Review.QuorumResolver do
   end
 
   defp required_role_groups_met?(profile, accepted_decisions) do
-    required_groups = normalize_refs(profile.required_role_groups)
-    accepted_groups = accepted_decisions |> Enum.flat_map(&role_refs/1) |> MapSet.new()
+    required_groups = required_role_groups(profile.required_role_groups)
+    actor_coverage = actor_role_coverage(accepted_decisions)
 
-    required_groups != [] and Enum.all?(required_groups, &MapSet.member?(accepted_groups, &1))
+    required_groups != [] and
+      if ActorCountingPolicy.multi_role_counting_allowed?(profile) do
+        all_groups_have_coverage?(required_groups, actor_coverage)
+      else
+        groups_have_distinct_actor_coverage?(required_groups, actor_coverage, [])
+      end
+  end
+
+  defp required_actor_count(profile, required_groups) do
+    if ActorCountingPolicy.multi_role_counting_allowed?(profile) do
+      1
+    else
+      length(required_groups)
+    end
+  end
+
+  defp all_groups_have_coverage?(required_groups, actor_coverage) do
+    Enum.all?(required_groups, fn group ->
+      Enum.any?(actor_coverage, fn {_actor_ref, actor_roles} ->
+        role_group_covered?(group, actor_roles)
+      end)
+    end)
+  end
+
+  defp groups_have_distinct_actor_coverage?([], _actor_coverage, _used_actors), do: true
+
+  defp groups_have_distinct_actor_coverage?([group | rest], actor_coverage, used_actors) do
+    Enum.any?(actor_coverage, fn {actor_ref, actor_roles} ->
+      actor_ref not in used_actors and
+        role_group_covered?(group, actor_roles) and
+        groups_have_distinct_actor_coverage?(
+          rest,
+          actor_coverage,
+          [actor_ref | used_actors]
+        )
+    end)
+  end
+
+  defp role_group_covered?(group, actor_roles) do
+    Enum.any?(group, &MapSet.member?(actor_roles, &1))
+  end
+
+  defp actor_role_coverage(decisions) do
+    decisions
+    |> Enum.reduce(%{}, fn decision, acc ->
+      actor_ref = normalize_ref(decision.actor_ref)
+      roles = role_refs(decision)
+
+      if blank?(actor_ref) or roles == [] do
+        acc
+      else
+        Map.update(acc, actor_ref, MapSet.new(roles), &MapSet.union(&1, MapSet.new(roles)))
+      end
+    end)
+    |> Enum.sort_by(fn {actor_ref, _roles} -> actor_ref end)
   end
 
   defp required_count(%{required_decision_count: count, minimum_distinct_actors: minimum})
@@ -189,6 +245,17 @@ defmodule Mezzanine.Review.QuorumResolver do
   defp decisions_for(decisions, decision), do: Enum.filter(decisions, &(&1.decision == decision))
 
   defp decision_refs(decisions), do: decisions |> Enum.map(& &1.id) |> Enum.reject(&is_nil/1)
+
+  defp required_role_groups(groups) when is_list(groups) do
+    groups
+    |> Enum.map(&required_role_group/1)
+    |> Enum.reject(&(&1 == []))
+  end
+
+  defp required_role_groups(group), do: required_role_groups([group])
+
+  defp required_role_group(group) when is_list(group), do: normalize_refs(group)
+  defp required_role_group(group), do: normalize_refs([group])
 
   defp distinct_actor_refs(decisions) do
     decisions

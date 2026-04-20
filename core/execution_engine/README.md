@@ -28,6 +28,9 @@ This package now owns the Phase `2.4.4` durable execution slice:
   mutating `ReviewUnit` terminal state, so non-single approval modes consume
   persisted `ReviewDecision` rows as resolver inputs instead of treating one
   decision append as terminal truth
+- review quorum resolution includes `Mezzanine.Review.ActorCountingPolicy`, so
+  one actor counts once for quorum and multi-role counting remains fail-closed
+  unless ops-domain source registers a specific authority policy
 - durable `LifecycleContinuation` records for post-commit lifecycle work that
   must retry, dead-letter, or be waived without recursive transactions
 

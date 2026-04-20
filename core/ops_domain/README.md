@@ -27,6 +27,9 @@ This package owns the first Ash/AshPostgres-backed durable truth for:
 - source-owned review quorum resolver evaluation over persisted
   `ReviewDecision` inputs, with terminal mutation left to the caller that owns
   `ReviewUnit` updates
+- source-owned actor-counting policy for review quorum resolution; one actor
+  counts once unless this package registers an explicit multi-role authority
+  policy, and no multi-role exception is registered today
 - evidence bundles, evidence items, audit events, and timeline projections
 - operator control sessions and interventions
 

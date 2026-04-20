@@ -72,6 +72,44 @@ defmodule Mezzanine.ReviewsTest do
     assert Enum.map(detail.decisions, & &1.actor_ref) |> Enum.sort() == ["ops_a", "ops_b"]
   end
 
+  test "record_decision counts one actor once for quorum" do
+    %{tenant_id: tenant_id, program: program, review_unit: review_unit} =
+      fixture_stack("tenant-one-actor-once", %{
+        "quorum_mode" => "two_person",
+        "required_decisions" => 2,
+        "minimum_distinct_actors" => 2
+      })
+
+    assert {:ok, %{review_unit: first_pending}} =
+             Reviews.record_decision(tenant_id, review_unit.id, %{
+               program_id: program.id,
+               decision: :accept,
+               actor_kind: :human,
+               actor_ref: "ops_a",
+               reason: "first approval",
+               payload: %{"summary" => "first"}
+             })
+
+    assert first_pending.status == :pending
+
+    assert {:ok, %{review_unit: second_pending, quorum_resolution: resolution}} =
+             Reviews.record_decision(tenant_id, review_unit.id, %{
+               program_id: program.id,
+               decision: :accept,
+               actor_kind: :human,
+               actor_ref: "ops_a",
+               reason: "same actor retry",
+               payload: %{"summary" => "same actor retry"}
+             })
+
+    assert second_pending.status == :pending
+    assert resolution.terminal_action == nil
+    assert resolution.accepted_actor_refs == ["ops_a"]
+    assert resolution.actor_counting.counting_rule == "one_actor_counts_once"
+    assert resolution.actor_counting.multi_role_counting_allowed? == false
+    assert {:ok, false} = Reviews.release_ready?(tenant_id, review_unit.work_object_id)
+  end
+
   test "waive_review creates a waiver and updates the review unit" do
     %{tenant_id: tenant_id, program: program, review_unit: review_unit} =
       fixture_stack("tenant-h")

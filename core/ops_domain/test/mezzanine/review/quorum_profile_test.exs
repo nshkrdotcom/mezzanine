@@ -18,6 +18,9 @@ defmodule Mezzanine.Review.QuorumProfileTest do
              :eligible_role_refs,
              :required_role_groups,
              :minimum_distinct_actors,
+             :actor_counting_rule,
+             :multi_role_counting_policy_ref,
+             :multi_role_counting_authority_ref,
              :requester_actor_ref,
              :self_approval_allowed?,
              :duplicate_actor_policy,
@@ -50,6 +53,9 @@ defmodule Mezzanine.Review.QuorumProfileTest do
     assert profile.quorum_mode == "single_decision"
     assert profile.required_decision_count == 1
     assert profile.minimum_distinct_actors == 1
+    assert profile.actor_counting_rule == "one_actor_counts_once"
+    assert profile.multi_role_counting_policy_ref == nil
+    assert profile.multi_role_counting_authority_ref == nil
     assert profile.eligible_actor_refs == ["ops_lead"]
     assert profile.self_approval_allowed? == false
     assert profile.duplicate_actor_policy == "latest_only"
@@ -73,6 +79,8 @@ defmodule Mezzanine.Review.QuorumProfileTest do
           "eligible_actor_refs" => ["ops_lead", "security_lead"],
           "eligible_role_refs" => ["ops", "security"],
           "required_role_groups" => [["ops"], ["security"]],
+          "multi_role_counting_policy_ref" => "authority-policy:multi-role-review",
+          "multi_role_counting_authority_ref" => "citadel-authority:review",
           "requester_actor_ref" => "submitter",
           "self_approval_allowed" => false,
           "duplicate_actor_policy" => "first_only",
@@ -93,6 +101,9 @@ defmodule Mezzanine.Review.QuorumProfileTest do
     assert profile.eligible_actor_refs == ["ops_lead", "security_lead"]
     assert profile.eligible_role_refs == ["ops", "security"]
     assert profile.required_role_groups == [["ops"], ["security"]]
+    assert profile.actor_counting_rule == "one_actor_counts_once"
+    assert profile.multi_role_counting_policy_ref == "authority-policy:multi-role-review"
+    assert profile.multi_role_counting_authority_ref == "citadel-authority:review"
     assert profile.requester_actor_ref == "submitter"
     assert profile.duplicate_actor_policy == "first_only"
     assert profile.reject_policy == "majority_reject"
