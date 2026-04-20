@@ -227,6 +227,7 @@ defmodule Mezzanine.Decisions.PersistenceTest do
     assert {:ok, decision} = create_pending_decision(subject, execution, "stale-row-version")
 
     expected_row_version = decision.row_version + 1
+    attempted_at = ~U[2026-04-20 01:02:03.000000Z]
 
     assert {:error,
             {:decision_terminal_resolution_failed,
@@ -239,7 +240,8 @@ defmodule Mezzanine.Decisions.PersistenceTest do
                actor_ref: %{kind: :reviewer, id: "stale", tenant_id: "tenant-1"},
                expected_row_version: expected_row_version,
                attempt_id: "attempt-stale-row-version",
-               idempotency_key: "idem-stale-row-version"
+               idempotency_key: "idem-stale-row-version",
+               attempted_at: attempted_at
              })
 
     assert observed_row_version == decision.row_version
@@ -263,6 +265,29 @@ defmodule Mezzanine.Decisions.PersistenceTest do
       "conflict_attempt?" => true,
       "terminal_attempt_fact_kind" => "decision_terminal_resolution_attempt",
       "conflict_error_class" => "stale_row_version"
+    })
+
+    assert_conflict_attempt_fields("trace-decision-stale-row-version", decision, %{
+      "attempt_id" => "attempt-stale-row-version",
+      "decision_id" => decision.id,
+      "tenant_id" => "tenant-1",
+      "installation_id" => "inst-1",
+      "subject_id" => subject.id,
+      "execution_id" => execution.id,
+      "decision_kind" => "human_review_required",
+      "actor_ref" => %{"kind" => "reviewer", "id" => "stale", "tenant_id" => "tenant-1"},
+      "requested_decision" => "accept",
+      "reason" => "losing concurrent reviewer",
+      "trace_id" => "trace-decision-stale-row-version",
+      "causation_id" => "cause-decision-stale-row-version",
+      "idempotency_key" => "idem-stale-row-version",
+      "observed_lifecycle_state" => "pending",
+      "observed_decision_value" => nil,
+      "expected_row_version" => expected_row_version,
+      "observed_row_version" => decision.row_version,
+      "winner_decision_id" => decision.id,
+      "outcome" => "stale_row_version",
+      "attempted_at" => DateTime.to_iso8601(attempted_at)
     })
   end
 
@@ -432,6 +457,21 @@ defmodule Mezzanine.Decisions.PersistenceTest do
     assert attempt_fact.decision_id == decision.id
 
     for {key, value} <- expected_payload do
+      assert attempt_fact.payload[key] == value
+    end
+  end
+
+  defp assert_conflict_attempt_fields(trace_id, decision, expected_payload) do
+    attempt_fact =
+      "inst-1"
+      |> audit_facts_for_trace(trace_id)
+      |> Enum.find(&(&1.fact_kind == :decision_conflict_attempt))
+
+    assert attempt_fact
+    assert attempt_fact.decision_id == decision.id
+
+    for {key, value} <- expected_payload do
+      assert Map.has_key?(attempt_fact.payload, key)
       assert attempt_fact.payload[key] == value
     end
   end
