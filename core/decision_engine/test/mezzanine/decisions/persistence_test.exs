@@ -149,6 +149,92 @@ defmodule Mezzanine.Decisions.PersistenceTest do
     })
   end
 
+  test "duplicate terminal retry requires same idempotency and same decision" do
+    assert {:ok, subject} = ingest_subject("linear:ticket:decision-duplicate-retry")
+    assert {:ok, execution} = dispatch_execution(subject, "decision-duplicate-retry")
+    assert {:ok, decision} = create_pending_decision(subject, execution, "duplicate-retry")
+
+    assert {:ok, resolved_decision} =
+             DecisionCommands.accept(decision, %{
+               reason: "approved by reviewer",
+               trace_id: "trace-decision-duplicate-accepted",
+               causation_id: "cause-decision-duplicate-accepted",
+               actor_ref: %{kind: :reviewer, id: "alice", tenant_id: "tenant-1"},
+               attempt_id: "attempt-duplicate-accepted",
+               idempotency_key: "idem-duplicate-terminal"
+             })
+
+    assert {:error,
+            {:decision_terminal_resolution_failed, {:decision_not_pending, "resolved"},
+             :duplicate_same_decision}} =
+             DecisionCommands.accept(decision, %{
+               reason: "same retry envelope",
+               trace_id: "trace-decision-duplicate-same",
+               causation_id: "cause-decision-duplicate-same",
+               actor_ref: %{kind: :reviewer, id: "alice", tenant_id: "tenant-1"},
+               attempt_id: "attempt-duplicate-same",
+               idempotency_key: "idem-duplicate-terminal"
+             })
+
+    assert {:error,
+            {:decision_terminal_resolution_failed, {:decision_not_pending, "resolved"},
+             :conflict_rejected}} =
+             DecisionCommands.accept(decision, %{
+               reason: "same decision but different idempotency",
+               trace_id: "trace-decision-duplicate-different-idempotency",
+               causation_id: "cause-decision-duplicate-different-idempotency",
+               actor_ref: %{kind: :reviewer, id: "bob", tenant_id: "tenant-1"},
+               attempt_id: "attempt-duplicate-different-idempotency",
+               idempotency_key: "idem-different-terminal"
+             })
+
+    assert {:error,
+            {:decision_terminal_resolution_failed, {:decision_not_pending, "resolved"},
+             :conflict_rejected}} =
+             DecisionCommands.reject(decision, %{
+               reason: "opposite reviewer decision",
+               trace_id: "trace-decision-duplicate-opposite",
+               causation_id: "cause-decision-duplicate-opposite",
+               actor_ref: %{kind: :reviewer, id: "carol", tenant_id: "tenant-1"},
+               attempt_id: "attempt-duplicate-opposite",
+               idempotency_key: "idem-opposite-terminal"
+             })
+
+    assert_terminal_attempt("trace-decision-duplicate-accepted", resolved_decision, %{
+      "idempotency_key" => "idem-duplicate-terminal",
+      "requested_decision" => "accept",
+      "outcome" => "accepted"
+    })
+
+    assert_conflict_attempt("trace-decision-duplicate-same", resolved_decision, %{
+      "idempotency_key" => "idem-duplicate-terminal",
+      "requested_decision" => "accept",
+      "outcome" => "duplicate_same_decision",
+      "observed_lifecycle_state" => "resolved",
+      "observed_decision_value" => "accept"
+    })
+
+    assert_conflict_attempt(
+      "trace-decision-duplicate-different-idempotency",
+      resolved_decision,
+      %{
+        "idempotency_key" => "idem-different-terminal",
+        "requested_decision" => "accept",
+        "outcome" => "conflict_rejected",
+        "observed_lifecycle_state" => "resolved",
+        "observed_decision_value" => "accept"
+      }
+    )
+
+    assert_conflict_attempt("trace-decision-duplicate-opposite", resolved_decision, %{
+      "idempotency_key" => "idem-opposite-terminal",
+      "requested_decision" => "reject",
+      "outcome" => "conflict_rejected",
+      "observed_lifecycle_state" => "resolved",
+      "observed_decision_value" => "accept"
+    })
+  end
+
   test "read_overdue and expire move pending decisions into explicit expiry state" do
     assert {:ok, subject} = ingest_subject("linear:ticket:decision-expire")
     assert {:ok, execution} = dispatch_execution(subject, "decision-expire")

@@ -10,6 +10,8 @@ defmodule Mezzanine.DecisionCommands do
   alias Mezzanine.Audit.AuditFact
   alias Mezzanine.Decisions.DecisionRecord
 
+  require Ash.Query
+
   @terminal_actions [:decide, :waive, :expire, :accept, :reject, :escalate]
   @conflict_outcomes [
     :duplicate_same_decision,
@@ -408,9 +410,14 @@ defmodule Mezzanine.DecisionCommands do
          attrs
        ) do
     cond do
-      same_terminal_decision?(observed_decision, action, attrs) -> :duplicate_same_decision
-      action == :expire -> :stale_expiry
-      true -> :conflict_rejected
+      duplicate_same_terminal_decision?(observed_decision, action, attrs) ->
+        :duplicate_same_decision
+
+      action == :expire ->
+        :stale_expiry
+
+      true ->
+        :conflict_rejected
     end
   end
 
@@ -450,6 +457,40 @@ defmodule Mezzanine.DecisionCommands do
 
       true ->
         decision.lifecycle_state == "resolved" and decision.decision_value == requested
+    end
+  end
+
+  defp duplicate_same_terminal_decision?(%DecisionRecord{} = decision, action, attrs) do
+    same_terminal_decision?(decision, action, attrs) and
+      same_idempotency_terminal_retry?(decision, action, attrs)
+  end
+
+  defp same_idempotency_terminal_retry?(%DecisionRecord{} = decision, action, attrs) do
+    current_idempotency_key = idempotency_key(decision, action, attrs)
+    requested = requested_decision(action, attrs)
+
+    decision
+    |> accepted_terminal_attempts()
+    |> Enum.any?(fn fact ->
+      fact.payload["outcome"] == "accepted" and
+        fact.payload["requested_decision"] == requested and
+        fact.payload["idempotency_key"] == current_idempotency_key
+    end)
+  end
+
+  defp accepted_terminal_attempts(%DecisionRecord{
+         id: decision_id,
+         installation_id: installation_id
+       }) do
+    AuditFact
+    |> Ash.Query.filter(
+      installation_id == ^installation_id and decision_id == ^decision_id and
+        fact_kind == :decision_terminal_resolution_attempt
+    )
+    |> Ash.read(authorize?: false, domain: Mezzanine.Audit)
+    |> case do
+      {:ok, facts} -> facts
+      {:error, _error} -> []
     end
   end
 
