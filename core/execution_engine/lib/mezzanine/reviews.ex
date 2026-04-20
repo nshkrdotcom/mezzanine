@@ -8,7 +8,7 @@ defmodule Mezzanine.Reviews do
   alias Mezzanine.Audit.WorkAudit
   alias Mezzanine.Evidence.EvidenceItem
   alias Mezzanine.Execution.ExecutionRecord
-  alias Mezzanine.Review.{Escalation, ReviewDecision, ReviewUnit, Waiver}
+  alias Mezzanine.Review.{Escalation, QuorumProfile, ReviewDecision, ReviewUnit, Waiver}
   alias Mezzanine.Runs.{Run, RunArtifact, RunSeries}
   alias Mezzanine.ServiceSupport
   alias Mezzanine.Work.WorkObject
@@ -81,7 +81,8 @@ defmodule Mezzanine.Reviews do
             summary: work_object.title,
             payload: %{
               reviewer_actor: ServiceSupport.normalize_value(review_unit.reviewer_actor),
-              review_kind: ServiceSupport.normalize_state(review_unit.review_kind)
+              review_kind: ServiceSupport.normalize_state(review_unit.review_kind),
+              quorum_profile: QuorumProfile.normalize(review_unit)
             }
           }
         end)
@@ -112,6 +113,7 @@ defmodule Mezzanine.Reviews do
          payload: %{
            review_kind: ServiceSupport.normalize_state(review_unit.review_kind),
            reviewer_actor: ServiceSupport.normalize_value(review_unit.reviewer_actor),
+           quorum_profile: QuorumProfile.normalize(review_unit),
            review_unit: ServiceSupport.normalize_value(review_unit),
            work_object: ServiceSupport.normalize_value(work_object),
            run: ServiceSupport.normalize_value(run),

@@ -20,6 +20,8 @@ This package owns the first Ash/AshPostgres-backed durable truth for:
 - run series and runs
 - run grants and run artifacts
 - review units, decisions, waivers, and escalations
+- explicit review quorum profile field normalization for review-unit
+  `decision_profile` metadata
 - evidence bundles, evidence items, audit events, and timeline projections
 - operator control sessions and interventions
 

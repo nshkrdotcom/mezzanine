@@ -21,6 +21,9 @@ This package now owns the Phase `2.4.4` durable execution slice:
 - neutral operator command handling through `Mezzanine.OperatorActions`
 - neutral review, waiver, escalation, and gate evaluation through
   `Mezzanine.Reviews`
+- review projection payloads include normalized quorum-profile fields from
+  `Mezzanine.Review.QuorumProfile` so review gates cannot claim quorum without
+  explicit mode, actor, policy, state, and evidence fields
 - durable `LifecycleContinuation` records for post-commit lifecycle work that
   must retry, dead-letter, or be waived without recursive transactions
 

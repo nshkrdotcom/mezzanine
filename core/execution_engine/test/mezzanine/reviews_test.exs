@@ -10,6 +10,11 @@ defmodule Mezzanine.ReviewsTest do
     %{tenant_id: tenant_id, program: program, review_unit: review_unit} =
       fixture_stack("tenant-g")
 
+    assert {:ok, [summary]} = Reviews.pending_review_summaries(tenant_id, program.id)
+    assert summary.payload.quorum_profile.quorum_mode == "single_decision"
+    assert summary.payload.quorum_profile.required_decision_count == 1
+    assert summary.payload.quorum_profile.review_unit_id == review_unit.id
+
     assert {:ok, %{review_unit: accepted_review_unit}} =
              Reviews.record_decision(tenant_id, review_unit.id, %{
                program_id: program.id,
