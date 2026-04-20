@@ -24,6 +24,7 @@ defmodule Mezzanine.Reviews do
 
   @terminal_run_statuses [:completed, :failed, :cancelled]
   @terminal_work_statuses [:completed, :cancelled]
+  @terminal_review_statuses [:accepted, :rejected, :waived]
   @review_due_in_seconds 86_400
 
   @spec list_pending_reviews(String.t()) :: {:ok, [struct()]} | {:error, term()}
@@ -194,11 +195,12 @@ defmodule Mezzanine.Reviews do
 
     if decision in [:accept, :reject] do
       with {:ok, review_unit} <- fetch_review_unit(tenant_id, review_unit_id),
+           :ok <- ensure_review_unit_transition_allowed(tenant_id, review_unit, decision, attrs),
            {:ok, decision_record} <- create_decision(tenant_id, review_unit_id, attrs),
            {:ok, decisions} <- list_decisions(tenant_id, review_unit.id),
            quorum_resolution <- QuorumResolver.resolve(review_unit, decisions),
            {:ok, updated_review_unit} <-
-             maybe_transition_review_unit(tenant_id, review_unit, quorum_resolution),
+             maybe_transition_review_unit(tenant_id, review_unit, quorum_resolution, attrs),
            {:ok, _audit} <-
              maybe_record_review_audit(tenant_id, review_unit, quorum_resolution, attrs) do
         {:ok,
@@ -217,8 +219,10 @@ defmodule Mezzanine.Reviews do
   def waive_review(tenant_id, review_unit_id, attrs)
       when is_binary(tenant_id) and is_binary(review_unit_id) and is_map(attrs) do
     with {:ok, review_unit} <- fetch_review_unit(tenant_id, review_unit_id),
+         :ok <- ensure_review_unit_transition_allowed(tenant_id, review_unit, :waive, attrs),
          {:ok, waiver} <- create_waiver(tenant_id, review_unit, attrs),
-         {:ok, updated_review_unit} <- transition_review_unit(tenant_id, review_unit, :waive),
+         {:ok, updated_review_unit} <-
+           transition_review_unit(tenant_id, review_unit, :waive, attrs),
          {:ok, _audit} <- record_review_audit(tenant_id, review_unit, :waive, attrs) do
       {:ok, %{review_unit: updated_review_unit, waiver: waiver}}
     end
@@ -228,8 +232,10 @@ defmodule Mezzanine.Reviews do
   def escalate_review(tenant_id, review_unit_id, attrs)
       when is_binary(tenant_id) and is_binary(review_unit_id) and is_map(attrs) do
     with {:ok, review_unit} <- fetch_review_unit(tenant_id, review_unit_id),
+         :ok <- ensure_review_unit_transition_allowed(tenant_id, review_unit, :escalate, attrs),
          {:ok, escalation} <- create_escalation(tenant_id, review_unit, attrs),
-         {:ok, updated_review_unit} <- transition_review_unit(tenant_id, review_unit, :escalate),
+         {:ok, updated_review_unit} <-
+           transition_review_unit(tenant_id, review_unit, :escalate, attrs),
          {:ok, _audit} <- record_review_audit(tenant_id, review_unit, :escalate, attrs) do
       {:ok, %{review_unit: updated_review_unit, escalation: escalation}}
     end
@@ -294,34 +300,243 @@ defmodule Mezzanine.Reviews do
     |> Ash.create(actor: actor(tenant_id), authorize?: false, domain: Mezzanine.Review)
   end
 
-  defp transition_review_unit(tenant_id, review_unit, :accept) do
-    transition_review_unit(tenant_id, review_unit, :accept, %{})
-  end
-
-  defp transition_review_unit(tenant_id, review_unit, :reject) do
-    transition_review_unit(tenant_id, review_unit, :reject, %{})
-  end
-
-  defp transition_review_unit(tenant_id, review_unit, :waive) do
-    transition_review_unit(tenant_id, review_unit, :waive, %{})
-  end
-
-  defp transition_review_unit(tenant_id, review_unit, :escalate) do
-    transition_review_unit(tenant_id, review_unit, :escalate, %{})
-  end
-
   defp transition_review_unit(tenant_id, review_unit, action, attrs) do
     review_unit
-    |> Ash.Changeset.for_update(action, attrs)
+    |> Ash.Changeset.for_update(action, %{})
     |> Ash.Changeset.set_tenant(tenant_id)
     |> Ash.update(actor: actor(tenant_id), authorize?: false, domain: Mezzanine.Review)
+    |> case do
+      {:ok, %ReviewUnit{} = updated_review_unit} ->
+        {:ok, updated_review_unit}
+
+      {:error, error} ->
+        observed_review_unit = reload_review_unit(tenant_id, review_unit)
+        outcome = classify_review_transition_error(error)
+
+        with {:ok, _audit} <-
+               append_review_conflict_attempt(
+                 tenant_id,
+                 review_unit,
+                 observed_review_unit,
+                 action,
+                 attrs,
+                 outcome,
+                 error
+               ) do
+          {:error, {:review_unit_terminal_resolution_failed, error, outcome}}
+        end
+    end
   end
 
-  defp maybe_transition_review_unit(_tenant_id, review_unit, %{terminal_action: nil}),
+  defp ensure_review_unit_transition_allowed(
+         tenant_id,
+         %ReviewUnit{} = review_unit,
+         action,
+         attrs
+       ) do
+    with :ok <-
+           ensure_review_unit_not_terminal(tenant_id, review_unit, action, attrs) do
+      ensure_expected_review_row_version(tenant_id, review_unit, action, attrs)
+    end
+  end
+
+  defp ensure_review_unit_not_terminal(
+         tenant_id,
+         %ReviewUnit{status: status} = review_unit,
+         action,
+         attrs
+       )
+       when status in @terminal_review_statuses do
+    error = {:review_unit_not_open, status}
+
+    with {:ok, _audit} <-
+           append_review_conflict_attempt(
+             tenant_id,
+             review_unit,
+             review_unit,
+             action,
+             attrs,
+             :terminal_status_conflict,
+             error
+           ) do
+      {:error, {:review_unit_terminal_resolution_failed, error, :terminal_status_conflict}}
+    end
+  end
+
+  defp ensure_review_unit_not_terminal(_tenant_id, %ReviewUnit{}, _action, _attrs), do: :ok
+
+  defp ensure_expected_review_row_version(tenant_id, %ReviewUnit{} = review_unit, action, attrs) do
+    case expected_row_version_attr(attrs) do
+      nil ->
+        :ok
+
+      expected_row_version when expected_row_version == review_unit.row_version ->
+        :ok
+
+      expected_row_version ->
+        error = {:stale_row_version, expected_row_version, review_unit.row_version}
+
+        with {:ok, _audit} <-
+               append_review_conflict_attempt(
+                 tenant_id,
+                 review_unit,
+                 review_unit,
+                 action,
+                 attrs,
+                 :stale_row_version,
+                 error
+               ) do
+          {:error, {:review_unit_terminal_resolution_failed, error, :stale_row_version}}
+        end
+    end
+  end
+
+  defp append_review_conflict_attempt(
+         tenant_id,
+         %ReviewUnit{} = original_review_unit,
+         %ReviewUnit{} = observed_review_unit,
+         action,
+         attrs,
+         outcome,
+         error
+       ) do
+    WorkAudit.record_event(tenant_id, %{
+      program_id: Map.fetch!(attrs, :program_id),
+      work_object_id: original_review_unit.work_object_id,
+      run_id: original_review_unit.run_id,
+      review_unit_id: original_review_unit.id,
+      event_kind: :review_conflict_attempt,
+      actor_kind: Map.get(attrs, :actor_kind, :human),
+      actor_ref: Map.get(attrs, :actor_ref, "reviewer"),
+      payload:
+        review_conflict_attempt_payload(
+          tenant_id,
+          original_review_unit,
+          observed_review_unit,
+          action,
+          attrs,
+          outcome,
+          error
+        )
+    })
+  end
+
+  defp review_conflict_attempt_payload(
+         tenant_id,
+         %ReviewUnit{} = original_review_unit,
+         %ReviewUnit{} = observed_review_unit,
+         action,
+         attrs,
+         outcome,
+         error
+       ) do
+    %{
+      "attempt_id" => review_attempt_id(original_review_unit, action, attrs),
+      "tenant_id" => tenant_id,
+      "program_id" => Map.fetch!(attrs, :program_id),
+      "work_object_id" => original_review_unit.work_object_id,
+      "run_id" => original_review_unit.run_id,
+      "review_unit_id" => original_review_unit.id,
+      "review_kind" => Atom.to_string(original_review_unit.review_kind),
+      "actor_kind" => attrs |> Map.get(:actor_kind, :human) |> normalize_review_value(),
+      "actor_ref" => Map.get(attrs, :actor_ref, "reviewer"),
+      "requested_decision" => requested_review_decision(action),
+      "requested_status" => action |> review_status_for_action() |> Atom.to_string(),
+      "reason" => Map.get(attrs, :reason),
+      "trace_id" => map_value(attrs, :trace_id),
+      "causation_id" => map_value(attrs, :causation_id),
+      "idempotency_key" => review_idempotency_key(original_review_unit, action, attrs),
+      "expected_row_version" => expected_review_row_version(original_review_unit, attrs),
+      "observed_row_version" => observed_review_unit.row_version,
+      "observed_status" => Atom.to_string(observed_review_unit.status),
+      "winner_review_unit_id" => observed_review_unit.id,
+      "outcome" => Atom.to_string(outcome),
+      "attempted_at" => DateTime.to_iso8601(attempted_at(attrs)),
+      "error" => inspect(error),
+      "conflict_attempt?" => true
+    }
+  end
+
+  defp classify_review_transition_error(error) do
+    error_text = error |> inspect() |> String.downcase()
+
+    cond do
+      String.contains?(error_text, ["stale", "row_version", "lock"]) ->
+        :optimistic_lock_conflict
+
+      String.contains?(error_text, ["invalid", "unsupported"]) ->
+        :unsupported_transition
+
+      true ->
+        :transition_conflict
+    end
+  end
+
+  defp reload_review_unit(tenant_id, %ReviewUnit{id: id} = review_unit) do
+    case fetch_review_unit(tenant_id, id) do
+      {:ok, %ReviewUnit{} = reloaded_review_unit} -> reloaded_review_unit
+      {:error, _error} -> review_unit
+    end
+  end
+
+  defp review_attempt_id(%ReviewUnit{id: id}, action, attrs) do
+    map_value(attrs, :attempt_id) ||
+      "review-attempt:#{id}:#{action}:#{map_value(attrs, :causation_id) || Map.get(attrs, :actor_ref, "reviewer")}"
+  end
+
+  defp review_idempotency_key(%ReviewUnit{id: id}, action, attrs) do
+    map_value(attrs, :idempotency_key) ||
+      "review-terminal:#{id}:#{action}:#{map_value(attrs, :causation_id) || Map.get(attrs, :actor_ref, "reviewer")}"
+  end
+
+  defp expected_review_row_version(%ReviewUnit{row_version: row_version}, attrs),
+    do: expected_row_version_attr(attrs) || row_version
+
+  defp expected_row_version_attr(attrs) do
+    case map_value(attrs, :expected_row_version) do
+      nil -> nil
+      value when is_integer(value) -> value
+      value when is_binary(value) -> parse_integer_or_original(value)
+      value -> value
+    end
+  end
+
+  defp parse_integer_or_original(value) do
+    case Integer.parse(value) do
+      {integer, ""} -> integer
+      _other -> value
+    end
+  end
+
+  defp requested_review_decision(:accept), do: "accept"
+  defp requested_review_decision(:reject), do: "reject"
+  defp requested_review_decision(:waive), do: "waive"
+  defp requested_review_decision(:escalate), do: "escalate"
+
+  defp review_status_for_action(:accept), do: :accepted
+  defp review_status_for_action(:reject), do: :rejected
+  defp review_status_for_action(:waive), do: :waived
+  defp review_status_for_action(:escalate), do: :escalated
+
+  defp attempted_at(attrs) do
+    case map_value(attrs, :attempted_at) do
+      %DateTime{} = attempted_at -> DateTime.truncate(attempted_at, :microsecond)
+      _other -> DateTime.utc_now() |> DateTime.truncate(:microsecond)
+    end
+  end
+
+  defp map_value(map, key) when is_map(map),
+    do: Map.get(map, key) || Map.get(map, to_string(key))
+
+  defp normalize_review_value(%DateTime{} = datetime), do: DateTime.to_iso8601(datetime)
+  defp normalize_review_value(value) when is_atom(value), do: Atom.to_string(value)
+  defp normalize_review_value(value), do: value
+
+  defp maybe_transition_review_unit(_tenant_id, review_unit, %{terminal_action: nil}, _attrs),
     do: {:ok, review_unit}
 
-  defp maybe_transition_review_unit(tenant_id, review_unit, %{terminal_action: action}),
-    do: transition_review_unit(tenant_id, review_unit, action)
+  defp maybe_transition_review_unit(tenant_id, review_unit, %{terminal_action: action}, attrs),
+    do: transition_review_unit(tenant_id, review_unit, action, attrs)
 
   defp maybe_record_review_audit(_tenant_id, _review_unit, %{terminal_action: nil}, _attrs),
     do: {:ok, nil}

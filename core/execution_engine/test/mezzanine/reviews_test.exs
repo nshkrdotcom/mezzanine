@@ -1,6 +1,7 @@
 defmodule Mezzanine.ReviewsTest do
   use Mezzanine.Execution.DataCase, async: false
 
+  alias Mezzanine.Audit.WorkAudit
   alias Mezzanine.Programs.{PolicyBundle, Program}
   alias Mezzanine.Review.ReviewUnit
   alias Mezzanine.Reviews
@@ -27,6 +28,99 @@ defmodule Mezzanine.ReviewsTest do
 
     assert accepted_review_unit.status == :accepted
     assert {:ok, true} = Reviews.release_ready?(tenant_id, review_unit.work_object_id)
+  end
+
+  test "record_decision rejects stale ReviewUnit row versions with conflict-attempt evidence" do
+    %{tenant_id: tenant_id, program: program, review_unit: review_unit} =
+      fixture_stack("tenant-review-stale-row-version")
+
+    assert review_unit.row_version == 1
+
+    assert {:error,
+            {:review_unit_terminal_resolution_failed, {:stale_row_version, 0, 1},
+             :stale_row_version}} =
+             Reviews.record_decision(tenant_id, review_unit.id, %{
+               program_id: program.id,
+               decision: :accept,
+               actor_kind: :human,
+               actor_ref: "ops_stale",
+               reason: "stale approval",
+               expected_row_version: 0,
+               trace_id: "trace-review-stale-row-version",
+               causation_id: "cause-review-stale-row-version",
+               attempt_id: "attempt-review-stale-row-version",
+               idempotency_key: "idem-review-stale-row-version"
+             })
+
+    assert {:ok, detail} = Reviews.review_detail(tenant_id, review_unit.id)
+    assert detail.review_unit.status == :pending
+    assert detail.decisions == []
+
+    assert_review_conflict_attempt(tenant_id, review_unit.work_object_id, %{
+      "attempt_id" => "attempt-review-stale-row-version",
+      "idempotency_key" => "idem-review-stale-row-version",
+      "trace_id" => "trace-review-stale-row-version",
+      "causation_id" => "cause-review-stale-row-version",
+      "requested_decision" => "accept",
+      "requested_status" => "accepted",
+      "expected_row_version" => 0,
+      "observed_row_version" => 1,
+      "observed_status" => "pending",
+      "outcome" => "stale_row_version"
+    })
+  end
+
+  test "record_decision records terminal ReviewUnit conflict attempts for losing decisions" do
+    %{tenant_id: tenant_id, program: program, review_unit: review_unit} =
+      fixture_stack("tenant-review-terminal-conflict")
+
+    assert {:ok, %{review_unit: accepted_review_unit}} =
+             Reviews.record_decision(tenant_id, review_unit.id, %{
+               program_id: program.id,
+               decision: :accept,
+               actor_kind: :human,
+               actor_ref: "ops_winner",
+               reason: "winner",
+               trace_id: "trace-review-winner",
+               causation_id: "cause-review-winner",
+               attempt_id: "attempt-review-winner",
+               idempotency_key: "idem-review-winner"
+             })
+
+    assert accepted_review_unit.status == :accepted
+    assert accepted_review_unit.row_version == review_unit.row_version + 1
+
+    assert {:error,
+            {:review_unit_terminal_resolution_failed, {:review_unit_not_open, :accepted},
+             :terminal_status_conflict}} =
+             Reviews.record_decision(tenant_id, review_unit.id, %{
+               program_id: program.id,
+               decision: :reject,
+               actor_kind: :human,
+               actor_ref: "ops_loser",
+               reason: "losing reject",
+               trace_id: "trace-review-terminal-conflict",
+               causation_id: "cause-review-terminal-conflict",
+               attempt_id: "attempt-review-terminal-conflict",
+               idempotency_key: "idem-review-terminal-conflict"
+             })
+
+    assert {:ok, detail} = Reviews.review_detail(tenant_id, review_unit.id)
+    assert detail.review_unit.status == :accepted
+    assert Enum.map(detail.decisions, & &1.actor_ref) == ["ops_winner"]
+
+    assert_review_conflict_attempt(tenant_id, review_unit.work_object_id, %{
+      "attempt_id" => "attempt-review-terminal-conflict",
+      "idempotency_key" => "idem-review-terminal-conflict",
+      "trace_id" => "trace-review-terminal-conflict",
+      "causation_id" => "cause-review-terminal-conflict",
+      "requested_decision" => "reject",
+      "requested_status" => "rejected",
+      "expected_row_version" => 2,
+      "observed_row_version" => 2,
+      "observed_status" => "accepted",
+      "outcome" => "terminal_status_conflict"
+    })
   end
 
   test "record_decision keeps two-person review pending until resolver sees two decision inputs" do
@@ -143,6 +237,22 @@ defmodule Mezzanine.ReviewsTest do
     assert escalated_review_unit.status == :escalated
     assert escalation.status == :open
     assert {:ok, false} = Reviews.release_ready?(tenant_id, review_unit.work_object_id)
+  end
+
+  defp assert_review_conflict_attempt(tenant_id, work_object_id, expected_payload) do
+    assert {:ok, report} = WorkAudit.work_report(tenant_id, work_object_id)
+
+    assert event =
+             Enum.find(report.audit_events, fn event ->
+               event.event_kind == :review_conflict_attempt and
+                 event.payload["attempt_id"] == expected_payload["attempt_id"]
+             end)
+
+    assert event.payload["conflict_attempt?"] == true
+
+    Enum.each(expected_payload, fn {key, value} ->
+      assert event.payload[key] == value
+    end)
   end
 
   defp fixture_stack(tenant_id, decision_profile \\ %{"required_decisions" => 1}) do
