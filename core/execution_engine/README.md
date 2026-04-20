@@ -24,6 +24,10 @@ This package now owns the Phase `2.4.4` durable execution slice:
 - review projection payloads include normalized quorum-profile fields from
   `Mezzanine.Review.QuorumProfile` so review gates cannot claim quorum without
   explicit mode, actor, policy, state, and evidence fields
+- review decision recording consults `Mezzanine.Review.QuorumResolver` before
+  mutating `ReviewUnit` terminal state, so non-single approval modes consume
+  persisted `ReviewDecision` rows as resolver inputs instead of treating one
+  decision append as terminal truth
 - durable `LifecycleContinuation` records for post-commit lifecycle work that
   must retry, dead-letter, or be waived without recursive transactions
 

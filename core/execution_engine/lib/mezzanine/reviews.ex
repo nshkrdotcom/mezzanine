@@ -8,7 +8,16 @@ defmodule Mezzanine.Reviews do
   alias Mezzanine.Audit.WorkAudit
   alias Mezzanine.Evidence.EvidenceItem
   alias Mezzanine.Execution.ExecutionRecord
-  alias Mezzanine.Review.{Escalation, QuorumProfile, ReviewDecision, ReviewUnit, Waiver}
+
+  alias Mezzanine.Review.{
+    Escalation,
+    QuorumProfile,
+    QuorumResolver,
+    ReviewDecision,
+    ReviewUnit,
+    Waiver
+  }
+
   alias Mezzanine.Runs.{Run, RunArtifact, RunSeries}
   alias Mezzanine.ServiceSupport
   alias Mezzanine.Work.WorkObject
@@ -186,9 +195,18 @@ defmodule Mezzanine.Reviews do
     if decision in [:accept, :reject] do
       with {:ok, review_unit} <- fetch_review_unit(tenant_id, review_unit_id),
            {:ok, decision_record} <- create_decision(tenant_id, review_unit_id, attrs),
-           {:ok, updated_review_unit} <- transition_review_unit(tenant_id, review_unit, decision),
-           {:ok, _audit} <- record_review_audit(tenant_id, review_unit, decision, attrs) do
-        {:ok, %{review_unit: updated_review_unit, decision: decision_record}}
+           {:ok, decisions} <- list_decisions(tenant_id, review_unit.id),
+           quorum_resolution <- QuorumResolver.resolve(review_unit, decisions),
+           {:ok, updated_review_unit} <-
+             maybe_transition_review_unit(tenant_id, review_unit, quorum_resolution),
+           {:ok, _audit} <-
+             maybe_record_review_audit(tenant_id, review_unit, quorum_resolution, attrs) do
+        {:ok,
+         %{
+           review_unit: updated_review_unit,
+           decision: decision_record,
+           quorum_resolution: quorum_resolution
+         }}
       end
     else
       {:error, :unsupported_decision}
@@ -298,6 +316,18 @@ defmodule Mezzanine.Reviews do
     |> Ash.Changeset.set_tenant(tenant_id)
     |> Ash.update(actor: actor(tenant_id), authorize?: false, domain: Mezzanine.Review)
   end
+
+  defp maybe_transition_review_unit(_tenant_id, review_unit, %{terminal_action: nil}),
+    do: {:ok, review_unit}
+
+  defp maybe_transition_review_unit(tenant_id, review_unit, %{terminal_action: action}),
+    do: transition_review_unit(tenant_id, review_unit, action)
+
+  defp maybe_record_review_audit(_tenant_id, _review_unit, %{terminal_action: nil}, _attrs),
+    do: {:ok, nil}
+
+  defp maybe_record_review_audit(tenant_id, review_unit, %{terminal_action: action}, attrs),
+    do: record_review_audit(tenant_id, review_unit, action, attrs)
 
   defp review_units_for_work(tenant_id, work_object_id) do
     ReviewUnit

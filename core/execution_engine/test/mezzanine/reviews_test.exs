@@ -29,6 +29,49 @@ defmodule Mezzanine.ReviewsTest do
     assert {:ok, true} = Reviews.release_ready?(tenant_id, review_unit.work_object_id)
   end
 
+  test "record_decision keeps two-person review pending until resolver sees two decision inputs" do
+    %{tenant_id: tenant_id, program: program, review_unit: review_unit} =
+      fixture_stack("tenant-quorum", %{
+        "quorum_mode" => "two_person",
+        "required_decisions" => 2,
+        "minimum_distinct_actors" => 2
+      })
+
+    assert {:ok, %{review_unit: pending_review_unit, quorum_resolution: first_resolution}} =
+             Reviews.record_decision(tenant_id, review_unit.id, %{
+               program_id: program.id,
+               decision: :accept,
+               actor_kind: :human,
+               actor_ref: "ops_a",
+               reason: "first approval",
+               payload: %{"summary" => "first"}
+             })
+
+    assert pending_review_unit.status == :pending
+    assert first_resolution.quorum_state == :pending
+    assert first_resolution.terminal_action == nil
+    assert {:ok, false} = Reviews.release_ready?(tenant_id, review_unit.work_object_id)
+
+    assert {:ok, %{review_unit: accepted_review_unit, quorum_resolution: second_resolution}} =
+             Reviews.record_decision(tenant_id, review_unit.id, %{
+               program_id: program.id,
+               decision: :accept,
+               actor_kind: :human,
+               actor_ref: "ops_b",
+               reason: "second approval",
+               payload: %{"summary" => "second"}
+             })
+
+    assert accepted_review_unit.status == :accepted
+    assert second_resolution.quorum_state == :accepted
+    assert second_resolution.terminal_action == :accept
+    assert second_resolution.accepted_actor_refs == ["ops_a", "ops_b"]
+    assert {:ok, true} = Reviews.release_ready?(tenant_id, review_unit.work_object_id)
+
+    assert {:ok, detail} = Reviews.review_detail(tenant_id, review_unit.id)
+    assert Enum.map(detail.decisions, & &1.actor_ref) |> Enum.sort() == ["ops_a", "ops_b"]
+  end
+
   test "waive_review creates a waiver and updates the review unit" do
     %{tenant_id: tenant_id, program: program, review_unit: review_unit} =
       fixture_stack("tenant-h")
@@ -64,7 +107,7 @@ defmodule Mezzanine.ReviewsTest do
     assert {:ok, false} = Reviews.release_ready?(tenant_id, review_unit.work_object_id)
   end
 
-  defp fixture_stack(tenant_id) do
+  defp fixture_stack(tenant_id, decision_profile \\ %{"required_decisions" => 1}) do
     actor = %{tenant_id: tenant_id}
 
     {:ok, program} =
@@ -133,7 +176,7 @@ defmodule Mezzanine.ReviewsTest do
           work_object_id: work_object.id,
           review_kind: :operator_review,
           required_by: DateTime.utc_now(),
-          decision_profile: %{"required_decisions" => 1},
+          decision_profile: decision_profile,
           reviewer_actor: %{"kind" => "human", "ref" => "ops_lead"}
         },
         actor: actor,

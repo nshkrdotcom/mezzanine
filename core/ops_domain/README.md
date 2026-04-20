@@ -24,6 +24,9 @@ This package owns the first Ash/AshPostgres-backed durable truth for:
   `decision_profile` metadata
 - source-owned review quorum close-behavior specification for supported modes,
   without changing terminal resolver behavior
+- source-owned review quorum resolver evaluation over persisted
+  `ReviewDecision` inputs, with terminal mutation left to the caller that owns
+  `ReviewUnit` updates
 - evidence bundles, evidence items, audit events, and timeline projections
 - operator control sessions and interventions
 
