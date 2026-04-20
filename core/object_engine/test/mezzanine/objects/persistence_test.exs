@@ -56,7 +56,7 @@ defmodule Mezzanine.Objects.PersistenceTest do
     assert audit_fact.payload["schema_hash"] =~ "sha256:"
   end
 
-  test "ingest rejects unbound or incompatible subject payload maps" do
+  test "ingest rejects missing, unknown, stale, or incompatible subject payload schemas" do
     assert {:error, missing_schema_error} =
              SubjectRecord.ingest(%{
                installation_id: "inst-1",
@@ -71,6 +71,82 @@ defmodule Mezzanine.Objects.PersistenceTest do
 
     assert Exception.message(missing_schema_error) =~
              "subject payload must match a source-owned schema"
+
+    assert {:error, missing_version_error} =
+             SubjectRecord.ingest(%{
+               installation_id: "inst-1",
+               source_ref: "linear:ticket:missing-schema-version",
+               subject_kind: "linear_coding_ticket",
+               lifecycle_state: "queued",
+               schema_ref: SubjectPayloadSchema.default_schema_ref!("linear_coding_ticket"),
+               payload: %{identifier: "linear:ticket:missing-schema-version"},
+               trace_id: "trace-missing-schema-version",
+               causation_id: "cause-missing-schema-version",
+               actor_ref: %{kind: :intake}
+             })
+
+    assert Exception.message(missing_version_error) =~
+             "{:missing_subject_payload_schema_field, :schema_version}"
+
+    assert {:error, unknown_ref_error} =
+             SubjectRecord.ingest(%{
+               installation_id: "inst-1",
+               source_ref: "linear:ticket:unknown-schema-ref",
+               subject_kind: "linear_coding_ticket",
+               lifecycle_state: "queued",
+               schema_ref: "mezzanine.subject.linear_coding_ticket.payload.unknown",
+               schema_version: 1,
+               payload: %{identifier: "linear:ticket:unknown-schema-ref"},
+               trace_id: "trace-unknown-schema-ref",
+               causation_id: "cause-unknown-schema-ref",
+               actor_ref: %{kind: :intake}
+             })
+
+    assert Exception.message(unknown_ref_error) =~
+             "unknown_subject_payload_schema_ref"
+
+    assert Exception.message(unknown_ref_error) =~
+             "subject-payload-schema-quarantine:"
+
+    assert {:error, stale_version_error} =
+             SubjectRecord.ingest(%{
+               installation_id: "inst-1",
+               source_ref: "linear:ticket:stale-schema-version",
+               subject_kind: "linear_coding_ticket",
+               lifecycle_state: "queued",
+               schema_ref: SubjectPayloadSchema.default_schema_ref!("linear_coding_ticket"),
+               schema_version: 0,
+               payload: %{identifier: "linear:ticket:stale-schema-version"},
+               trace_id: "trace-stale-schema-version",
+               causation_id: "cause-stale-schema-version",
+               actor_ref: %{kind: :intake}
+             })
+
+    assert Exception.message(stale_version_error) =~
+             "stale_subject_payload_schema_version"
+
+    assert Exception.message(stale_version_error) =~
+             "subject-payload-schema-quarantine:"
+
+    assert {:error, unknown_version_error} =
+             SubjectRecord.ingest(%{
+               installation_id: "inst-1",
+               source_ref: "linear:ticket:future-schema-version",
+               subject_kind: "linear_coding_ticket",
+               lifecycle_state: "queued",
+               schema_ref: SubjectPayloadSchema.default_schema_ref!("linear_coding_ticket"),
+               schema_version: 2,
+               payload: %{identifier: "linear:ticket:future-schema-version"},
+               trace_id: "trace-future-schema-version",
+               causation_id: "cause-future-schema-version",
+               actor_ref: %{kind: :intake}
+             })
+
+    assert Exception.message(unknown_version_error) =~
+             "unknown_subject_payload_schema_version"
+
+    assert Exception.message(unknown_version_error) =~
+             "subject-payload-schema-quarantine:"
 
     assert {:error, invalid_payload_error} =
              SubjectRecord.ingest(%{

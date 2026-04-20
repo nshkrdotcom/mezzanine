@@ -31,6 +31,9 @@ defmodule Mezzanine.Objects.SubjectPayloadSchema do
                   {{schema.subject_kind, schema.schema_ref, schema.schema_version}, schema}
                 end)
   @default_schema_by_subject Map.new(@schemas, fn schema -> {schema.subject_kind, schema} end)
+  @current_schema_by_subject_ref Map.new(@schemas, fn schema ->
+                                   {{schema.subject_kind, schema.schema_ref}, schema}
+                                 end)
 
   @spec default_schema_ref!(String.t()) :: String.t()
   def default_schema_ref!(subject_kind) when is_binary(subject_kind) do
@@ -51,6 +54,15 @@ defmodule Mezzanine.Objects.SubjectPayloadSchema do
     subject_kind
     |> fetch!(schema_ref, schema_version)
     |> schema_hash()
+  end
+
+  @spec quarantine_ref(atom(), term(), term(), term()) :: String.t()
+  def quarantine_ref(reason, subject_kind, schema_ref, schema_version) when is_atom(reason) do
+    encoded =
+      Enum.map_join([reason, subject_kind, schema_ref, schema_version], "\n", &inspect/1)
+
+    "subject-payload-schema-quarantine:" <>
+      Base.encode16(:crypto.hash(:sha256, encoded), case: :lower)
   end
 
   @spec validate_ingest(map()) ::
@@ -77,9 +89,7 @@ defmodule Mezzanine.Objects.SubjectPayloadSchema do
         {:ok, schema}
 
       :error ->
-        {:error,
-         {:unknown_subject_payload_schema,
-          %{subject_kind: subject_kind, schema_ref: schema_ref, schema_version: schema_version}}}
+        reject_unknown_schema(subject_kind, schema_ref, schema_version)
     end
   end
 
@@ -126,9 +136,70 @@ defmodule Mezzanine.Objects.SubjectPayloadSchema do
 
   defp fetch_required_version(attrs, field) do
     case value(attrs, field) do
-      value when is_integer(value) and value > 0 -> {:ok, value}
-      _other -> {:error, {:missing_subject_payload_schema_field, field}}
+      nil -> {:error, {:missing_subject_payload_schema_field, field}}
+      value when is_integer(value) -> {:ok, value}
+      _other -> {:error, {:invalid_subject_payload_schema_field, field}}
     end
+  end
+
+  defp reject_unknown_schema(subject_kind, schema_ref, schema_version) do
+    cond do
+      not Map.has_key?(@default_schema_by_subject, subject_kind) ->
+        {:error,
+         {:unknown_subject_payload_schema_subject_kind,
+          %{
+            subject_kind: subject_kind,
+            schema_ref: schema_ref,
+            schema_version: schema_version,
+            quarantine_ref:
+              quarantine_ref(:unknown_subject_kind, subject_kind, schema_ref, schema_version)
+          }}}
+
+      not Map.has_key?(@current_schema_by_subject_ref, {subject_kind, schema_ref}) ->
+        {:error,
+         {:unknown_subject_payload_schema_ref,
+          %{
+            subject_kind: subject_kind,
+            schema_ref: schema_ref,
+            schema_version: schema_version,
+            quarantine_ref:
+              quarantine_ref(:unknown_schema_ref, subject_kind, schema_ref, schema_version)
+          }}}
+
+      stale_schema_version?(subject_kind, schema_ref, schema_version) ->
+        current_schema = Map.fetch!(@current_schema_by_subject_ref, {subject_kind, schema_ref})
+
+        {:error,
+         {:stale_subject_payload_schema_version,
+          %{
+            subject_kind: subject_kind,
+            schema_ref: schema_ref,
+            schema_version: schema_version,
+            current_schema_version: current_schema.schema_version,
+            quarantine_ref:
+              quarantine_ref(:stale_schema_version, subject_kind, schema_ref, schema_version)
+          }}}
+
+      true ->
+        current_schema = Map.fetch!(@current_schema_by_subject_ref, {subject_kind, schema_ref})
+
+        {:error,
+         {:unknown_subject_payload_schema_version,
+          %{
+            subject_kind: subject_kind,
+            schema_ref: schema_ref,
+            schema_version: schema_version,
+            current_schema_version: current_schema.schema_version,
+            quarantine_ref:
+              quarantine_ref(:unknown_schema_version, subject_kind, schema_ref, schema_version)
+          }}}
+    end
+  end
+
+  defp stale_schema_version?(subject_kind, schema_ref, schema_version) do
+    current_schema = Map.fetch!(@current_schema_by_subject_ref, {subject_kind, schema_ref})
+
+    schema_version < current_schema.schema_version
   end
 
   defp normalize_payload(payload) when is_map(payload) do

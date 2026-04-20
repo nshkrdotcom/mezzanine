@@ -280,7 +280,6 @@ defmodule Mezzanine.Objects.SubjectRecord do
 
     attribute :schema_version, :integer do
       allow_nil?(false)
-      default(1)
       public?(true)
     end
 
