@@ -34,6 +34,7 @@ defmodule Mezzanine.Review.QuorumProfile do
     :waived_decision_refs,
     :quorum_state,
     :quorum_met?,
+    :quorum_result,
     :quorum_evaluated_at,
     :release_manifest_ref
   ]
@@ -99,6 +100,7 @@ defmodule Mezzanine.Review.QuorumProfile do
       waived_decision_refs: string_list(value(profile, "waived_decision_refs")),
       quorum_state: quorum_state(review_unit.status),
       quorum_met?: review_unit.status == :accepted,
+      quorum_result: quorum_result(review_unit.status),
       quorum_evaluated_at: datetime_value(review_unit.updated_at || review_unit.inserted_at),
       release_manifest_ref: optional_string(value(profile, "release_manifest_ref"))
     }
@@ -186,6 +188,12 @@ defmodule Mezzanine.Review.QuorumProfile do
     do: Atom.to_string(status)
 
   defp quorum_state(_status), do: "pending"
+
+  defp quorum_result(:accepted), do: "met"
+  defp quorum_result(:rejected), do: "rejected"
+  defp quorum_result(:waived), do: "waived"
+  defp quorum_result(:escalated), do: "escalated"
+  defp quorum_result(_status), do: "pending"
 
   defp decision_idempotency_key(%ReviewUnit{id: id}, quorum_mode, profile_hash) do
     "review-decision:#{id}:#{quorum_mode}:#{String.slice(profile_hash, 0, 16)}"

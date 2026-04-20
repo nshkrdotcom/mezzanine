@@ -31,6 +31,7 @@ defmodule Mezzanine.Review.QuorumProfileTest do
              :waived_decision_refs,
              :quorum_state,
              :quorum_met?,
+             :quorum_result,
              :quorum_evaluated_at,
              :release_manifest_ref
            ]
@@ -55,6 +56,7 @@ defmodule Mezzanine.Review.QuorumProfileTest do
     assert profile.reject_policy == "any_reject_veto"
     assert profile.quorum_state == "pending"
     assert profile.quorum_met? == false
+    assert profile.quorum_result == "pending"
     assert profile.quorum_evaluated_at == DateTime.to_iso8601(@now)
     assert String.starts_with?(profile.review_quorum_ref, "review-quorum:")
     assert String.starts_with?(profile.decision_idempotency_key, "review-decision:")
@@ -99,6 +101,7 @@ defmodule Mezzanine.Review.QuorumProfileTest do
     assert profile.actor_evidence_refs == ["actor-evidence:ops_lead"]
     assert profile.quorum_state == "accepted"
     assert profile.quorum_met? == true
+    assert profile.quorum_result == "met"
     assert profile.release_manifest_ref == "phase5_hardening_metrics[9]"
   end
 
