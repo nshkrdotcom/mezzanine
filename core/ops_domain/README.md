@@ -22,6 +22,8 @@ This package owns the first Ash/AshPostgres-backed durable truth for:
 - review units, decisions, waivers, and escalations
 - explicit review quorum profile field normalization for review-unit
   `decision_profile` metadata
+- source-owned review quorum close-behavior specification for supported modes,
+  without changing terminal resolver behavior
 - evidence bundles, evidence items, audit events, and timeline projections
 - operator control sessions and interventions
 

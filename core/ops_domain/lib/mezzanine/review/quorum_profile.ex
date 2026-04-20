@@ -7,7 +7,7 @@ defmodule Mezzanine.Review.QuorumProfile do
   all-required-role semantics. It does not evaluate or close quorum by itself.
   """
 
-  alias Mezzanine.Review.ReviewUnit
+  alias Mezzanine.Review.{QuorumCloseBehavior, ReviewUnit}
 
   @required_fields [
     :review_quorum_ref,
@@ -58,6 +58,15 @@ defmodule Mezzanine.Review.QuorumProfile do
 
   @spec quorum_modes() :: [String.t()]
   def quorum_modes, do: @quorum_modes
+
+  @spec close_behavior(t() | struct() | String.t() | atom()) :: QuorumCloseBehavior.t()
+  def close_behavior(%ReviewUnit{} = review_unit),
+    do: review_unit |> normalize() |> close_behavior()
+
+  def close_behavior(%{quorum_mode: quorum_mode}), do: QuorumCloseBehavior.fetch!(quorum_mode)
+
+  def close_behavior(quorum_mode) when is_binary(quorum_mode) or is_atom(quorum_mode),
+    do: QuorumCloseBehavior.fetch!(quorum_mode)
 
   @spec normalize(struct()) :: t()
   def normalize(%ReviewUnit{} = review_unit) do
