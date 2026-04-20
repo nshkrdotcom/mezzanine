@@ -65,3 +65,17 @@ completions after close emit evidence but cannot increment `close_count` or
 change the close decision. Heterogeneous branch failures are reported by
 branch ref, failure class, safe action, and compensation ref without storing
 raw child payloads in workflow history or Postgres projections.
+
+## Workflow Lifecycle Compensation
+
+`Mezzanine.WorkflowRuntime.WorkflowLifecycleCompensation` defines the Phase 5
+workflow-lifecycle compensation routing profile. Workflow lifecycle
+compensation is routed only as Temporal workflow signals or workflow-owned
+activities; `LifecycleContinuation` remains retry/dead-letter visibility and
+cannot run owner-command or local mutation callbacks for workflow truth.
+
+The profile builds compact signal/activity requests with compensation refs,
+trace/causation/idempotency scope, preconditions, side-effect scope,
+dead-letter refs, and audit/evidence refs. Runtime signal dispatch goes
+through `Mezzanine.WorkflowRuntime.signal_workflow/1` and strips raw Temporal
+SDK/history/task-token data from receipts.
