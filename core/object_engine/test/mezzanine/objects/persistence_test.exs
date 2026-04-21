@@ -56,6 +56,42 @@ defmodule Mezzanine.Objects.PersistenceTest do
     assert audit_fact.payload["schema_hash"] =~ "sha256:"
   end
 
+  test "source-owned pack subject schemas are accepted for governed proofs" do
+    assert {:ok, expense_subject} =
+             SubjectRecord.ingest(%{
+               installation_id: "inst-governed",
+               source_ref: "expense:request:123",
+               subject_kind: "expense_request",
+               lifecycle_state: "submitted",
+               schema_ref: SubjectPayloadSchema.default_schema_ref!("expense_request"),
+               schema_version: SubjectPayloadSchema.default_schema_version!("expense_request"),
+               payload: %{amount_cents: 12_500, merchant: "Atlas Travel"},
+               trace_id: "trace-expense-schema",
+               causation_id: "cause-expense-schema",
+               actor_ref: %{kind: :intake}
+             })
+
+    assert expense_subject.schema_ref == "mezzanine.subject.expense_request.payload.v1"
+    assert expense_subject.payload == %{"amount_cents" => 12_500, "merchant" => "Atlas Travel"}
+
+    assert {:ok, invoice_subject} =
+             SubjectRecord.ingest(%{
+               installation_id: "inst-governed",
+               source_ref: "invoice:request:123",
+               subject_kind: "invoice_request",
+               lifecycle_state: "submitted",
+               schema_ref: SubjectPayloadSchema.default_schema_ref!("invoice_request"),
+               schema_version: SubjectPayloadSchema.default_schema_version!("invoice_request"),
+               payload: %{invoice_number: "INV-42", amount_cents: 42_000},
+               trace_id: "trace-invoice-schema",
+               causation_id: "cause-invoice-schema",
+               actor_ref: %{kind: :intake}
+             })
+
+    assert invoice_subject.schema_ref == "mezzanine.subject.invoice_request.payload.v1"
+    assert invoice_subject.payload == %{"amount_cents" => 42_000, "invoice_number" => "INV-42"}
+  end
+
   test "ingest rejects missing, unknown, stale, or incompatible subject payload schemas" do
     assert {:error, missing_schema_error} =
              SubjectRecord.ingest(%{

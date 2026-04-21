@@ -26,7 +26,27 @@ defmodule Mezzanine.Objects.SubjectPayloadSchema do
     }
   }
 
-  @schemas [@linear_coding_ticket_schema]
+  @expense_request_schema %{
+    subject_kind: "expense_request",
+    schema_ref: "mezzanine.subject.expense_request.payload.v1",
+    schema_version: 1,
+    payload_schema: %{
+      "amount_cents" => :integer,
+      "merchant" => :string
+    }
+  }
+
+  @invoice_request_schema %{
+    subject_kind: "invoice_request",
+    schema_ref: "mezzanine.subject.invoice_request.payload.v1",
+    schema_version: 1,
+    payload_schema: %{
+      "invoice_number" => :string,
+      "amount_cents" => :integer
+    }
+  }
+
+  @schemas [@linear_coding_ticket_schema, @expense_request_schema, @invoice_request_schema]
   @schema_index Map.new(@schemas, fn schema ->
                   {{schema.subject_kind, schema.schema_ref, schema.schema_version}, schema}
                 end)
