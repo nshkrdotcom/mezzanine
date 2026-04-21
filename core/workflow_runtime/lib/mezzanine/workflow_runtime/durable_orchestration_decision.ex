@@ -610,90 +610,170 @@ defmodule Mezzanine.WorkflowRuntime.TemporalexBoundary do
 end
 
 defmodule Mezzanine.Workflows.AgentRun do
-  @moduledoc "Phase 4 agent-run workflow skeleton."
-  @behaviour Temporalex.Workflow
+  @moduledoc "Temporal agent-run workflow with compact semantic activity orchestration."
+
+  use Temporalex.Workflow, task_queue: "mezzanine.agentic"
 
   alias Mezzanine.Workflows.Support
 
-  @doc false
-  def __workflow_type__, do: __MODULE__ |> Module.split() |> Enum.join(".")
+  @impl Temporalex.Workflow
+  def run(input) do
+    with {:ok, semantic} <-
+           execute_activity(Mezzanine.Activities.CallOuterBrain, input,
+             task_queue: "mezzanine.semantic",
+             start_to_close_timeout: :timer.seconds(60)
+           ) do
+      result =
+        Support.compact_result(:agent_run, input, %{semantic_result_ref: semantic.result_ref})
 
-  @doc false
-  def __workflow_defaults__, do: [task_queue: "mezzanine.agentic"]
+      set_state(result)
+      {:ok, result}
+    end
+  end
 
   @impl Temporalex.Workflow
-  def run(input), do: {:ok, Support.compact_result(:agent_run, input)}
+  def handle_query("operator_state.v1", _args, state), do: {:reply, Support.safe_state(state)}
+
+  def handle_query("status", _args, state), do: {:reply, Support.safe_state(state)}
 end
 
 defmodule Mezzanine.Workflows.ExecutionAttempt do
-  @moduledoc "Phase 4 execution-attempt workflow skeleton."
-  @behaviour Temporalex.Workflow
+  @moduledoc "Temporal execution-attempt workflow for the lower-execution lifecycle."
+
+  use Temporalex.Workflow, task_queue: "mezzanine.hazmat"
 
   alias Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow
 
-  @doc false
-  def __workflow_type__, do: __MODULE__ |> Module.split() |> Enum.join(".")
-
-  @doc false
-  def __workflow_defaults__, do: [task_queue: "mezzanine.hazmat"]
+  @impl Temporalex.Workflow
+  def run(input) do
+    with {:ok, lifecycle_input} <- ExecutionLifecycleWorkflow.new_input(input),
+         {:ok, authority} <-
+           execute_activity(Mezzanine.Activities.RequestDecision, input,
+             task_queue: "mezzanine.agentic",
+             start_to_close_timeout: :timer.seconds(10)
+           ),
+         {:ok, lower} <-
+           execute_activity(Mezzanine.Activities.StartLowerExecution, input,
+             start_to_close_timeout: :timer.seconds(30)
+           ) do
+      result = ExecutionLifecycleWorkflow.runtime_result(lifecycle_input, authority, lower)
+      set_state(result)
+      {:ok, result}
+    end
+  end
 
   @impl Temporalex.Workflow
-  def run(input), do: ExecutionLifecycleWorkflow.run(input)
+  def handle_query("operator_state.v1", _args, state), do: {:reply, state || %{}}
+
+  def handle_query("execution_state.v1", _args, state), do: {:reply, state || %{}}
 end
 
 defmodule Mezzanine.Workflows.DecisionReview do
-  @moduledoc "Phase 4 human decision-review workflow skeleton."
-  @behaviour Temporalex.Workflow
+  @moduledoc "Temporal human decision-review workflow with signal/query state."
+
+  use Temporalex.Workflow, task_queue: "mezzanine.review"
 
   alias Mezzanine.WorkflowRuntime.OperatorSignalControl
-
-  @doc false
-  def __workflow_type__, do: __MODULE__ |> Module.split() |> Enum.join(".")
-
-  @doc false
-  def __workflow_defaults__, do: [task_queue: "mezzanine.review"]
+  alias Mezzanine.Workflows.Support
 
   @impl Temporalex.Workflow
-  def run(input), do: OperatorSignalControl.run_decision_review(input)
+  def run(input) do
+    with {:ok, result} <- OperatorSignalControl.run_decision_review(input) do
+      set_state(Map.merge(OperatorSignalControl.initial_ordering_state(), result))
+      {:ok, result}
+    end
+  end
+
+  @impl Temporalex.Workflow
+  def handle_signal(signal_name, payload, state) do
+    attrs =
+      payload
+      |> Support.normalize_payload()
+      |> Map.put(:signal_name, signal_name)
+      |> Map.put_new(:signal_version, "#{String.replace(signal_name, ".", "-")}.v1")
+
+    case OperatorSignalControl.apply_ordered_signal(
+           state || OperatorSignalControl.initial_ordering_state(),
+           attrs
+         ) do
+      {:ok, next_state} -> {:noreply, next_state}
+      {:error, reason} -> {:noreply, Map.put(state || %{}, :last_signal_error, reason)}
+    end
+  end
+
+  @impl Temporalex.Workflow
+  def handle_query("operator_state.v1", _args, state), do: {:reply, state || %{}}
+
+  def handle_query("status", _args, state), do: {:reply, state || %{}}
 end
 
 defmodule Mezzanine.Workflows.JoinBarrier do
-  @moduledoc "Phase 4 fan-in join-barrier workflow skeleton."
-  @behaviour Temporalex.Workflow
+  @moduledoc "Temporal fan-in join-barrier workflow with child completion signals."
+
+  use Temporalex.Workflow, task_queue: "mezzanine.agentic"
 
   alias Mezzanine.WorkflowRuntime.WorkflowFanoutFanin
 
-  @doc false
-  def __workflow_type__, do: __MODULE__ |> Module.split() |> Enum.join(".")
-
-  @doc false
-  def __workflow_defaults__, do: [task_queue: "mezzanine.agentic"]
+  @impl Temporalex.Workflow
+  def run(input) do
+    with {:ok, result} <- WorkflowFanoutFanin.run_join_barrier(input) do
+      set_state(result)
+      {:ok, result}
+    end
+  end
 
   @impl Temporalex.Workflow
-  def run(input), do: WorkflowFanoutFanin.run_join_barrier(input)
+  def handle_signal("child.completed", payload, state) when is_map(state) do
+    case WorkflowFanoutFanin.apply_completion(state, payload) do
+      {:ok, next_state, _events} -> {:noreply, next_state}
+      {:error, reason} -> {:noreply, Map.put(state, :last_signal_error, reason)}
+    end
+  end
+
+  def handle_signal(_signal_name, _payload, state), do: {:noreply, state}
+
+  @impl Temporalex.Workflow
+  def handle_query("fanout.branch_state", _args, %{branches: _branches} = state),
+    do: {:reply, WorkflowFanoutFanin.operator_query(state)}
+
+  def handle_query("fanout.branch_state", _args, state), do: {:reply, state || %{}}
 end
 
 defmodule Mezzanine.Workflows.IncidentReconstruction do
-  @moduledoc "Phase 4 incident-reconstruction workflow skeleton."
-  @behaviour Temporalex.Workflow
+  @moduledoc "Temporal incident-reconstruction workflow with compact activity output."
+
+  use Temporalex.Workflow, task_queue: "mezzanine.agentic"
 
   alias Mezzanine.Workflows.Support
 
-  @doc false
-  def __workflow_type__, do: __MODULE__ |> Module.split() |> Enum.join(".")
+  @impl Temporalex.Workflow
+  def run(input) do
+    with {:ok, semantic_boundary} <-
+           execute_activity(Mezzanine.Activities.SemanticPayloadBoundaryActivity, input,
+             task_queue: "mezzanine.semantic",
+             start_to_close_timeout: :timer.seconds(60)
+           ) do
+      result =
+        Support.compact_result(:incident_reconstruction, input, %{
+          diagnostics_ref: semantic_boundary.diagnostics_ref,
+          semantic_ref: semantic_boundary.semantic_ref
+        })
 
-  @doc false
-  def __workflow_defaults__, do: [task_queue: "mezzanine.agentic"]
+      set_state(result)
+      {:ok, result}
+    end
+  end
 
   @impl Temporalex.Workflow
-  def run(input), do: {:ok, Support.compact_result(:incident_reconstruction, input)}
+  def handle_query("status", _args, state), do: {:reply, Support.safe_state(state)}
 end
 
 defmodule Mezzanine.Workflows.Support do
   @moduledoc false
 
   @spec compact_result(atom(), term()) :: map()
-  def compact_result(workflow_type, input) do
+  @spec compact_result(atom(), term(), map()) :: map()
+  def compact_result(workflow_type, input, extra \\ %{}) do
     %{
       workflow_type: workflow_type,
       status: :accepted,
@@ -701,191 +781,172 @@ defmodule Mezzanine.Workflows.Support do
       resource_ref: map_value(input, :resource_ref),
       routing_facts: map_value(input, :routing_facts, %{})
     }
+    |> Map.merge(extra)
+    |> drop_forbidden_fields()
+  end
+
+  @spec safe_state(term()) :: map()
+  def safe_state(nil), do: %{}
+  def safe_state(state) when is_map(state), do: drop_forbidden_fields(state)
+  def safe_state(state), do: %{value: state}
+
+  @spec normalize_payload(term()) :: map()
+  def normalize_payload(nil), do: %{}
+
+  def normalize_payload(payload) when is_list(payload),
+    do: payload |> Map.new() |> normalize_payload()
+
+  def normalize_payload(%_{} = payload), do: payload |> Map.from_struct() |> normalize_payload()
+
+  def normalize_payload(payload) when is_map(payload) do
+    Map.new(payload, fn
+      {key, value} when is_binary(key) -> {String.to_existing_atom(key), value}
+      pair -> pair
+    end)
+  rescue
+    ArgumentError -> payload
   end
 
   defp map_value(input, key, default \\ nil)
   defp map_value(input, key, default) when is_map(input), do: Map.get(input, key, default)
   defp map_value(_input, _key, default), do: default
+
+  defp drop_forbidden_fields(map) do
+    Map.drop(map, [
+      :raw_temporalex_result,
+      :temporalex_struct,
+      :raw_history_event,
+      :task_token,
+      :raw_payload
+    ])
+  end
 end
 
 defmodule Mezzanine.Activities.StartLowerExecution do
-  @moduledoc "Phase 4 lower-execution activity skeleton."
-  @behaviour Temporalex.Activity
+  @moduledoc "Temporal activity for starting lower execution through the workflow boundary."
+
+  use Temporalex.Activity,
+    task_queue: "mezzanine.hazmat",
+    start_to_close_timeout: 30_000,
+    retry_policy: [max_attempts: 3]
 
   alias Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow
-
-  @doc false
-  def __activity_type__, do: __MODULE__ |> Module.split() |> Enum.join(".")
-
-  @doc false
-  def __activity_defaults__,
-    do: [task_queue: "mezzanine.hazmat", start_to_close_timeout: :timer.seconds(30)]
 
   @impl Temporalex.Activity
   def perform(input), do: ExecutionLifecycleWorkflow.submit_jido_lower_run_activity(input)
-
-  @impl Temporalex.Activity
-  def perform(_ctx, input), do: perform(input)
 end
 
 defmodule Mezzanine.Activities.RecordEvidence do
-  @moduledoc "Phase 4 evidence-recording activity skeleton."
-  @behaviour Temporalex.Activity
+  @moduledoc "Temporal activity for persisting compact terminal evidence refs."
+
+  use Temporalex.Activity,
+    task_queue: "mezzanine.agentic",
+    start_to_close_timeout: 10_000,
+    retry_policy: [max_attempts: 3]
 
   alias Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow
-
-  @doc false
-  def __activity_type__, do: __MODULE__ |> Module.split() |> Enum.join(".")
-
-  @doc false
-  def __activity_defaults__,
-    do: [task_queue: "mezzanine.agentic", start_to_close_timeout: :timer.seconds(10)]
 
   @impl Temporalex.Activity
   def perform(input), do: ExecutionLifecycleWorkflow.persist_terminal_receipt_activity(input)
-
-  @impl Temporalex.Activity
-  def perform(_ctx, input), do: perform(input)
 end
 
 defmodule Mezzanine.Activities.RequestDecision do
-  @moduledoc "Phase 4 Citadel decision-request activity skeleton."
-  @behaviour Temporalex.Activity
+  @moduledoc "Temporal activity for compiling Citadel authority evidence."
+
+  use Temporalex.Activity,
+    task_queue: "mezzanine.agentic",
+    start_to_close_timeout: 10_000,
+    retry_policy: [max_attempts: 3]
 
   alias Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow
 
-  @doc false
-  def __activity_type__, do: __MODULE__ |> Module.split() |> Enum.join(".")
-
-  @doc false
-  def __activity_defaults__,
-    do: [task_queue: "mezzanine.agentic", start_to_close_timeout: :timer.seconds(10)]
-
   @impl Temporalex.Activity
   def perform(input), do: ExecutionLifecycleWorkflow.compile_citadel_authority_activity(input)
-
-  @impl Temporalex.Activity
-  def perform(_ctx, input), do: perform(input)
 end
 
 defmodule Mezzanine.Activities.CallOuterBrain do
-  @moduledoc "Phase 4 semantic activity skeleton."
-  @behaviour Temporalex.Activity
+  @moduledoc "Temporal semantic activity returning compact routing refs."
+
+  use Temporalex.Activity,
+    task_queue: "mezzanine.semantic",
+    start_to_close_timeout: 60_000,
+    retry_policy: [max_attempts: 3]
 
   alias Mezzanine.Activities.Support
-
-  @doc false
-  def __activity_type__, do: __MODULE__ |> Module.split() |> Enum.join(".")
-
-  @doc false
-  def __activity_defaults__,
-    do: [task_queue: "mezzanine.semantic", start_to_close_timeout: :timer.seconds(60)]
 
   @impl Temporalex.Activity
   def perform(input), do: Support.compact_result(:call_outer_brain, input)
-
-  @impl Temporalex.Activity
-  def perform(_ctx, input), do: perform(input)
 end
 
 defmodule Mezzanine.Activities.ReconcileLowerRun do
-  @moduledoc "Phase 4 lower-run reconciliation activity skeleton."
-  @behaviour Temporalex.Activity
+  @moduledoc "Temporal lower-run reconciliation activity with compact output."
+
+  use Temporalex.Activity,
+    task_queue: "mezzanine.agentic",
+    start_to_close_timeout: 30_000,
+    retry_policy: [max_attempts: 3]
 
   alias Mezzanine.Activities.Support
-
-  @doc false
-  def __activity_type__, do: __MODULE__ |> Module.split() |> Enum.join(".")
-
-  @doc false
-  def __activity_defaults__,
-    do: [task_queue: "mezzanine.agentic", start_to_close_timeout: :timer.seconds(30)]
 
   @impl Temporalex.Activity
   def perform(input), do: Support.compact_result(:reconcile_lower_run, input)
-
-  @impl Temporalex.Activity
-  def perform(_ctx, input), do: perform(input)
 end
 
 defmodule Mezzanine.Activities.CompensateCancelledRun do
-  @moduledoc "Phase 4 cancellation-compensation activity skeleton."
-  @behaviour Temporalex.Activity
+  @moduledoc "Temporal cancellation-compensation activity with compact output."
+
+  use Temporalex.Activity,
+    task_queue: "mezzanine.hazmat",
+    start_to_close_timeout: 30_000,
+    retry_policy: [max_attempts: 3]
 
   alias Mezzanine.Activities.Support
 
-  @doc false
-  def __activity_type__, do: __MODULE__ |> Module.split() |> Enum.join(".")
-
-  @doc false
-  def __activity_defaults__,
-    do: [task_queue: "mezzanine.hazmat", start_to_close_timeout: :timer.seconds(30)]
-
   @impl Temporalex.Activity
   def perform(input), do: Support.compact_result(:compensate_cancelled_run, input)
-
-  @impl Temporalex.Activity
-  def perform(_ctx, input), do: perform(input)
 end
 
 defmodule Mezzanine.Activities.SubmitJidoLowerActivity do
   @moduledoc "Phase 4 Jido lower-submission activity with tenant-scoped retry idempotency."
-  @behaviour Temporalex.Activity
+
+  use Temporalex.Activity,
+    task_queue: "mezzanine.hazmat",
+    start_to_close_timeout: 30_000,
+    retry_policy: [max_attempts: 3]
 
   alias Mezzanine.WorkflowRuntime.ActivitySideEffectIdempotency
 
-  @doc false
-  def __activity_type__, do: __MODULE__ |> Module.split() |> Enum.join(".")
-
-  @doc false
-  def __activity_defaults__,
-    do: [task_queue: "mezzanine.hazmat", start_to_close_timeout: :timer.seconds(30)]
-
   @impl Temporalex.Activity
   def perform(input), do: ActivitySideEffectIdempotency.lower_submission_activity(input)
-
-  @impl Temporalex.Activity
-  def perform(_ctx, input), do: perform(input)
 end
 
 defmodule Mezzanine.Activities.ExecutionSideEffectActivity do
   @moduledoc "Phase 4 Execution Plane side-effect activity with lease-bound heartbeat posture."
-  @behaviour Temporalex.Activity
+
+  use Temporalex.Activity,
+    task_queue: "mezzanine.hazmat",
+    start_to_close_timeout: 30_000,
+    heartbeat_timeout: 5_000,
+    retry_policy: [max_attempts: 3]
 
   alias Mezzanine.WorkflowRuntime.ActivitySideEffectIdempotency
 
-  @doc false
-  def __activity_type__, do: __MODULE__ |> Module.split() |> Enum.join(".")
-
-  @doc false
-  def __activity_defaults__,
-    do: [task_queue: "mezzanine.hazmat", start_to_close_timeout: :timer.seconds(30)]
-
   @impl Temporalex.Activity
   def perform(input), do: ActivitySideEffectIdempotency.execution_side_effect_activity(input)
-
-  @impl Temporalex.Activity
-  def perform(_ctx, input), do: perform(input)
 end
 
 defmodule Mezzanine.Activities.SemanticPayloadBoundaryActivity do
   @moduledoc "Phase 4 Outer Brain semantic activity payload boundary."
-  @behaviour Temporalex.Activity
+
+  use Temporalex.Activity,
+    task_queue: "mezzanine.semantic",
+    start_to_close_timeout: 60_000,
+    retry_policy: [max_attempts: 3]
 
   alias Mezzanine.WorkflowRuntime.ActivitySideEffectIdempotency
 
-  @doc false
-  def __activity_type__, do: __MODULE__ |> Module.split() |> Enum.join(".")
-
-  @doc false
-  def __activity_defaults__,
-    do: [task_queue: "mezzanine.semantic", start_to_close_timeout: :timer.seconds(60)]
-
   @impl Temporalex.Activity
   def perform(input), do: ActivitySideEffectIdempotency.semantic_workflow_history_payload(input)
-
-  @impl Temporalex.Activity
-  def perform(_ctx, input), do: perform(input)
 end
 
 defmodule Mezzanine.Activities.Support do

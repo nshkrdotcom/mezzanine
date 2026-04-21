@@ -57,23 +57,31 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     with {:ok, input} <- new_input(attrs),
          {:ok, authority} <- compile_citadel_authority_activity(input),
          {:ok, lower} <- submit_jido_lower_run_activity(input) do
-      {:ok,
-       %{
-         workflow_id: input.workflow_id,
-         workflow_type: input.workflow_type,
-         workflow_version: input.workflow_version,
-         workflow_state: "accepted_active",
-         activity_refs: [
-           authority.activity_call_ref,
-           lower.activity_call_ref
-         ],
-         lower_refs: [lower.lower_submission_ref],
-         trace_id: input.trace_id,
-         resource_ref: input.resource_ref,
-         routing_facts: input.routing_facts,
-         history_policy: "compact_refs_only"
-       }}
+      {:ok, runtime_result(input, authority, lower)}
     end
+  end
+
+  @doc "Build the compact workflow result from durable activity outputs."
+  @spec runtime_result(WorkflowExecutionLifecycleInput.t(), map(), map()) :: map()
+  def runtime_result(%WorkflowExecutionLifecycleInput{} = input, authority, lower) do
+    authority = normalize(authority)
+    lower = normalize(lower)
+
+    %{
+      workflow_id: input.workflow_id,
+      workflow_type: input.workflow_type,
+      workflow_version: input.workflow_version,
+      workflow_state: "accepted_active",
+      activity_refs: [
+        authority.activity_call_ref,
+        lower.activity_call_ref
+      ],
+      lower_refs: [lower.lower_submission_ref],
+      trace_id: input.trace_id,
+      resource_ref: input.resource_ref,
+      routing_facts: input.routing_facts,
+      history_policy: "compact_refs_only"
+    }
   end
 
   @doc "Initial in-memory workflow state used by pure tests and query projections."

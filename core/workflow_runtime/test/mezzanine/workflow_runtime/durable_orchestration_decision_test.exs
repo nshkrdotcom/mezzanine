@@ -71,6 +71,57 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecisionTest do
     end
   end
 
+  test "workflow and activity modules are Temporalex runtime modules, not skeletons" do
+    expected_workflow_queues = %{
+      Mezzanine.Workflows.AgentRun => "mezzanine.agentic",
+      Mezzanine.Workflows.ExecutionAttempt => "mezzanine.hazmat",
+      Mezzanine.Workflows.DecisionReview => "mezzanine.review",
+      Mezzanine.Workflows.JoinBarrier => "mezzanine.agentic",
+      Mezzanine.Workflows.IncidentReconstruction => "mezzanine.agentic"
+    }
+
+    for {workflow, task_queue} <- expected_workflow_queues do
+      assert workflow.__workflow_defaults__()[:task_queue] == task_queue
+      assert function_exported?(workflow, :handle_query, 3)
+    end
+
+    expected_activity_queues = %{
+      Mezzanine.Activities.StartLowerExecution => "mezzanine.hazmat",
+      Mezzanine.Activities.RecordEvidence => "mezzanine.agentic",
+      Mezzanine.Activities.RequestDecision => "mezzanine.agentic",
+      Mezzanine.Activities.CallOuterBrain => "mezzanine.semantic",
+      Mezzanine.Activities.ReconcileLowerRun => "mezzanine.agentic",
+      Mezzanine.Activities.CompensateCancelledRun => "mezzanine.hazmat",
+      Mezzanine.Activities.SubmitJidoLowerActivity => "mezzanine.hazmat",
+      Mezzanine.Activities.ExecutionSideEffectActivity => "mezzanine.hazmat",
+      Mezzanine.Activities.SemanticPayloadBoundaryActivity => "mezzanine.semantic"
+    }
+
+    for {activity, task_queue} <- expected_activity_queues do
+      defaults = activity.__activity_defaults__()
+
+      assert defaults[:task_queue] == task_queue
+      assert is_integer(defaults[:start_to_close_timeout])
+      assert defaults[:retry_policy][:max_attempts] == 3
+      assert %Temporalex.RetryPolicy{} = Temporalex.RetryPolicy.from_opts(defaults[:retry_policy])
+    end
+
+    source =
+      File.read!(
+        Path.join(
+          @mezzanine_root,
+          "core/workflow_runtime/lib/mezzanine/workflow_runtime/durable_orchestration_decision.ex"
+        )
+      )
+
+    refute source =~ "workflow skeleton"
+    refute source =~ "activity skeleton"
+    assert source =~ "execute_activity(Mezzanine.Activities.CallOuterBrain"
+    assert source =~ ~s(task_queue: "mezzanine.semantic")
+    assert source =~ "execute_activity(Mezzanine.Activities.RequestDecision"
+    assert source =~ ~s(task_queue: "mezzanine.agentic")
+  end
+
   test "declares the concrete Temporalex adapter and worker supervision contract" do
     assert DurableOrchestrationDecision.runtime_adapter() ==
              Mezzanine.WorkflowRuntime.TemporalexAdapter

@@ -1,5 +1,6 @@
 defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
   use ExUnit.Case, async: false
+  use Temporalex.Testing
 
   alias Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow
   alias Mezzanine.Workflows.ExecutionAttempt
@@ -72,7 +73,15 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
   end
 
   test "workflow run emits compact lifecycle history and no raw lower payloads" do
-    assert {:ok, result} = ExecutionAttempt.run(lifecycle_attrs())
+    assert {:ok, result} =
+             run_workflow(ExecutionAttempt, lifecycle_attrs(),
+               activities: %{
+                 Mezzanine.Activities.RequestDecision =>
+                   &ExecutionLifecycleWorkflow.compile_citadel_authority_activity/1,
+                 Mezzanine.Activities.StartLowerExecution =>
+                   &ExecutionLifecycleWorkflow.submit_jido_lower_run_activity/1
+               }
+             )
 
     assert result.workflow_state == "accepted_active"
     assert result.workflow_id == "workflow-093"
@@ -86,6 +95,10 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     assert result.routing_facts.review_required == false
     refute Map.has_key?(result, :raw_lower_payload)
     refute Map.has_key?(result, :temporalex_struct)
+
+    assert_activity_called(Mezzanine.Activities.RequestDecision)
+    assert_activity_called(Mezzanine.Activities.StartLowerExecution)
+    assert get_workflow_state().workflow_state == "accepted_active"
   end
 
   test "activities compile authority, submit lower work idempotently, and persist terminal receipts" do
@@ -195,7 +208,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
       trace_id: "trace-093",
       correlation_id: "corr-093",
       release_manifest_ref: "phase4-v6-milestone27-execution-lifecycle-workflow",
-      retry_policy: %{maximum_attempts: 3},
+      retry_policy: %{max_attempts: 3},
       terminal_policy: "quarantine_late_receipts",
       routing_facts: %{review_required: false, risk_band: "low"}
     }
