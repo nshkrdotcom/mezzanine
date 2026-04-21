@@ -50,6 +50,13 @@ defmodule Mezzanine.Execution.LifecycleContinuationTest do
     assert retry.status == :retry_scheduled
     assert retry.attempt_count == 1
     assert retry.last_error_class == "transient_lock"
+    [evidence] = retry.metadata["compensation_evidence"]
+    assert evidence_field(evidence, "event_kind") in [:retry_scheduled, "retry_scheduled"]
+    assert evidence_field(evidence, "attempt_number") == 1
+    assert evidence_field(evidence, "max_attempts") == 3
+
+    assert evidence_field(evidence, "dead_letter_ref") ==
+             "dead-letter:lifecycle-continuation:continuation-transient"
 
     assert DateTime.compare(retry.next_attempt_at, DateTime.add(@now, 10_000, :millisecond)) ==
              :eq
@@ -73,6 +80,10 @@ defmodule Mezzanine.Execution.LifecycleContinuationTest do
     assert dead_lettered.status == :dead_lettered
     assert dead_lettered.attempt_count == 1
     assert dead_lettered.last_error_class == "invalid_transition"
+    [evidence] = dead_lettered.metadata["compensation_evidence"]
+    assert evidence_field(evidence, "event_kind") in [:dead_lettered, "dead_lettered"]
+    assert evidence_field(evidence, "failure_class") == "invalid_transition"
+    assert evidence_field(evidence, "owner_command_or_signal")["kind"] == "owner_command"
   end
 
   test "continuations without a declared target dead-letter instead of running dispatcher code" do
@@ -87,6 +98,8 @@ defmodule Mezzanine.Execution.LifecycleContinuationTest do
     assert dead_lettered.status == :dead_lettered
     assert dead_lettered.last_error_class == "invalid_transition"
     assert dead_lettered.last_error_message =~ "missing_lifecycle_continuation_target"
+    [evidence] = dead_lettered.metadata["compensation_evidence"]
+    assert evidence_field(evidence, "owner_command_or_signal")["kind"] == "invalid_target"
   end
 
   test "workflow signal targets are explicit declared dispatch targets" do
@@ -122,13 +135,41 @@ defmodule Mezzanine.Execution.LifecycleContinuationTest do
 
     assert dead_lettered.status == :dead_lettered
 
-    assert {:ok, retryable} =
+    assert {:error, {:missing_operator_action_evidence_fields, missing_fields}} =
              LifecycleContinuation.retry(dead_lettered.continuation_id,
                now: DateTime.add(@now, 1, :second)
              )
 
+    assert :operator_action_ref in missing_fields
+    assert :operator_actor_ref in missing_fields
+    assert :authority_decision_ref in missing_fields
+
+    assert {:ok, retryable} =
+             LifecycleContinuation.retry(dead_lettered.continuation_id,
+               now: DateTime.add(@now, 1, :second),
+               operator_action_ref: "operator-action:retry:continuation-retry",
+               operator_actor_ref: "actor:operator:retry",
+               authority_decision_ref: "authority-decision:retry",
+               safe_action: "retry owner command once",
+               blast_radius: "lifecycle continuation row only"
+             )
+
     assert retryable.status == :pending
     assert retryable.last_error_class == nil
+    [_dead_letter, operator_evidence] = retryable.metadata["compensation_evidence"]
+
+    assert evidence_field(operator_evidence, "event_kind") in [
+             :operator_action,
+             "operator_action"
+           ]
+
+    assert evidence_field(operator_evidence, "compensation_kind") in [
+             :operator_retry,
+             "operator_retry"
+           ]
+
+    assert evidence_field(operator_evidence, "operator_action_ref") ==
+             "operator-action:retry:continuation-retry"
 
     assert {:ok, completed} =
              LifecycleContinuation.process(retryable.continuation_id,
@@ -143,6 +184,45 @@ defmodule Mezzanine.Execution.LifecycleContinuationTest do
                now: DateTime.add(@now, 3, :second),
                dispatcher: OkOwnerCommandDispatcher
              )
+  end
+
+  test "operator waive requires operator action evidence before completion" do
+    continuation = continuation_fixture!("waive")
+
+    assert {:error, {:missing_operator_action_evidence_fields, missing_fields}} =
+             LifecycleContinuation.waive(continuation.continuation_id,
+               now: DateTime.add(@now, 1, :second)
+             )
+
+    assert :operator_action_ref in missing_fields
+
+    assert {:ok, waived} =
+             LifecycleContinuation.waive(continuation.continuation_id,
+               now: DateTime.add(@now, 2, :second),
+               reason: "operator accepted external completion evidence",
+               operator_action_ref: "operator-action:waive:continuation-waive",
+               operator_actor_ref: "actor:operator:waive",
+               authority_decision_ref: "authority-decision:waive",
+               safe_action: "waive continuation only",
+               blast_radius: "lifecycle continuation row only"
+             )
+
+    assert waived.status == :completed
+    assert waived.last_error_class == "operator_waived"
+    [operator_evidence] = waived.metadata["compensation_evidence"]
+
+    assert evidence_field(operator_evidence, "event_kind") in [
+             :operator_action,
+             "operator_action"
+           ]
+
+    assert evidence_field(operator_evidence, "compensation_kind") in [
+             :operator_waive,
+             "operator_waive"
+           ]
+
+    assert evidence_field(operator_evidence, "operator_action_ref") ==
+             "operator-action:waive:continuation-waive"
   end
 
   defp continuation_fixture!(suffix, opts \\ []) do
@@ -175,4 +255,7 @@ defmodule Mezzanine.Execution.LifecycleContinuationTest do
       }
     }
   end
+
+  defp evidence_field(evidence, field),
+    do: Map.get(evidence, field) || Map.get(evidence, String.to_atom(field))
 end

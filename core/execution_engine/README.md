@@ -44,6 +44,10 @@ This package now owns the Phase `2.4.4` durable execution slice:
   owner-command targets for execution, decision, audit, archival, lower, and
   projection repair while keeping `LifecycleContinuation` as retry/dead-letter
   visibility only
+- compensation retry, dead-letter, and operator action evidence through
+  `Mezzanine.Execution.CompensationEvidence`, which rejects silent retry loops,
+  missing operator evidence, hidden rollback callbacks, raw payloads, task
+  tokens, and lifecycle-continuation-handler repair targets
 
 Primary modules:
 
@@ -57,3 +61,4 @@ Primary modules:
 - `Mezzanine.Execution.LifecycleContinuation`
 - `Mezzanine.Execution.OwnerDirectedCompensation`
 - `Mezzanine.Execution.BoundedContextRepairRouting`
+- `Mezzanine.Execution.CompensationEvidence`

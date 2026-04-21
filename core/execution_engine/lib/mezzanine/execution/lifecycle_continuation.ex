@@ -11,6 +11,7 @@ defmodule Mezzanine.Execution.LifecycleContinuation do
   import Ecto.Changeset
   import Ecto.Query
 
+  alias Mezzanine.Execution.CompensationEvidence
   alias Mezzanine.Execution.Repo
 
   @primary_key {:continuation_id, :string, autogenerate: false}
@@ -206,13 +207,15 @@ defmodule Mezzanine.Execution.LifecycleContinuation do
 
     Repo.transaction(fn ->
       with {:ok, continuation} <- locked_fetch(continuation_id),
-           :ok <- ensure_retryable_operator_state(continuation) do
+           :ok <- ensure_retryable_operator_state(continuation),
+           {:ok, evidence} <- operator_action_evidence(continuation, :operator_retry, opts) do
         continuation
         |> changeset(%{
           status: :pending,
           next_attempt_at: now,
           last_error_class: nil,
-          last_error_message: nil
+          last_error_message: nil,
+          metadata: append_evidence(continuation, evidence)
         })
         |> Repo.update!()
       else
@@ -226,22 +229,108 @@ defmodule Mezzanine.Execution.LifecycleContinuation do
     now = Keyword.get(opts, :now, DateTime.utc_now() |> DateTime.truncate(:microsecond))
 
     Repo.transaction(fn ->
-      case locked_fetch(continuation_id) do
-        {:ok, continuation} ->
-          continuation
-          |> changeset(%{
-            status: :completed,
-            next_attempt_at: now,
-            last_error_class: "operator_waived",
-            last_error_message: Keyword.get(opts, :reason, "operator waived continuation")
-          })
-          |> Repo.update!()
-
+      with {:ok, continuation} <- locked_fetch(continuation_id),
+           {:ok, evidence} <- operator_action_evidence(continuation, :operator_waive, opts) do
+        continuation
+        |> changeset(%{
+          status: :completed,
+          next_attempt_at: now,
+          last_error_class: "operator_waived",
+          last_error_message: Keyword.get(opts, :reason, "operator waived continuation"),
+          metadata: append_evidence(continuation, evidence)
+        })
+        |> Repo.update!()
+      else
         {:error, reason} ->
           Repo.rollback(reason)
       end
     end)
   end
+
+  defp operator_action_evidence(%__MODULE__{} = continuation, compensation_kind, opts) do
+    continuation
+    |> evidence_attrs(:operator_action, opts,
+      compensation_kind: compensation_kind,
+      failure_class: Atom.to_string(compensation_kind),
+      failure_reason: Keyword.get(opts, :reason, "operator compensation action"),
+      operator_action_ref: Keyword.get(opts, :operator_action_ref),
+      operator_actor_ref: Keyword.get(opts, :operator_actor_ref),
+      authority_decision_ref: Keyword.get(opts, :authority_decision_ref),
+      safe_action: Keyword.get(opts, :safe_action),
+      blast_radius: Keyword.get(opts, :blast_radius)
+    )
+    |> CompensationEvidence.record()
+  end
+
+  defp append_evidence(%__MODULE__{metadata: metadata}, evidence),
+    do: CompensationEvidence.append_to_metadata(metadata, evidence)
+
+  defp evidence_attrs(%__MODULE__{} = continuation, event_kind, opts, overrides) do
+    target = evidence_target(continuation)
+    max_attempts = Keyword.get(opts, :max_attempts, @default_max_attempts)
+    backoff_ms = Keyword.get(opts, :backoff_ms, @default_backoff_ms)
+    attempt_number = max(continuation.attempt_count, 1)
+    metadata = continuation.metadata || %{}
+
+    %{
+      event_kind: event_kind,
+      compensation_ref:
+        metadata_value(metadata, "compensation_ref") ||
+          "compensation:lifecycle-continuation:#{continuation.continuation_id}",
+      source_context: "lifecycle_continuation",
+      source_event_ref: continuation.continuation_id,
+      failed_step_ref: continuation.target_transition,
+      tenant_id: continuation.tenant_id,
+      installation_id: continuation.installation_id,
+      trace_id: continuation.trace_id,
+      causation_id:
+        metadata_value(metadata, "causation_id") ||
+          "lifecycle-continuation:#{continuation.continuation_id}",
+      canonical_idempotency_key:
+        target_value(target, "idempotency_key") ||
+          "lifecycle-continuation:#{continuation.continuation_id}",
+      compensation_owner: compensation_owner(target),
+      compensation_kind: Keyword.get(overrides, :compensation_kind, :retry),
+      owner_command_or_signal: target,
+      attempt_ref: "#{continuation.continuation_id}:#{event_kind}:#{attempt_number}",
+      attempt_number: attempt_number,
+      max_attempts: max_attempts,
+      retry_policy: %{max_attempts: max_attempts, backoff_ms: backoff_ms},
+      dead_letter_ref:
+        metadata_value(metadata, "dead_letter_ref") ||
+          "dead-letter:lifecycle-continuation:#{continuation.continuation_id}",
+      failure_class: Keyword.get(overrides, :failure_class),
+      failure_reason: Keyword.get(overrides, :failure_reason),
+      next_attempt_at: Keyword.get(overrides, :next_attempt_at),
+      operator_action_ref: Keyword.get(overrides, :operator_action_ref),
+      operator_actor_ref: Keyword.get(overrides, :operator_actor_ref),
+      authority_decision_ref: Keyword.get(overrides, :authority_decision_ref),
+      safe_action: Keyword.get(overrides, :safe_action),
+      blast_radius: Keyword.get(overrides, :blast_radius),
+      audit_or_evidence_ref:
+        Keyword.get(opts, :audit_or_evidence_ref) ||
+          metadata_value(metadata, "audit_or_evidence_ref") ||
+          "audit:lifecycle-continuation:#{continuation.continuation_id}:#{event_kind}:#{attempt_number}",
+      release_manifest_ref: CompensationEvidence.release_manifest_ref()
+    }
+  end
+
+  defp evidence_target(%__MODULE__{} = continuation) do
+    case dispatch_target(continuation) do
+      {:ok, target} -> target
+      {:error, reason} -> %{"kind" => "invalid_target", "reason" => inspect(reason)}
+    end
+  end
+
+  defp compensation_owner(%{"kind" => "workflow_signal"}), do: "workflow_lifecycle"
+  defp compensation_owner(%{"owner" => owner}) when is_binary(owner), do: owner
+  defp compensation_owner(_target), do: "lifecycle_continuation"
+
+  defp target_value(target, field),
+    do: Map.get(target, field) || Map.get(target, String.to_atom(field))
+
+  defp metadata_value(metadata, field),
+    do: Map.get(metadata, field) || Map.get(metadata, String.to_atom(field))
 
   defp claim_for_processing(continuation_id, now) do
     Repo.transaction(fn ->
@@ -383,7 +472,8 @@ defmodule Mezzanine.Execution.LifecycleContinuation do
         continuation,
         terminal_class(class, continuation.attempt_count, max_attempts),
         reason,
-        now
+        now,
+        opts
       )
     else
       schedule_retry(continuation, class, reason, now, opts)
@@ -411,24 +501,43 @@ defmodule Mezzanine.Execution.LifecycleContinuation do
     backoff_ms = Keyword.get(opts, :backoff_ms, @default_backoff_ms)
     next_attempt_at = DateTime.add(now, backoff_ms * continuation.attempt_count, :millisecond)
 
-    continuation
-    |> changeset(%{
-      status: :retry_scheduled,
-      next_attempt_at: next_attempt_at,
-      last_error_class: class,
-      last_error_message: inspect(reason)
-    })
-    |> Repo.update()
+    with {:ok, evidence} <-
+           continuation
+           |> evidence_attrs(:retry_scheduled, opts,
+             failure_class: class,
+             failure_reason: inspect(reason),
+             next_attempt_at: next_attempt_at
+           )
+           |> CompensationEvidence.record() do
+      continuation
+      |> changeset(%{
+        status: :retry_scheduled,
+        next_attempt_at: next_attempt_at,
+        last_error_class: class,
+        last_error_message: inspect(reason),
+        metadata: append_evidence(continuation, evidence)
+      })
+      |> Repo.update()
+    end
   end
 
-  defp dead_letter(%__MODULE__{} = continuation, class, reason, now) do
-    continuation
-    |> changeset(%{
-      status: :dead_lettered,
-      next_attempt_at: now,
-      last_error_class: class,
-      last_error_message: inspect(reason)
-    })
-    |> Repo.update()
+  defp dead_letter(%__MODULE__{} = continuation, class, reason, now, opts) do
+    with {:ok, evidence} <-
+           continuation
+           |> evidence_attrs(:dead_lettered, opts,
+             failure_class: class,
+             failure_reason: inspect(reason)
+           )
+           |> CompensationEvidence.record() do
+      continuation
+      |> changeset(%{
+        status: :dead_lettered,
+        next_attempt_at: now,
+        last_error_class: class,
+        last_error_message: inspect(reason),
+        metadata: append_evidence(continuation, evidence)
+      })
+      |> Repo.update()
+    end
   end
 end
