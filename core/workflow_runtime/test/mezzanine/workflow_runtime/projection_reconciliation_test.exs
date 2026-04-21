@@ -100,15 +100,12 @@ defmodule Mezzanine.WorkflowRuntime.ProjectionReconciliationTest do
     assert query =~ "wso.workflow_type = 'execution_attempt'"
     assert query =~ "COALESCE(wo.workflow_id, ep.expected_workflow_id) AS workflow_id"
 
-    for state <- [
-          "queued",
-          "in_flight",
-          "accepted_active",
-          "pending_dispatch",
-          "dispatching_retry",
-          "awaiting_receipt"
-        ] do
+    for state <- ["queued", "in_flight", "accepted_active"] do
       assert query =~ "'#{state}'"
+    end
+
+    for state <- ["pending_dispatch", "dispatching_retry", "awaiting_receipt"] do
+      refute query =~ "'#{state}'"
     end
   end
 
@@ -184,14 +181,14 @@ defmodule Mezzanine.WorkflowRuntime.ProjectionReconciliationTest do
     assert :no_non_workflow_runtime_enqueue_writers_by_source_scan in retirement_gate
   end
 
-  test "dispatch-state reduction profile preserves old values only as read aliases" do
+  test "dispatch-state reduction profile is canonical-only after the drain gate" do
     reduction = ProjectionReconciliation.dispatch_state_reduction_profile()
 
     assert reduction.active_targets == [:queued, :in_flight, :accepted_active]
     refute reduction.new_legacy_writes_allowed?
-    assert reduction.legacy_aliases.pending_dispatch == :queued
-    assert reduction.legacy_aliases.dispatching_retry == :in_flight
-    assert reduction.legacy_aliases.awaiting_receipt == :accepted_active
+    assert reduction.legacy_aliases == %{}
+    assert reduction.drain_gate == :closed_by_m2am_strict_greenfield_source_scan
+    assert reduction.reader_policy == :canonical_active_states_only_after_live_rows_drain
     assert :last_dispatch_error_kind in reduction.evidence_fields
     assert :lower_receipt in reduction.evidence_fields
   end

@@ -20,7 +20,6 @@ mutate old Oban saga jobs or enqueue lower-cancel workers.
 Primary modules:
 
 - `Mezzanine.OperatorCommands`
-- `Mezzanine.ExecutionCancelWorker` (retired tombstone)
 - `Mezzanine.ControlRoom.ForensicReplay`
 - `Mezzanine.ControlRoom.IncidentBundle`
 - `Mezzanine.ControlRoom.IncidentExportBundle`

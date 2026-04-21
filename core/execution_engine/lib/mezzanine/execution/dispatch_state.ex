@@ -2,27 +2,16 @@ defmodule Mezzanine.Execution.DispatchState do
   @moduledoc """
   Canonical Phase 5 execution dispatch-state vocabulary.
 
-  New active writes use reduced state names. Legacy active states remain
-  readable aliases until live rows drain.
+  Active execution dispatch state is canonical-only after the strict Temporal
+  cutover drain gate.
   """
 
   @active_targets [:queued, :in_flight, :accepted_active]
-  @legacy_active_alias_pairs [
-    pending_dispatch: :queued,
-    dispatching: :in_flight,
-    dispatching_retry: :in_flight,
-    awaiting_receipt: :accepted_active,
-    running: :accepted_active
-  ]
-  @legacy_active_states Keyword.keys(@legacy_active_alias_pairs)
   @terminal_states [:completed, :cancelled, :failed, :rejected, :stalled]
-  @all_states @active_targets ++ @legacy_active_states ++ @terminal_states
-  @accepted_active_states [:accepted_active, :awaiting_receipt, :running]
-  @in_flight_states [:in_flight, :dispatching, :dispatching_retry]
-  @canonical_by_atom Map.merge(
-                       Map.new(@active_targets, &{&1, &1}),
-                       Map.new(@legacy_active_alias_pairs)
-                     )
+  @all_states @active_targets ++ @terminal_states
+  @accepted_active_states [:accepted_active]
+  @in_flight_states [:in_flight]
+  @canonical_by_atom Map.new(@all_states, &{&1, &1})
   @canonical_by_string Map.new(@canonical_by_atom, fn {state, canonical} ->
                          {Atom.to_string(state), canonical}
                        end)
@@ -31,7 +20,7 @@ defmodule Mezzanine.Execution.DispatchState do
   def active_targets, do: @active_targets
 
   @spec active_states() :: [atom()]
-  def active_states, do: @active_targets ++ @legacy_active_states
+  def active_states, do: @active_targets
 
   @spec active_state_strings() :: [String.t()]
   def active_state_strings, do: strings(active_states())

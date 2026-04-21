@@ -14,12 +14,7 @@ defmodule Mezzanine.WorkflowRuntime.ProjectionReconciliation do
   @postgres_active_states [
     "queued",
     "in_flight",
-    "accepted_active",
-    "pending_dispatch",
-    "dispatching",
-    "dispatching_retry",
-    "awaiting_receipt",
-    "running"
+    "accepted_active"
   ]
 
   @postgres_terminal_states [
@@ -177,11 +172,6 @@ defmodule Mezzanine.WorkflowRuntime.ProjectionReconciliation do
       'queued',
       'in_flight',
       'accepted_active',
-      'pending_dispatch',
-      'dispatching',
-      'dispatching_retry',
-      'awaiting_receipt',
-      'running',
       'completed',
       'cancelled',
       'failed',
@@ -253,13 +243,7 @@ defmodule Mezzanine.WorkflowRuntime.ProjectionReconciliation do
 
   @dispatch_state_reduction %{
     active_targets: [:queued, :in_flight, :accepted_active],
-    legacy_aliases: %{
-      pending_dispatch: :queued,
-      dispatching: :in_flight,
-      dispatching_retry: :in_flight,
-      awaiting_receipt: :accepted_active,
-      running: :accepted_active
-    },
+    legacy_aliases: %{},
     evidence_fields: [
       :dispatch_attempt_count,
       :last_dispatch_error_kind,
@@ -270,7 +254,8 @@ defmodule Mezzanine.WorkflowRuntime.ProjectionReconciliation do
       :last_reconcile_wave_id
     ],
     new_legacy_writes_allowed?: false,
-    reader_policy: :read_legacy_values_through_alias_until_live_rows_drain
+    drain_gate: :closed_by_m2am_strict_greenfield_source_scan,
+    reader_policy: :canonical_active_states_only_after_live_rows_drain
   }
 
   @active_workflow_truth_policy %{

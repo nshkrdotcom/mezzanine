@@ -1,19 +1,7 @@
-defmodule Mezzanine.ExecutionDispatchWorkerTest do
+defmodule Mezzanine.ExecutionWorkflowHandoffTest do
   use Mezzanine.Execution.DataCase, async: false
 
   alias Mezzanine.Execution.{ExecutionRecord, Repo}
-  alias Mezzanine.ExecutionDispatchWorker
-
-  test "dispatch worker is a retired M31 tombstone, not an Oban worker" do
-    assert ExecutionDispatchWorker.retired?()
-    refute function_exported?(ExecutionDispatchWorker, :perform, 1)
-
-    assert %{
-             workflow: "Mezzanine.Workflows.ExecutionAttempt",
-             activity: "Mezzanine.Activities.SubmitJidoLowerActivity",
-             envelope: "Mezzanine.WorkflowExecutionLifecycleInput.v1"
-           } = ExecutionDispatchWorker.replacement()
-  end
 
   test "execution dispatch records a Temporal workflow handoff without enqueueing saga jobs" do
     assert {:ok, subject} = ingest_subject("linear:ticket:temporal-cutover-dispatch")

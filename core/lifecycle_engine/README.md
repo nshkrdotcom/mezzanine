@@ -15,18 +15,14 @@ This package now owns the first real Stage `9.1` lifecycle slice:
   `{:execution_completed, recipe_ref}` and
   `{:execution_failed, recipe_ref[, failure_kind]}`
 - idempotent reconcile-to-receipt recovery owned by Temporal workflow
-  activities for executions stranded in `:awaiting_receipt`
+  activities for executions projected as canonical `:accepted_active`
 - installation revision gating before governed execution requests are queued;
   stale callers receive attempted/current revision diagnostics and no lower
   submission
-- `ExecutionReceiptWorker`, `ExecutionReconcileWorker`,
-  `JoinAdvanceWorker`, and `LifecycleContinuationWorker` retained only as M31
-  tombstones proving the old Oban saga workers are retired
+- old receipt, reconcile, join, and lifecycle continuation Oban saga workers
+  are blocked by `Mezzanine.WorkflowRuntime.FinalTemporalCutover` source scans;
+  no retired worker tombstone modules remain in runtime source
 
 Primary modules:
 
 - `Mezzanine.LifecycleEvaluator`
-- `Mezzanine.ExecutionReceiptWorker` (retired tombstone)
-- `Mezzanine.ExecutionReconcileWorker` (retired tombstone)
-- `Mezzanine.JoinAdvanceWorker` (retired tombstone)
-- `Mezzanine.LifecycleContinuationWorker` (retired tombstone)

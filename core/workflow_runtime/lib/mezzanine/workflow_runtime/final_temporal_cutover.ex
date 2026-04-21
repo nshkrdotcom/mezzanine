@@ -49,6 +49,19 @@ defmodule Mezzanine.WorkflowRuntime.FinalTemporalCutover do
   ]
 
   @invalid_queues [:cancel, :decision_expiry, :dispatch, :join, :lifecycle, :receipt, :reconcile]
+  @retired_worker_names Enum.map(@retired_workers, & &1.worker)
+  @legacy_execution_dispatch_states [
+    "pending_dispatch",
+    "dispatching",
+    "dispatching_retry",
+    "awaiting_receipt",
+    "running"
+  ]
+
+  @retired_worker_registry_files [
+    "/core/workflow_runtime/lib/mezzanine/workflow_runtime/final_temporal_cutover.ex",
+    "/core/workflow_runtime/lib/mezzanine/workflow_runtime/durable_orchestration_decision.ex"
+  ]
 
   @doc "Final cutover manifest shape consumed by Stack Lab Scenario 104."
   @spec manifest() :: map()
@@ -118,6 +131,62 @@ defmodule Mezzanine.WorkflowRuntime.FinalTemporalCutover do
     end)
   end
 
+  @doc "Returns retired worker module definitions that still exist in runtime source."
+  @spec retired_worker_module_definitions(Path.t() | String.t()) :: [map()]
+  def retired_worker_module_definitions(root) do
+    root
+    |> source_files("*.ex")
+    |> Enum.reject(&retired_worker_registry_file?/1)
+    |> Enum.flat_map(fn path ->
+      text = File.read!(path)
+
+      @retired_worker_names
+      |> Enum.filter(&Regex.match?(~r/defmodule\s+#{Regex.escape(&1)}\s+do/, text))
+      |> Enum.map(fn worker -> %{path: relative(root, path), module: worker} end)
+    end)
+  end
+
+  @doc "Returns non-registry source references to retired Oban saga worker modules."
+  @spec retired_worker_runtime_references(Path.t() | String.t()) :: [map()]
+  def retired_worker_runtime_references(root) do
+    root
+    |> source_files("*.ex")
+    |> Enum.reject(&retired_worker_registry_file?/1)
+    |> Enum.flat_map(fn path ->
+      text = File.read!(path)
+
+      @retired_worker_names
+      |> Enum.filter(&String.contains?(text, &1))
+      |> Enum.map(fn worker -> %{path: relative(root, path), module: worker} end)
+    end)
+  end
+
+  @doc "Returns direct source writes that still emit legacy execution dispatch states."
+  @spec legacy_execution_dispatch_state_write_references(Path.t() | String.t()) :: [map()]
+  def legacy_execution_dispatch_state_write_references(root) do
+    root
+    |> source_files("*.ex")
+    |> Enum.filter(&dispatch_state_write_source_file?/1)
+    |> Enum.flat_map(fn path ->
+      path
+      |> source_lines()
+      |> Enum.flat_map(&legacy_dispatch_state_line_references(root, path, &1))
+    end)
+  end
+
+  @doc "Returns direct Temporalex references outside the workflow-runtime boundary."
+  @spec temporalex_boundary_violations(Path.t() | String.t()) :: [map()]
+  def temporalex_boundary_violations(root) do
+    root
+    |> source_files("*.ex")
+    |> Enum.reject(&workflow_runtime_source_file?/1)
+    |> Enum.flat_map(fn path ->
+      path
+      |> source_lines()
+      |> Enum.flat_map(&temporalex_line_reference(root, path, &1))
+    end)
+  end
+
   @doc "Workers retired by the big-bang Temporal cutover."
   @spec retired_oban_saga_workers() :: [map()]
   def retired_oban_saga_workers, do: @retired_workers
@@ -145,6 +214,35 @@ defmodule Mezzanine.WorkflowRuntime.FinalTemporalCutover do
     |> Enum.map(fn [_match, module] -> module end)
   end
 
+  defp source_lines(path) do
+    path
+    |> File.read!()
+    |> String.split("\n")
+    |> Enum.with_index(1)
+  end
+
+  defp legacy_dispatch_state_line_references(root, path, {line, line_number}) do
+    if String.contains?(line, "dispatch_state") do
+      @legacy_execution_dispatch_states
+      |> Enum.filter(&line_contains_state?(line, &1))
+      |> Enum.map(&legacy_dispatch_state_reference(root, path, line_number, &1))
+    else
+      []
+    end
+  end
+
+  defp legacy_dispatch_state_reference(root, path, line_number, state) do
+    %{path: relative(root, path), line: line_number, state: state}
+  end
+
+  defp temporalex_line_reference(root, path, {line, line_number}) do
+    if String.contains?(line, "Temporalex") do
+      [%{path: relative(root, path), line: line_number}]
+    else
+      []
+    end
+  end
+
   defp invalid_fragments do
     [
       {:direct_oban_row_mutation, "UPDATE oban_jobs"},
@@ -158,10 +256,30 @@ defmodule Mezzanine.WorkflowRuntime.FinalTemporalCutover do
 
   defp excluded_source_file?(path) do
     String.contains?(path, "/test/") or
-      String.ends_with?(
-        path,
-        "/core/workflow_runtime/lib/mezzanine/workflow_runtime/final_temporal_cutover.ex"
-      )
+      retired_worker_registry_file?(path)
+  end
+
+  defp retired_worker_registry_file?(path) do
+    Enum.any?(@retired_worker_registry_files, &String.ends_with?(path, &1))
+  end
+
+  defp dispatch_state_write_source_file?(path) do
+    Enum.any?(
+      [
+        "/core/execution_engine/lib/",
+        "/core/lifecycle_engine/lib/",
+        "/core/operator_engine/lib/",
+        "/core/runtime_scheduler/lib/"
+      ],
+      &String.contains?(path, &1)
+    )
+  end
+
+  defp workflow_runtime_source_file?(path),
+    do: String.contains?(path, "/core/workflow_runtime/lib/")
+
+  defp line_contains_state?(line, state) do
+    Regex.match?(~r/(^|[^A-Za-z0-9_])#{Regex.escape(state)}([^A-Za-z0-9_]|$)/, line)
   end
 
   defp relative(root, path) do

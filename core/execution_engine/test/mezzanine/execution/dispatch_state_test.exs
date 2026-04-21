@@ -3,18 +3,26 @@ defmodule Mezzanine.Execution.DispatchStateTest do
 
   alias Mezzanine.Execution.DispatchState
 
-  test "reduced active targets retain legacy aliases for live-row drains" do
+  test "strict cutover keeps only canonical active dispatch states" do
     assert DispatchState.active_targets() == [:queued, :in_flight, :accepted_active]
+    assert DispatchState.active_states() == DispatchState.active_targets()
 
-    assert DispatchState.canonical(:pending_dispatch) == :queued
-    assert DispatchState.canonical(:dispatching) == :in_flight
-    assert DispatchState.canonical(:dispatching_retry) == :in_flight
-    assert DispatchState.canonical(:awaiting_receipt) == :accepted_active
-    assert DispatchState.canonical(:running) == :accepted_active
+    assert DispatchState.canonical(:queued) == :queued
+    assert DispatchState.canonical(:in_flight) == :in_flight
+    assert DispatchState.canonical(:accepted_active) == :accepted_active
+    assert DispatchState.canonical(:pending_dispatch) == :pending_dispatch
+    assert DispatchState.canonical(:dispatching) == :dispatching
+    assert DispatchState.canonical(:dispatching_retry) == :dispatching_retry
+    assert DispatchState.canonical(:awaiting_receipt) == :awaiting_receipt
+    assert DispatchState.canonical(:running) == :running
 
-    assert "queued" in DispatchState.active_state_strings()
-    assert "pending_dispatch" in DispatchState.active_state_strings()
-    assert "accepted_active" in DispatchState.accepted_active_state_strings()
-    assert "awaiting_receipt" in DispatchState.accepted_active_state_strings()
+    assert DispatchState.active_state_strings() == ["queued", "in_flight", "accepted_active"]
+    assert DispatchState.accepted_active_state_strings() == ["accepted_active"]
+    assert DispatchState.in_flight_state_strings() == ["in_flight"]
+
+    assert DispatchState.startup_reconcile_candidate_state_strings() == [
+             "in_flight",
+             "accepted_active"
+           ]
   end
 end

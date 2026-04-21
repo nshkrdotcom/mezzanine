@@ -4,7 +4,6 @@ defmodule Mezzanine.OperatorCommandsTest do
   alias Mezzanine.Audit.AuditFact
   alias Mezzanine.Execution.ExecutionRecord
   alias Mezzanine.Execution.Repo
-  alias Mezzanine.ExecutionCancelWorker
   alias Mezzanine.LeaseInvalidation
   alias Mezzanine.Leasing
   alias Mezzanine.Objects.SubjectPayloadSchema
@@ -137,17 +136,6 @@ defmodule Mezzanine.OperatorCommandsTest do
     assert :execution_cancelled in audit_kinds_for_trace("inst-1", "trace-operator-cancel")
     assert :subject_cancelled in audit_kinds_for_trace("inst-1", "trace-operator-cancel")
     assert Repo.aggregate(Oban.Job, :count, :id) == 0
-  end
-
-  test "cancel worker is a retired M31 tombstone, not an Oban worker" do
-    assert ExecutionCancelWorker.retired?()
-    refute function_exported?(ExecutionCancelWorker, :perform, 1)
-
-    assert %{
-             signal: "operator.cancel@operator-cancel.v1",
-             contract: "Mezzanine.OperatorWorkflowSignal.v1",
-             boundary: "Mezzanine.WorkflowRuntime.signal_workflow/1"
-           } = ExecutionCancelWorker.replacement()
   end
 
   test "operator commands delegate durable row mutation to bounded-context owners" do

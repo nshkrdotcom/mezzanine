@@ -42,5 +42,12 @@ defmodule Mezzanine.WorkflowRuntime.ObanTemporalCutoverTest do
 
     assert FinalTemporalCutover.invalid_oban_queue_configs(@mezzanine_root) == []
     assert FinalTemporalCutover.invalid_oban_saga_references(@mezzanine_root) == []
+    assert FinalTemporalCutover.retired_worker_module_definitions(@mezzanine_root) == []
+    assert FinalTemporalCutover.retired_worker_runtime_references(@mezzanine_root) == []
+
+    assert FinalTemporalCutover.legacy_execution_dispatch_state_write_references(@mezzanine_root) ==
+             []
+
+    assert FinalTemporalCutover.temporalex_boundary_violations(@mezzanine_root) == []
   end
 end
