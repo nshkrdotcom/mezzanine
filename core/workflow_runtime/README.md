@@ -27,6 +27,40 @@ scalar routing metadata only. Raw payloads, Temporal SDK structs, Temporal
 protobufs, NIF resources, task tokens, and raw history events stay outside the
 public DTO boundary.
 
+## Temporalex Runtime Adapter
+
+`Mezzanine.WorkflowRuntime.TemporalexAdapter` is the concrete Temporal-backed
+implementation of the `Mezzanine.WorkflowRuntime` facade. Temporal-enabled
+environments configure:
+
+```elixir
+config :mezzanine_core,
+  workflow_runtime_impl: Mezzanine.WorkflowRuntime.TemporalexAdapter
+```
+
+The adapter maps Mezzanine start, signal, query, cancel, describe, and history
+reference requests into the internal
+`Mezzanine.WorkflowRuntime.TemporalexBoundary` and returns only Mezzanine DTOs.
+It normalizes Temporalex errors into stable Mezzanine error classes and does
+not expose Temporalex handles, protobufs, task tokens, NIF resources, or raw
+history events.
+
+`Mezzanine.WorkflowRuntime.TemporalSupervisor` builds Mezzanine-owned
+`Temporalex` child specs from `TemporalRegistry`. The default config is inert:
+
+```elixir
+config :mezzanine_workflow_runtime, :temporal,
+  enabled?: false,
+  address: "127.0.0.1:7233",
+  namespace: "default"
+```
+
+Runtime deployments opt in by setting `enabled?: true`. Local Temporal substrate
+control remains repo-owned: use `just dev-up`, `just dev-status`, `just
+dev-logs`, `just temporal-ui`, and `just dev-down` from the Mezzanine root.
+Do not run raw `temporal server start-dev`, and do not run
+`just temporal-reset-confirm` without explicit approval.
+
 ## Activity Side-Effect Idempotency
 
 `Mezzanine.WorkflowRuntime.ActivitySideEffectIdempotency` defines the M29

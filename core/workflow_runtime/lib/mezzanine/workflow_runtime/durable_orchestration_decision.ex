@@ -13,6 +13,8 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
   @temporalex_root "/home/home/p/g/n/temporalex"
   @temporal_endpoint "127.0.0.1:7233"
   @temporal_namespace "default"
+  @runtime_adapter Mezzanine.WorkflowRuntime.TemporalexAdapter
+  @temporal_supervisor Mezzanine.WorkflowRuntime.TemporalSupervisor
 
   @workflow_types [
     %{
@@ -322,9 +324,34 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
     %{
       endpoint: @temporal_endpoint,
       namespace: @temporal_namespace,
+      adapter: @runtime_adapter,
+      supervisor: @temporal_supervisor,
       source_root: @temporalex_root,
       rust_core_posture: "Temporal Rust Core via temporalex Rustler NIF",
       nif_posture: "Mezzanine runtime-only dependency; public DTOs never expose NIF resources"
+    }
+  end
+
+  @doc "Concrete runtime adapter used by Temporal-enabled environments."
+  @spec runtime_adapter() :: module()
+  def runtime_adapter, do: @runtime_adapter
+
+  @doc "Mezzanine-owned Temporalex worker supervision contract."
+  @spec temporal_supervision() :: map()
+  def temporal_supervision do
+    %{
+      application: Mezzanine.WorkflowRuntime.Application,
+      supervisor: @temporal_supervisor,
+      worker_child: Temporalex,
+      workflow_runtime_impl_config: {:mezzanine_core, :workflow_runtime_impl, @runtime_adapter},
+      temporal_config_app: :mezzanine_workflow_runtime,
+      temporal_config_key: :temporal,
+      enabled_default: false,
+      endpoint: @temporal_endpoint,
+      namespace: @temporal_namespace,
+      task_queues: task_queues(),
+      workflows: workflow_types(),
+      activities: activity_registrations()
     }
   end
 
@@ -445,10 +472,16 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
       temporalex_allowed_paths: [
         "mix.exs",
         "core/workflow_runtime/mix.exs",
+        "core/workflow_runtime/config/config.exs",
+        "core/workflow_runtime/lib/mezzanine/workflow_runtime/application.ex",
         "core/workflow_runtime/lib/mezzanine/workflow_runtime/durable_orchestration_decision.ex",
+        "core/workflow_runtime/lib/mezzanine/workflow_runtime/temporal_supervisor.ex",
+        "core/workflow_runtime/lib/mezzanine/workflow_runtime/temporalex_adapter.ex",
         "core/workflow_runtime/lib/mezzanine/workflow_runtime/workflow_starter_outbox.ex",
         "core/workflow_runtime/lib/mezzanine/workflow_runtime/execution_lifecycle_workflow.ex",
         "core/workflow_runtime/lib/mezzanine/workflow_runtime/operator_signal_control.ex",
+        "core/workflow_runtime/test/mezzanine/workflow_runtime/temporal_supervisor_test.exs",
+        "core/workflow_runtime/test/mezzanine/workflow_runtime/temporalex_adapter_test.exs",
         "core/workflow_runtime/test/mezzanine/workflow_runtime/operator_signal_control_test.exs",
         "core/workflow_runtime/test/mezzanine/workflow_runtime/durable_orchestration_decision_test.exs"
       ],
@@ -465,6 +498,8 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
       length(activity_registrations()) >= 6,
       length(operator_signal_registry()) == 5,
       decision_timer_policy().timer_semantics == :temporal_workflow_timer,
+      runtime_adapter() == Mezzanine.WorkflowRuntime.TemporalexAdapter,
+      temporal_supervision().supervisor == Mezzanine.WorkflowRuntime.TemporalSupervisor,
       Enum.all?(search_attribute_registry(), &(&1.type in allowed_search_attribute_types())),
       Enum.all?(oban_scope(), &(&1.classification in valid_oban_classifications())),
       Enum.all?(retired_oban_saga_workers(), &(&1.classification == :retired_temporal_saga))

@@ -15,6 +15,8 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecisionTest do
     assert %{
              endpoint: "127.0.0.1:7233",
              namespace: "default",
+             adapter: Mezzanine.WorkflowRuntime.TemporalexAdapter,
+             supervisor: Mezzanine.WorkflowRuntime.TemporalSupervisor,
              rust_core_posture: "Temporal Rust Core via temporalex Rustler NIF"
            } = DurableOrchestrationDecision.runtime_refs()
 
@@ -67,6 +69,27 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecisionTest do
       assert function_exported?(activity, :__activity_type__, 0)
       assert function_exported?(activity, :perform, 1)
     end
+  end
+
+  test "declares the concrete Temporalex adapter and worker supervision contract" do
+    assert DurableOrchestrationDecision.runtime_adapter() ==
+             Mezzanine.WorkflowRuntime.TemporalexAdapter
+
+    assert %{
+             application: Mezzanine.WorkflowRuntime.Application,
+             supervisor: Mezzanine.WorkflowRuntime.TemporalSupervisor,
+             worker_child: Temporalex,
+             workflow_runtime_impl_config:
+               {:mezzanine_core, :workflow_runtime_impl,
+                Mezzanine.WorkflowRuntime.TemporalexAdapter},
+             temporal_config_app: :mezzanine_workflow_runtime,
+             temporal_config_key: :temporal,
+             enabled_default: false,
+             endpoint: "127.0.0.1:7233",
+             namespace: "default"
+           } = DurableOrchestrationDecision.temporal_supervision()
+
+    assert "mezzanine.hazmat" in DurableOrchestrationDecision.temporal_supervision().task_queues
   end
 
   test "keeps public workflow boundary stable while mapping internally to Temporalex.Client" do
