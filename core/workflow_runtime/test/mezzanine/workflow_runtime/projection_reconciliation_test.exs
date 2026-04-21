@@ -81,6 +81,15 @@ defmodule Mezzanine.WorkflowRuntime.ProjectionReconciliationTest do
 
     assert %{row_class: :fact_and_operator_projection, workflow_master?: false} =
              Enum.find(profile.row_classifications, &(&1.table == "execution_records"))
+
+    assert %{
+             truth_owner: :temporal,
+             postgres_role: :projection_only_for_active_workflow_lifecycle,
+             terminal_projection_requires: [
+               :temporal_terminal_status,
+               :temporal_terminal_event_ref
+             ]
+           } = profile.active_workflow_truth_policy
   end
 
   test "candidate query joins execution projections to workflow-start outbox evidence" do
@@ -185,6 +194,59 @@ defmodule Mezzanine.WorkflowRuntime.ProjectionReconciliationTest do
     assert reduction.legacy_aliases.awaiting_receipt == :accepted_active
     assert :last_dispatch_error_kind in reduction.evidence_fields
     assert :lower_receipt in reduction.evidence_fields
+  end
+
+  test "active workflow lifecycle truth policy blocks Postgres terminal closure" do
+    candidate = %{workflow_id: "workflow-201", postgres_state: "cancelled"}
+
+    temporal_state = %{
+      description: %{status: "running"},
+      query: %{summary: %{workflow_state: "accepted_active"}}
+    }
+
+    assert {:error,
+            %{
+              reason: :postgres_terminal_closes_active_workflow,
+              workflow_truth_owner: :temporal,
+              postgres_role: :projection_only,
+              safe_operator_action: :signal_or_quarantine
+            }} =
+             ProjectionReconciliation.authorize_lifecycle_projection(candidate, temporal_state)
+  end
+
+  test "terminal projection requires Temporal terminal event evidence" do
+    candidate = %{workflow_id: "workflow-201", postgres_state: "completed"}
+
+    temporal_terminal = %{
+      description: %{status: "completed"},
+      query: %{
+        summary: %{
+          workflow_state: "completed",
+          terminal_event_ref: "workflow-event://workflow-201/terminal"
+        }
+      }
+    }
+
+    assert {:ok,
+            %{
+              reason: :temporal_terminal_projection,
+              terminal_event_ref: "workflow-event://workflow-201/terminal",
+              safe_operator_action: :project_temporal_terminal
+            }} =
+             ProjectionReconciliation.authorize_lifecycle_projection(
+               candidate,
+               temporal_terminal
+             )
+
+    assert {:error,
+            %{
+              reason: :missing_temporal_terminal_event_ref,
+              safe_operator_action: :quarantine_projection
+            }} =
+             ProjectionReconciliation.authorize_lifecycle_projection(candidate, %{
+               description: %{status: "completed"},
+               query: %{summary: %{workflow_state: "completed"}}
+             })
   end
 
   test "source contains only the WorkflowRuntime-owned starter outbox insert plan" do

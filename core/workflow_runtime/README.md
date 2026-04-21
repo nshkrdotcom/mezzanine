@@ -79,3 +79,16 @@ trace/causation/idempotency scope, preconditions, side-effect scope,
 dead-letter refs, and audit/evidence refs. Runtime signal dispatch goes
 through `Mezzanine.WorkflowRuntime.signal_workflow/1` and strips raw Temporal
 SDK/history/task-token data from receipts.
+
+## Active Workflow Truth
+
+`Mezzanine.WorkflowRuntime.ProjectionReconciliation` treats Temporal as the
+owner of active workflow lifecycle truth. Postgres execution rows are facts and
+operator projections; they cannot authorize terminal workflow closure while
+Temporal reports the workflow as active.
+
+`authorize_lifecycle_projection/2` allows a terminal Postgres projection only
+when compact Temporal describe/query evidence reports a terminal status and a
+terminal workflow event ref. Otherwise the safe action is to signal/cancel the
+workflow through `Mezzanine.WorkflowRuntime` or quarantine/repair the
+projection.

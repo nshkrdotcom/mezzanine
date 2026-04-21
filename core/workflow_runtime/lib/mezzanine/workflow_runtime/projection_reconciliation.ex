@@ -11,6 +11,45 @@ defmodule Mezzanine.WorkflowRuntime.ProjectionReconciliation do
   @release_manifest_ref "phase5-v7-milestone2-temporal-postgres-reconciliation"
   @query_name "execution.lifecycle_state"
 
+  @postgres_active_states [
+    "queued",
+    "in_flight",
+    "accepted_active",
+    "pending_dispatch",
+    "dispatching",
+    "dispatching_retry",
+    "awaiting_receipt",
+    "running"
+  ]
+
+  @postgres_terminal_states [
+    "completed",
+    "cancelled",
+    "failed",
+    "rejected"
+  ]
+
+  @temporal_active_states [
+    "running",
+    "open",
+    "active",
+    "accepted_active",
+    "pending",
+    "started"
+  ]
+
+  @temporal_terminal_states [
+    "completed",
+    "cancelled",
+    "canceled",
+    "failed",
+    "terminated",
+    "timed_out",
+    "timeout",
+    "closed",
+    "succeeded"
+  ]
+
   @profile_fields [
     :workflow_id,
     :workflow_type,
@@ -234,6 +273,26 @@ defmodule Mezzanine.WorkflowRuntime.ProjectionReconciliation do
     reader_policy: :read_legacy_values_through_alias_until_live_rows_drain
   }
 
+  @active_workflow_truth_policy %{
+    truth_owner: :temporal,
+    postgres_role: :projection_only_for_active_workflow_lifecycle,
+    terminal_projection_requires: [
+      :temporal_terminal_status,
+      :temporal_terminal_event_ref
+    ],
+    forbidden_projection_actions: [
+      :postgres_terminal_closes_active_workflow,
+      :postgres_terminal_without_temporal_terminal_event,
+      :workflow_start_outbox_dispatch_state_used_as_lifecycle_truth
+    ],
+    safe_operator_actions: [
+      :signal_workflow,
+      :cancel_workflow,
+      :quarantine_projection,
+      :repair_projection_from_compact_query
+    ]
+  }
+
   @spec profile() :: map()
   def profile do
     %{
@@ -254,6 +313,7 @@ defmodule Mezzanine.WorkflowRuntime.ProjectionReconciliation do
       outbox_drain_plan: @drain_plan,
       workflow_starter_retirement_gate: @retirement_gate,
       dispatch_state_reduction: @dispatch_state_reduction,
+      active_workflow_truth_policy: @active_workflow_truth_policy,
       release_manifest_ref: @release_manifest_ref
     }
   end
@@ -275,6 +335,9 @@ defmodule Mezzanine.WorkflowRuntime.ProjectionReconciliation do
 
   @spec dispatch_state_reduction_profile() :: map()
   def dispatch_state_reduction_profile, do: @dispatch_state_reduction
+
+  @spec active_workflow_truth_policy() :: map()
+  def active_workflow_truth_policy, do: @active_workflow_truth_policy
 
   @spec temporal_lookup_requests(map() | keyword()) :: [map()]
   def temporal_lookup_requests(candidate) do
@@ -318,6 +381,33 @@ defmodule Mezzanine.WorkflowRuntime.ProjectionReconciliation do
     end
   end
 
+  @spec authorize_lifecycle_projection(map() | keyword(), map() | keyword()) ::
+          {:ok, map()} | {:error, map()}
+  def authorize_lifecycle_projection(candidate, temporal_state) do
+    candidate = normalize(candidate)
+    temporal_state = normalize_nested(temporal_state)
+    postgres_state = candidate |> fetch_value(:postgres_state) |> normalize_state()
+    workflow_id = fetch_value(candidate, :workflow_id)
+    temporal_status = temporal_state |> temporal_status() |> normalize_state()
+    temporal_terminal_event_ref = temporal_terminal_event_ref(temporal_state)
+
+    case lifecycle_projection_result(postgres_state, temporal_status, temporal_terminal_event_ref) do
+      {:ok, reason, safe_action} ->
+        {:ok,
+         lifecycle_decision(reason, workflow_id, postgres_state, temporal_status, safe_action)}
+
+      {:ok, reason, safe_action, terminal_event_ref} ->
+        {:ok,
+         reason
+         |> lifecycle_decision(workflow_id, postgres_state, temporal_status, safe_action)
+         |> Map.put(:terminal_event_ref, terminal_event_ref)}
+
+      {:error, reason, safe_action} ->
+        {:error,
+         lifecycle_decision(reason, workflow_id, postgres_state, temporal_status, safe_action)}
+    end
+  end
+
   defp compact_map(%_{} = struct), do: struct |> Map.from_struct() |> compact_map()
 
   defp compact_map(value) when is_map(value) do
@@ -347,6 +437,99 @@ defmodule Mezzanine.WorkflowRuntime.ProjectionReconciliation do
 
   defp normalize_key(key) when is_atom(key), do: key
   defp normalize_key(key) when is_binary(key), do: String.to_existing_atom(key)
+
+  defp normalize_nested(attrs) when is_list(attrs), do: attrs |> Map.new() |> normalize_nested()
+  defp normalize_nested(%_{} = struct), do: struct |> Map.from_struct() |> normalize_nested()
+
+  defp normalize_nested(attrs) when is_map(attrs) do
+    Map.new(attrs, fn {key, value} -> {normalize_key(key), normalize_nested_value(value)} end)
+  end
+
+  defp normalize_nested(other), do: other
+
+  defp normalize_nested_value(value) when is_list(value) do
+    if Keyword.keyword?(value),
+      do: normalize_nested(value),
+      else: Enum.map(value, &normalize_nested_value/1)
+  end
+
+  defp normalize_nested_value(value) when is_map(value), do: normalize_nested(value)
+  defp normalize_nested_value(value), do: value
+
+  defp temporal_status(temporal_state) do
+    nested_get(temporal_state, [:description, :status]) ||
+      nested_get(temporal_state, [:query, :summary, :workflow_state]) ||
+      nested_get(temporal_state, [:query, :projection_state]) ||
+      nested_get(temporal_state, [:workflow_state]) ||
+      nested_get(temporal_state, [:status])
+  end
+
+  defp temporal_terminal_event_ref(temporal_state) do
+    nested_get(temporal_state, [:query, :summary, :terminal_event_ref]) ||
+      nested_get(temporal_state, [:query, :terminal_event_ref]) ||
+      nested_get(temporal_state, [:terminal_event_ref])
+  end
+
+  defp nested_get(attrs, keys) do
+    Enum.reduce_while(keys, attrs, fn key, acc ->
+      case fetch_value(acc, key) do
+        nil -> {:halt, nil}
+        value -> {:cont, value}
+      end
+    end)
+  end
+
+  defp lifecycle_decision(reason, workflow_id, postgres_state, temporal_status, safe_action) do
+    %{
+      workflow_truth_owner: :temporal,
+      postgres_role: :projection_only,
+      reason: reason,
+      workflow_id: workflow_id,
+      postgres_state: postgres_state,
+      temporal_status: temporal_status,
+      safe_operator_action: safe_action,
+      release_manifest_ref: @release_manifest_ref
+    }
+  end
+
+  defp lifecycle_projection_result(postgres_state, _temporal_status, _terminal_event_ref)
+       when postgres_state in @postgres_active_states do
+    {:ok, :active_projection, :projection_only}
+  end
+
+  defp lifecycle_projection_result(postgres_state, temporal_status, _terminal_event_ref)
+       when postgres_state in @postgres_terminal_states and
+              temporal_status in @temporal_active_states do
+    {:error, :postgres_terminal_closes_active_workflow, :signal_or_quarantine}
+  end
+
+  defp lifecycle_projection_result(postgres_state, temporal_status, terminal_event_ref)
+       when postgres_state in @postgres_terminal_states and
+              temporal_status in @temporal_terminal_states do
+    if present?(terminal_event_ref) do
+      {:ok, :temporal_terminal_projection, :project_temporal_terminal, terminal_event_ref}
+    else
+      {:error, :missing_temporal_terminal_event_ref, :quarantine_projection}
+    end
+  end
+
+  defp lifecycle_projection_result(postgres_state, _temporal_status, _terminal_event_ref)
+       when postgres_state in @postgres_terminal_states do
+    {:error, :temporal_state_unknown, :describe_and_query_workflow}
+  end
+
+  defp lifecycle_projection_result(_postgres_state, _temporal_status, _terminal_event_ref) do
+    {:error, :unsupported_postgres_lifecycle_state, :quarantine_projection}
+  end
+
+  defp normalize_state(value) when is_atom(value),
+    do: value |> Atom.to_string() |> normalize_state()
+
+  defp normalize_state(value) when is_binary(value), do: value |> String.downcase()
+  defp normalize_state(_value), do: nil
+
+  defp present?(value) when is_binary(value), do: String.trim(value) != ""
+  defp present?(value), do: not is_nil(value)
 
   defp fetch_required!(attrs, key) do
     case fetch_value(attrs, key) do
