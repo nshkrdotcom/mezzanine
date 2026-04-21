@@ -82,6 +82,9 @@ defmodule Mezzanine.Workspace.MixProject do
 
     [
       "boundary.check": ["cmd elixir build_support/internal_modularity_check.exs"],
+      "artifact.fidelity.check": [
+        "cmd elixir build_support/projected_artifact_fidelity_check.exs"
+      ],
       ci: [
         "deps.get",
         "monorepo.deps.get",
@@ -92,7 +95,8 @@ defmodule Mezzanine.Workspace.MixProject do
         "monorepo.credo --strict",
         "monorepo.dialyzer",
         "monorepo.docs",
-        "weld.verify"
+        "weld.verify",
+        "artifact.fidelity.check"
       ],
       "docs.root": ["docs"]
     ] ++ monorepo_aliases

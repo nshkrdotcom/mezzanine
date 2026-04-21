@@ -24,6 +24,12 @@ move their still-live semantics behind neutral package names and boundaries.
 `mezzanine_core` continues to project the reusable neutral substrate rather than
 the older product-shaped ontology.
 
+The projection is verified as generated output, not canonical source. Root
+`mix ci` runs `mix weld.verify` and then
+`mix artifact.fidelity.check`, which records the Weld source roots, workspace
+contract, internal modularity contract, projection/archive ref, artifact hash
+manifest, and manual-patch disposition.
+
 It also owns the neutral lower-intent seam shared by the active lower bridges:
 
 - `Mezzanine.Intent.RunIntent`
