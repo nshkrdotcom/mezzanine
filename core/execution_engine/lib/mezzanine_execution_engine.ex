@@ -11,6 +11,7 @@ defmodule MezzanineExecutionEngine do
       Mezzanine.Execution.ExecutionRecord,
       Mezzanine.Execution.LifecycleContinuation,
       Mezzanine.Execution.OwnerDirectedCompensation,
+      Mezzanine.Execution.BoundedContextRepairRouting,
       Mezzanine.LowerGateway,
       Mezzanine.Installations,
       Mezzanine.WorkControl,

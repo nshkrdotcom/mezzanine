@@ -76,6 +76,11 @@ defmodule Mezzanine.Execution.OwnerDirectedCompensation do
       target: :lower_cancel_or_revoke_operation,
       allowed_kinds: [:cancel, :revoke, :operator_retry],
       forbidden: :local_projection_only_rollback
+    },
+    projection_repair: %{
+      target: :projection_owner_command,
+      allowed_kinds: [:repair_projection, :operator_retry, :operator_waive],
+      forbidden: :workflow_lifecycle_truth_mutation
     }
   }
 

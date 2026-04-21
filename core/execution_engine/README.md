@@ -39,6 +39,11 @@ This package now owns the Phase `2.4.4` durable execution slice:
 - source-owned owner-directed compensation profile fields via
   `Mezzanine.Execution.OwnerDirectedCompensation`; this is a validation
   profile, not a saga runner or multi-context rollback worker
+- bounded-context repair routing through
+  `Mezzanine.Execution.BoundedContextRepairRouting`, which accepts only named
+  owner-command targets for execution, decision, audit, archival, lower, and
+  projection repair while keeping `LifecycleContinuation` as retry/dead-letter
+  visibility only
 
 Primary modules:
 
@@ -51,3 +56,4 @@ Primary modules:
 - `Mezzanine.Reviews`
 - `Mezzanine.Execution.LifecycleContinuation`
 - `Mezzanine.Execution.OwnerDirectedCompensation`
+- `Mezzanine.Execution.BoundedContextRepairRouting`
