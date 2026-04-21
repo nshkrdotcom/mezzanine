@@ -1,11 +1,14 @@
 defmodule Mezzanine.OperatorCommandsTest do
   use Mezzanine.Operator.DataCase, async: false
 
+  alias Mezzanine.Audit.AuditFact
   alias Mezzanine.Execution.ExecutionRecord
   alias Mezzanine.Execution.Repo
   alias Mezzanine.ExecutionCancelWorker
   alias Mezzanine.LeaseInvalidation
   alias Mezzanine.Leasing
+  alias Mezzanine.Objects.SubjectPayloadSchema
+  alias Mezzanine.Objects.SubjectRecord
   alias Mezzanine.OperatorCommands
 
   test "pause and resume record workflow signal refs without mutating Oban saga jobs" do
@@ -107,51 +110,33 @@ defmodule Mezzanine.OperatorCommandsTest do
            } = ExecutionCancelWorker.replacement()
   end
 
+  test "operator commands delegate durable row mutation to bounded-context owners" do
+    source =
+      Path.expand("../../lib/mezzanine/operator_commands.ex", __DIR__)
+      |> File.read!()
+
+    refute source =~ "Ecto.Adapters.SQL"
+    refute source =~ "UPDATE subject_records"
+    refute source =~ "UPDATE execution_records"
+    refute source =~ "FROM subject_records"
+    assert source =~ "SubjectRecord.pause"
+    assert source =~ "SubjectRecord.cancel"
+    assert source =~ "ExecutionRecord.record_operator_cancelled"
+  end
+
   defp ingest_subject(source_ref) do
-    now = DateTime.utc_now() |> DateTime.truncate(:microsecond)
-    subject_id = Ecto.UUID.generate()
-
-    Repo.query!(
-      """
-      INSERT INTO subject_records (
-        id,
-        installation_id,
-        source_ref,
-        subject_kind,
-        lifecycle_state,
-        status,
-        payload,
-        schema_ref,
-        schema_version,
-        opened_at,
-        status_updated_at,
-        row_version,
-        inserted_at,
-        updated_at
-      )
-      VALUES ($1::uuid, $2, $3, $4, $5, 'active', $6, $7, 1, $8, $8, 1, $8, $8)
-      """,
-      [
-        Ecto.UUID.dump!(subject_id),
-        "inst-1",
-        source_ref,
-        "linear_coding_ticket",
-        "queued",
-        %{},
-        "mezzanine.subject.linear_coding_ticket.payload.v1",
-        now
-      ]
-    )
-
-    {:ok,
-     %{
-       id: subject_id,
-       installation_id: "inst-1",
-       source_ref: source_ref,
-       subject_kind: "linear_coding_ticket",
-       lifecycle_state: "queued",
-       status: "active"
-     }}
+    SubjectRecord.ingest(%{
+      installation_id: "inst-1",
+      source_ref: source_ref,
+      subject_kind: "linear_coding_ticket",
+      lifecycle_state: "queued",
+      schema_ref: SubjectPayloadSchema.default_schema_ref!("linear_coding_ticket"),
+      schema_version: SubjectPayloadSchema.default_schema_version!("linear_coding_ticket"),
+      payload: %{},
+      trace_id: "trace-ingest-#{source_ref}",
+      causation_id: "cause-ingest-#{source_ref}",
+      actor_ref: %{kind: :intake}
+    })
   end
 
   defp dispatch_execution(subject, suffix) do
@@ -184,17 +169,9 @@ defmodule Mezzanine.OperatorCommandsTest do
   end
 
   defp audit_kinds_for_trace(installation_id, trace_id) do
-    Repo.query!(
-      """
-      SELECT fact_kind
-      FROM audit_facts
-      WHERE installation_id = $1
-        AND trace_id = $2
-      ORDER BY occurred_at ASC, inserted_at ASC
-      """,
-      [installation_id, trace_id]
-    ).rows
-    |> Enum.map(fn [fact_kind] -> String.to_atom(fact_kind) end)
+    {:ok, facts} = AuditFact.list_trace(installation_id, trace_id)
+
+    Enum.map(facts, & &1.fact_kind)
   end
 
   defp issue_leases!(subject, execution, suffix) do

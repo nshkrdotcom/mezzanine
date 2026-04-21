@@ -7,9 +7,11 @@ This package owns operator-facing commands, diagnostics, intervention
 coordination above the neutral execution core, and the Phase 4 control-room
 incident bundle contract.
 
-Operator pause, resume, and cancel commands now record local subject/execution
-state plus workflow signal references for `Mezzanine.WorkflowRuntime`. They do
-not mutate old Oban saga jobs or enqueue lower-cancel workers.
+Operator pause, resume, and cancel commands now delegate durable subject status
+mutation to `Mezzanine.Objects.SubjectRecord` and execution cancellation to
+`Mezzanine.Execution.ExecutionRecord`, while retaining workflow signal
+references for `Mezzanine.WorkflowRuntime`. They do not mutate old Oban saga
+jobs or enqueue lower-cancel workers.
 
 Primary modules:
 

@@ -363,6 +363,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
       change(optimistic_lock(:row_version))
       change(set_attribute(:dispatch_state, :cancelled))
       change(set_attribute(:last_dispatch_error_kind, "operator_cancelled"))
+      change(set_attribute(:trace_id, arg(:trace_id)))
       change(set_attribute(:causation_id, arg(:causation_id)))
       change(set_attribute(:next_dispatch_at, nil))
       change(set_attribute(:terminal_rejection_reason, nil))
@@ -507,7 +508,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
     read :active_for_subject do
       argument(:subject_id, :uuid, allow_nil?: false)
       filter(expr(subject_id == ^arg(:subject_id) and dispatch_state in ^@active_dispatch_states))
-      prepare(build(limit: 1))
+      prepare(build(sort: [inserted_at: :asc]))
     end
   end
 

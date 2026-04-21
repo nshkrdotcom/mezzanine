@@ -169,6 +169,7 @@ defmodule Mezzanine.Objects.SubjectRecord do
       argument(:trace_id, :string, allow_nil?: false)
       argument(:causation_id, :string, allow_nil?: false)
       argument(:actor_ref, :map, allow_nil?: false)
+      argument(:operator_context, :map)
 
       change(optimistic_lock(:row_version))
       change(set_attribute(:status, "paused"))
@@ -189,6 +190,7 @@ defmodule Mezzanine.Objects.SubjectRecord do
       argument(:trace_id, :string, allow_nil?: false)
       argument(:causation_id, :string, allow_nil?: false)
       argument(:actor_ref, :map, allow_nil?: false)
+      argument(:operator_context, :map)
 
       change(optimistic_lock(:row_version))
       change(set_attribute(:status, "active"))
@@ -210,6 +212,7 @@ defmodule Mezzanine.Objects.SubjectRecord do
       argument(:trace_id, :string, allow_nil?: false)
       argument(:causation_id, :string, allow_nil?: false)
       argument(:actor_ref, :map, allow_nil?: false)
+      argument(:operator_context, :map)
 
       change(optimistic_lock(:row_version))
       change(set_attribute(:status, "cancelled"))
@@ -337,12 +340,20 @@ defmodule Mezzanine.Objects.SubjectRecord do
   end
 
   defp record_status_audit(changeset, subject, fact_kind) do
-    append_audit_fact(changeset, subject, fact_kind, %{
+    payload = %{
       lifecycle_state: subject.lifecycle_state,
       status: subject.status,
       status_reason: subject.status_reason,
       terminal_at: subject.terminal_at
-    })
+    }
+
+    payload =
+      case Ash.Changeset.get_argument(changeset, :operator_context) do
+        context when is_map(context) -> Map.merge(payload, context)
+        _other -> payload
+      end
+
+    append_audit_fact(changeset, subject, fact_kind, payload)
   end
 
   defp append_audit_fact(changeset, subject, fact_kind, payload) do
