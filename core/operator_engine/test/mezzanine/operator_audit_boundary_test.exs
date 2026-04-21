@@ -11,5 +11,6 @@ defmodule Mezzanine.OperatorAuditBoundaryTest do
     refute source =~ "AuditAppend.append_fact"
     assert source =~ "SubjectRecord.pause"
     assert source =~ "ExecutionRecord.record_operator_cancelled"
+    assert source =~ "OperatorActionClassification"
   end
 end

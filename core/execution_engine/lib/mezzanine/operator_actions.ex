@@ -7,12 +7,15 @@ defmodule Mezzanine.OperatorActions do
 
   alias Mezzanine.Audit.WorkAudit
   alias Mezzanine.Control.OperatorIntervention
-  alias Mezzanine.Execution.ExecutionRecord
+  alias Mezzanine.Execution.{ExecutionRecord, OperatorActionClassification}
   alias Mezzanine.Execution.Repo, as: ExecutionRepo
   alias Mezzanine.Leasing
   alias Mezzanine.Runs.{Run, RunSeries}
   alias Mezzanine.Work.WorkObject
   alias Mezzanine.Work.WorkPlan
+
+  @spec action_classification_profile() :: map()
+  def action_classification_profile, do: OperatorActionClassification.profile()
 
   @spec pause_work(String.t(), Ecto.UUID.t(), String.t(), map()) ::
           {:ok, map()} | {:error, term()}
@@ -45,12 +48,30 @@ defmodule Mezzanine.OperatorActions do
                payload
                |> Map.put(:control_session_id, paused_session.id)
                |> Map.put(:invalidated_lease_ids, invalidated_lease_ids)
-           }) do
+           }),
+         {:ok, operator_actions} <-
+           declared_local_mutations([
+             {:control_session, :pause, "control-session://#{paused_session.id}",
+              action_context(:pause, work_object.id, operator_ref, payload)},
+             lease_invalidation_mutation(
+               work_object.id,
+               invalidated_lease_ids,
+               :pause,
+               operator_ref,
+               payload
+             ),
+             {:operator_intervention, :record_intervention,
+              "operator-intervention://#{intervention.id}",
+              action_context(:pause, work_object.id, operator_ref, payload)},
+             {:audit_event, :record_event, "work-audit://#{work_object.id}/operator_paused",
+              action_context(:pause, work_object.id, operator_ref, payload)}
+           ]) do
       {:ok,
        %{
          control_session: paused_session,
          intervention: intervention,
-         invalidated_lease_ids: invalidated_lease_ids
+         invalidated_lease_ids: invalidated_lease_ids,
+         operator_actions: operator_actions
        }}
     end
   end
@@ -74,8 +95,23 @@ defmodule Mezzanine.OperatorActions do
              actor_kind: :human,
              actor_ref: operator_ref,
              payload: Map.put(payload, :control_session_id, resumed_session.id)
-           }) do
-      {:ok, %{control_session: resumed_session, intervention: intervention}}
+           }),
+         {:ok, operator_actions} <-
+           declared_local_mutations([
+             {:control_session, :resume, "control-session://#{resumed_session.id}",
+              action_context(:resume, work_object.id, operator_ref, payload)},
+             {:operator_intervention, :record_intervention,
+              "operator-intervention://#{intervention.id}",
+              action_context(:resume, work_object.id, operator_ref, payload)},
+             {:audit_event, :record_event, "work-audit://#{work_object.id}/operator_resumed",
+              action_context(:resume, work_object.id, operator_ref, payload)}
+           ]) do
+      {:ok,
+       %{
+         control_session: resumed_session,
+         intervention: intervention,
+         operator_actions: operator_actions
+       }}
     end
   end
 
@@ -91,7 +127,7 @@ defmodule Mezzanine.OperatorActions do
            Mezzanine.WorkControl.ensure_control_session(tenant_id, work_object),
          {:ok, intervention} <-
            record_intervention(tenant_id, control_session.id, operator_ref, :cancel, payload),
-         {:ok, cancelled_execution_ids, invalidated_lease_ids} <-
+         {:ok, cancelled_execution_ids, invalidated_lease_ids, execution_mutations} <-
            cancel_execution_lineage(work_object.id, operator_ref, payload, now),
          :ok <- cancel_active_run(tenant_id, work_object_id),
          {:ok, cancelled_work} <- mark_work_terminal(work_object, tenant_id, :cancelled),
@@ -108,8 +144,32 @@ defmodule Mezzanine.OperatorActions do
                  cancelled_execution_ids: cancelled_execution_ids,
                  invalidated_lease_ids: invalidated_lease_ids
                })
-           }) do
-      {:ok, %{work_object: cancelled_work, intervention: intervention}}
+           }),
+         {:ok, operator_actions} <-
+           declared_local_mutations([
+             {:run_state, :record_cancelled, "work-runs://#{work_object.id}",
+              action_context(:cancel, work_object.id, operator_ref, payload)},
+             {:work_object, :mark_terminal, "work-object://#{work_object.id}",
+              action_context(:cancel, work_object.id, operator_ref, payload)},
+             lease_invalidation_mutation(
+               work_object.id,
+               invalidated_lease_ids,
+               :cancel,
+               operator_ref,
+               payload
+             ),
+             {:operator_intervention, :record_intervention,
+              "operator-intervention://#{intervention.id}",
+              action_context(:cancel, work_object.id, operator_ref, payload)},
+             {:audit_event, :record_event, "work-audit://#{work_object.id}/operator_cancelled",
+              action_context(:cancel, work_object.id, operator_ref, payload)}
+           ]) do
+      {:ok,
+       %{
+         work_object: cancelled_work,
+         intervention: intervention,
+         operator_actions: execution_mutations ++ operator_actions
+       }}
     end
   end
 
@@ -133,8 +193,25 @@ defmodule Mezzanine.OperatorActions do
              actor_kind: :human,
              actor_ref: operator_ref,
              payload: Map.merge(payload, %{control_session_id: control_session.id})
-           }) do
-      {:ok, %{work_object: replanned_work, intervention: intervention, prior_plan: prior_plan}}
+           }),
+         {:ok, operator_actions} <-
+           declared_local_mutations([
+             prior_plan_mutation(prior_plan, work_object.id, operator_ref, payload),
+             {:work_object, :compile_plan, "work-object://#{replanned_work.id}",
+              action_context(:replan, work_object.id, operator_ref, payload)},
+             {:operator_intervention, :record_intervention,
+              "operator-intervention://#{intervention.id}",
+              action_context(:replan, work_object.id, operator_ref, payload)},
+             {:audit_event, :record_event, "work-audit://#{work_object.id}/replan_requested",
+              action_context(:replan, work_object.id, operator_ref, payload)}
+           ]) do
+      {:ok,
+       %{
+         work_object: replanned_work,
+         intervention: intervention,
+         prior_plan: prior_plan,
+         operator_actions: operator_actions
+       }}
     end
   end
 
@@ -174,8 +251,24 @@ defmodule Mezzanine.OperatorActions do
                control_session_id: updated_session.id,
                active_override_set: normalized_override_set
              }
-           }) do
-      {:ok, %{control_session: updated_session, intervention: intervention}}
+           }),
+         {:ok, operator_actions} <-
+           declared_local_mutations([
+             {:control_session, :apply_grant_override, "control-session://#{updated_session.id}",
+              action_context(:grant_override, work_object.id, operator_ref, override_set)},
+             {:operator_intervention, :record_intervention,
+              "operator-intervention://#{intervention.id}",
+              action_context(:grant_override, work_object.id, operator_ref, override_set)},
+             {:audit_event, :record_event,
+              "work-audit://#{work_object.id}/grant_override_applied",
+              action_context(:grant_override, work_object.id, operator_ref, override_set)}
+           ]) do
+      {:ok,
+       %{
+         control_session: updated_session,
+         intervention: intervention,
+         operator_actions: operator_actions
+       }}
     end
   end
 
@@ -351,33 +444,118 @@ defmodule Mezzanine.OperatorActions do
          trace_id = trace_id_for_operator_action(executions, subject_id),
          invalidated_lease_ids <-
            invalidate_subject_leases(subject_id, "subject_cancelled", trace_id, now),
-         {:ok, cancelled_execution_ids} <-
+         {:ok, cancelled_execution_ids, execution_mutations} <-
            mark_operator_cancelled(executions, operator_ref, payload, now) do
-      {:ok, cancelled_execution_ids, invalidated_lease_ids}
+      {:ok, cancelled_execution_ids, invalidated_lease_ids, execution_mutations}
     end
   end
 
   defp mark_operator_cancelled(executions, operator_ref, payload, now) when is_list(executions) do
     executions
-    |> Enum.reduce_while({:ok, []}, fn execution, {:ok, acc} ->
-      case ExecutionRecord.record_operator_cancelled(execution, %{
-             reason: cancel_reason(payload),
-             trace_id: execution.trace_id,
-             causation_id:
-               "operator-actions:cancel:#{execution.id}:#{DateTime.to_unix(now, :microsecond)}",
-             actor_ref: %{kind: :human, operator_ref: operator_ref}
-           }) do
-        {:ok, cancelled_execution} ->
-          {:cont, {:ok, [cancelled_execution.id | acc]}}
+    |> Enum.reduce_while({:ok, [], []}, fn execution, {:ok, cancelled_ids, mutations} ->
+      case record_operator_cancelled_mutation(execution, operator_ref, payload, now) do
+        {:ok, cancelled_execution, mutation} ->
+          {:cont, {:ok, [cancelled_execution.id | cancelled_ids], [mutation | mutations]}}
 
         {:error, reason} ->
           {:halt, {:error, reason}}
       end
     end)
     |> case do
-      {:ok, cancelled_execution_ids} -> {:ok, Enum.reverse(cancelled_execution_ids)}
+      {:ok, cancelled_execution_ids, mutations} ->
+        {:ok, Enum.reverse(cancelled_execution_ids), Enum.reverse(mutations)}
+
+      error ->
+        error
+    end
+  end
+
+  defp record_operator_cancelled_mutation(execution, operator_ref, payload, now) do
+    cancel_context = %{
+      reason: cancel_reason(payload),
+      trace_id: execution.trace_id,
+      causation_id: operator_cancel_causation_id(execution, now),
+      actor_ref: %{kind: :human, operator_ref: operator_ref}
+    }
+
+    with {:ok, cancelled_execution} <-
+           ExecutionRecord.record_operator_cancelled(execution, cancel_context),
+         {:ok, mutation} <-
+           execution_cancel_mutation(cancelled_execution, operator_ref, payload, now) do
+      {:ok, cancelled_execution, mutation}
+    end
+  end
+
+  defp declared_local_mutations(mutations) do
+    mutations
+    |> Enum.reject(&is_nil/1)
+    |> Enum.reduce_while({:ok, []}, fn {owner_key, owner_action, target_ref, context},
+                                       {:ok, acc} ->
+      case OperatorActionClassification.declared_local_mutation(
+             owner_key,
+             owner_action,
+             target_ref,
+             context
+           ) do
+        {:ok, mutation} -> {:cont, {:ok, [mutation | acc]}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+    |> case do
+      {:ok, mutations} -> {:ok, Enum.reverse(mutations)}
       error -> error
     end
+  end
+
+  defp execution_cancel_mutation(execution, operator_ref, payload, now) do
+    OperatorActionClassification.declared_local_mutation(
+      :execution_cancel,
+      :record_operator_cancelled,
+      "execution://#{execution.id}",
+      %{
+        action: :cancel,
+        trace_id: execution.trace_id,
+        causation_id: operator_cancel_causation_id(execution, now),
+        actor_ref: %{kind: :human, operator_ref: operator_ref},
+        reason: cancel_reason(payload)
+      }
+    )
+  end
+
+  defp operator_cancel_causation_id(execution, now),
+    do: "operator-actions:cancel:#{execution.id}:#{DateTime.to_unix(now, :microsecond)}"
+
+  defp lease_invalidation_mutation(_subject_id, [], _action, _operator_ref, _payload), do: nil
+
+  defp lease_invalidation_mutation(
+         subject_id,
+         invalidated_lease_ids,
+         action,
+         operator_ref,
+         payload
+       ) do
+    context =
+      action_context(action, subject_id, operator_ref, payload)
+      |> Map.put(:metadata, %{invalidated_lease_ids: invalidated_lease_ids})
+
+    {:lease_invalidation, :invalidate_subject_leases, "subject-leases://#{subject_id}", context}
+  end
+
+  defp prior_plan_mutation(nil, _work_object_id, _operator_ref, _payload), do: nil
+
+  defp prior_plan_mutation(prior_plan, work_object_id, operator_ref, payload) do
+    {:work_plan, :supersede, "work-plan://#{prior_plan.id}",
+     action_context(:replan, work_object_id, operator_ref, payload)}
+  end
+
+  defp action_context(action, subject_id, operator_ref, payload) do
+    %{
+      action: action,
+      trace_id: "operator-actions:#{action}:#{subject_id}",
+      causation_id: "operator-actions:#{action}:#{subject_id}",
+      actor_ref: %{kind: :human, operator_ref: operator_ref},
+      reason: action_reason(payload)
+    }
   end
 
   defp invalidate_subject_leases(subject_id, reason, trace_id, now) do
@@ -424,8 +602,10 @@ defmodule Mezzanine.OperatorActions do
   end
 
   defp cancel_reason(payload) do
-    Map.get(payload, :reason) || Map.get(payload, "reason") || "cancelled_by_operator"
+    action_reason(payload) || "cancelled_by_operator"
   end
+
+  defp action_reason(payload), do: Map.get(payload, :reason) || Map.get(payload, "reason")
 
   defp actor(tenant_id), do: %{tenant_id: tenant_id}
 end

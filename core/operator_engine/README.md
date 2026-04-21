@@ -10,8 +10,12 @@ incident bundle contract.
 Operator pause, resume, and cancel commands now delegate durable subject status
 mutation to `Mezzanine.Objects.SubjectRecord` and execution cancellation to
 `Mezzanine.Execution.ExecutionRecord`, while retaining workflow signal
-references for `Mezzanine.WorkflowRuntime`. They do not mutate old Oban saga
-jobs or enqueue lower-cancel workers.
+actions for `Mezzanine.WorkflowRuntime`. Each returned operator effect is
+classified by `Mezzanine.Execution.OperatorActionClassification` as either a
+workflow signal or a declared local mutation. Workflow-owned accepted
+executions are signaled instead of locally terminalized; local execution,
+subject, and lease mutations name their bounded-context owner. Commands do not
+mutate old Oban saga jobs or enqueue lower-cancel workers.
 
 Primary modules:
 

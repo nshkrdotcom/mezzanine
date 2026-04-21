@@ -48,6 +48,11 @@ This package now owns the Phase `2.4.4` durable execution slice:
   `Mezzanine.Execution.CompensationEvidence`, which rejects silent retry loops,
   missing operator evidence, hidden rollback callbacks, raw payloads, task
   tokens, and lifecycle-continuation-handler repair targets
+- operator effects classified by
+  `Mezzanine.Execution.OperatorActionClassification` as either workflow
+  signals through `Mezzanine.WorkflowRuntime.signal_workflow/1` or declared
+  local mutations owned by a bounded context; unclassified refs, callbacks,
+  raw SQL writes, old Oban saga jobs, and lower-cancel workers fail closed
 
 Primary modules:
 
@@ -62,3 +67,4 @@ Primary modules:
 - `Mezzanine.Execution.OwnerDirectedCompensation`
 - `Mezzanine.Execution.BoundedContextRepairRouting`
 - `Mezzanine.Execution.CompensationEvidence`
+- `Mezzanine.Execution.OperatorActionClassification`

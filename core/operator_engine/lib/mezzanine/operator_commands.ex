@@ -5,7 +5,7 @@ defmodule Mezzanine.OperatorCommands do
 
   require Ash.Query
 
-  alias Mezzanine.Execution.{DispatchState, ExecutionRecord, Repo}
+  alias Mezzanine.Execution.{DispatchState, ExecutionRecord, OperatorActionClassification, Repo}
   alias Mezzanine.Leasing
   alias Mezzanine.Objects.SubjectRecord
 
@@ -57,11 +57,20 @@ defmodule Mezzanine.OperatorCommands do
     subject_id = subject.id
     trace_id = trace_id(opts, subject_id, "pause")
     causation_id = causation_id(opts, "pause", subject_id)
+    action_context = action_context(:pause, subject, opts, trace_id, causation_id)
 
     with {:ok, active_executions} <- fetch_active_executions(subject_id),
-         workflow_signal_refs = workflow_signal_refs(active_executions, "operator.pause"),
+         {:ok, workflow_signal_actions} <-
+           workflow_signal_actions(:pause, active_executions, action_context),
+         workflow_signal_refs = action_refs(workflow_signal_actions),
          {:ok, invalidations} <-
            invalidate_subject_leases(subject_id, "subject_paused", trace_id, now),
+         {:ok, local_mutations} <-
+           local_mutations([
+             {:subject_status, :pause, "subject://#{subject_id}", action_context},
+             lease_invalidation_mutation(subject_id, invalidations, action_context)
+           ]),
+         operator_actions = workflow_signal_actions ++ local_mutations,
          {:ok, updated_subject} <-
            SubjectRecord.pause(
              subject,
@@ -72,12 +81,18 @@ defmodule Mezzanine.OperatorCommands do
                actor_ref: actor_ref(opts),
                operator_context: %{
                  workflow_signal_refs: workflow_signal_refs,
+                 workflow_signal_actions: workflow_signal_actions,
+                 local_mutations: local_mutations,
+                 operator_actions: operator_actions,
                  invalidated_lease_ids: Enum.map(invalidations, & &1.lease_id)
                }
              }
            ) do
       build_result(:pause, updated_subject,
         workflow_signal_refs: workflow_signal_refs,
+        workflow_signal_actions: workflow_signal_actions,
+        local_mutations: local_mutations,
+        operator_actions: operator_actions,
         invalidated_lease_ids: Enum.map(invalidations, & &1.lease_id),
         noop?: false
       )
@@ -100,9 +115,17 @@ defmodule Mezzanine.OperatorCommands do
   defp resume_paused_subject(subject_id, subject, opts) do
     trace_id = trace_id(opts, subject_id, "resume")
     causation_id = causation_id(opts, "resume", subject_id)
+    action_context = action_context(:resume, subject, opts, trace_id, causation_id)
 
     with {:ok, active_executions} <- fetch_active_executions(subject_id),
-         workflow_signal_refs = workflow_signal_refs(active_executions, "operator.resume"),
+         {:ok, workflow_signal_actions} <-
+           workflow_signal_actions(:resume, active_executions, action_context),
+         workflow_signal_refs = action_refs(workflow_signal_actions),
+         {:ok, local_mutations} <-
+           local_mutations([
+             {:subject_status, :resume, "subject://#{subject_id}", action_context}
+           ]),
+         operator_actions = workflow_signal_actions ++ local_mutations,
          {:ok, updated_subject} <-
            SubjectRecord.resume(
              subject,
@@ -110,11 +133,19 @@ defmodule Mezzanine.OperatorCommands do
                trace_id: trace_id,
                causation_id: causation_id,
                actor_ref: actor_ref(opts),
-               operator_context: %{workflow_signal_refs: workflow_signal_refs}
+               operator_context: %{
+                 workflow_signal_refs: workflow_signal_refs,
+                 workflow_signal_actions: workflow_signal_actions,
+                 local_mutations: local_mutations,
+                 operator_actions: operator_actions
+               }
              }
            ) do
       build_result(:resume, updated_subject,
         workflow_signal_refs: workflow_signal_refs,
+        workflow_signal_actions: workflow_signal_actions,
+        local_mutations: local_mutations,
+        operator_actions: operator_actions,
         noop?: false
       )
     end
@@ -159,11 +190,25 @@ defmodule Mezzanine.OperatorCommands do
          actor_ref,
          now
        ) do
+    action_context = %{
+      action: :cancel,
+      subject_id: subject_id,
+      installation_id: subject.installation_id,
+      trace_id: trace_id,
+      causation_id: causation_id,
+      actor_ref: actor_ref,
+      reason: cancel_reason
+    }
+
     with {:ok, active_executions} <- fetch_active_executions(subject_id),
-         workflow_signal_refs = workflow_signal_refs(active_executions, "operator.cancel"),
-         {:ok, cancelled_execution_ids} <-
+         {workflow_executions, local_executions} <-
+           split_workflow_and_local_executions(active_executions),
+         {:ok, workflow_signal_actions} <-
+           workflow_signal_actions(:cancel, workflow_executions, action_context),
+         workflow_signal_refs = action_refs(workflow_signal_actions),
+         {:ok, cancelled_execution_ids, execution_mutations} <-
            cancel_active_executions(
-             active_executions,
+             local_executions,
              cancel_reason,
              trace_id,
              causation_id,
@@ -171,6 +216,13 @@ defmodule Mezzanine.OperatorCommands do
            ),
          {:ok, invalidations} <-
            invalidate_subject_leases(subject_id, "subject_cancelled", trace_id, now),
+         {:ok, declared_local_mutations} <-
+           local_mutations([
+             {:subject_status, :cancel, "subject://#{subject_id}", action_context},
+             lease_invalidation_mutation(subject_id, invalidations, action_context)
+           ]),
+         local_mutations = execution_mutations ++ declared_local_mutations,
+         operator_actions = workflow_signal_actions ++ local_mutations,
          {:ok, updated_subject} <-
            SubjectRecord.cancel(
              subject,
@@ -182,6 +234,9 @@ defmodule Mezzanine.OperatorCommands do
                operator_context: %{
                  cancelled_execution_ids: cancelled_execution_ids,
                  workflow_signal_refs: workflow_signal_refs,
+                 workflow_signal_actions: workflow_signal_actions,
+                 local_mutations: local_mutations,
+                 operator_actions: operator_actions,
                  invalidated_lease_ids: Enum.map(invalidations, & &1.lease_id)
                }
              }
@@ -191,6 +246,9 @@ defmodule Mezzanine.OperatorCommands do
         updated_subject,
         cancelled_execution_ids: cancelled_execution_ids,
         workflow_signal_refs: workflow_signal_refs,
+        workflow_signal_actions: workflow_signal_actions,
+        local_mutations: local_mutations,
+        operator_actions: operator_actions,
         invalidated_lease_ids: Enum.map(invalidations, & &1.lease_id),
         noop?: false
       )
@@ -230,36 +288,146 @@ defmodule Mezzanine.OperatorCommands do
 
   defp cancel_active_executions(executions, reason, trace_id, causation_id, actor_ref) do
     executions
-    |> Enum.reduce_while({:ok, []}, fn execution, {:ok, cancelled_ids} ->
-      case ExecutionRecord.record_operator_cancelled(execution, %{
-             reason: reason,
-             trace_id: trace_id,
-             causation_id: causation_id,
-             actor_ref: actor_ref
-           }) do
-        {:ok, cancelled_execution} ->
-          {:cont, {:ok, [cancelled_execution.id | cancelled_ids]}}
+    |> Enum.reduce_while({:ok, [], []}, fn execution, {:ok, cancelled_ids, local_mutations} ->
+      case record_operator_cancelled_mutation(
+             execution,
+             reason,
+             trace_id,
+             causation_id,
+             actor_ref
+           ) do
+        {:ok, cancelled_execution, mutation} ->
+          {:cont, {:ok, [cancelled_execution.id | cancelled_ids], [mutation | local_mutations]}}
 
         {:error, error} ->
           {:halt, {:error, error}}
       end
     end)
     |> case do
-      {:ok, cancelled_ids} -> {:ok, Enum.reverse(cancelled_ids)}
+      {:ok, cancelled_ids, local_mutations} ->
+        {:ok, Enum.reverse(cancelled_ids), Enum.reverse(local_mutations)}
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  defp record_operator_cancelled_mutation(execution, reason, trace_id, causation_id, actor_ref) do
+    cancel_context = %{
+      reason: reason,
+      trace_id: trace_id,
+      causation_id: causation_id,
+      actor_ref: actor_ref
+    }
+
+    with {:ok, cancelled_execution} <-
+           ExecutionRecord.record_operator_cancelled(execution, cancel_context),
+         {:ok, mutation} <-
+           execution_cancel_mutation(
+             cancelled_execution,
+             reason,
+             trace_id,
+             causation_id,
+             actor_ref
+           ) do
+      {:ok, cancelled_execution, mutation}
+    end
+  end
+
+  defp workflow_signal_actions(action, executions, context) do
+    executions
+    |> Enum.filter(&workflow_managed_execution?/1)
+    |> Enum.reduce_while({:ok, []}, fn execution, {:ok, actions} ->
+      case OperatorActionClassification.workflow_signal(action, execution, context) do
+        {:ok, signal_action} -> {:cont, {:ok, [signal_action | actions]}}
+        {:error, error} -> {:halt, {:error, error}}
+      end
+    end)
+    |> case do
+      {:ok, actions} -> {:ok, Enum.reverse(actions)}
       {:error, error} -> {:error, error}
     end
   end
 
-  defp workflow_signal_refs(executions, signal_name) do
-    executions
-    |> Enum.filter(fn execution ->
-      DispatchState.canonical(execution.dispatch_state) == :accepted_active and
-        execution.submission_ref != %{}
+  defp split_workflow_and_local_executions(executions) do
+    Enum.split_with(executions, &workflow_managed_execution?/1)
+  end
+
+  defp workflow_managed_execution?(execution) do
+    DispatchState.canonical(execution.dispatch_state) == :accepted_active and
+      execution.submission_ref != %{}
+  end
+
+  defp action_refs(actions), do: Enum.map(actions, &OperatorActionClassification.action_ref/1)
+
+  defp local_mutations(mutations) do
+    mutations
+    |> Enum.reject(&is_nil/1)
+    |> Enum.reduce_while({:ok, []}, fn {owner_key, owner_action, target_ref, context},
+                                       {:ok, acc} ->
+      case OperatorActionClassification.declared_local_mutation(
+             owner_key,
+             owner_action,
+             target_ref,
+             context
+           ) do
+        {:ok, mutation} -> {:cont, {:ok, [mutation | acc]}}
+        {:error, error} -> {:halt, {:error, error}}
+      end
     end)
-    |> Enum.map(fn execution -> "workflow-signal://#{signal_name}/#{execution.id}" end)
+    |> case do
+      {:ok, mutations} -> {:ok, Enum.reverse(mutations)}
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  defp lease_invalidation_mutation(_subject_id, [], _context), do: nil
+
+  defp lease_invalidation_mutation(subject_id, invalidations, context) do
+    context =
+      Map.put(context, :metadata, %{
+        invalidated_lease_ids: Enum.map(invalidations, & &1.lease_id)
+      })
+
+    {:lease_invalidation, :invalidate_subject_leases, "subject-leases://#{subject_id}", context}
+  end
+
+  defp execution_cancel_mutation(execution, reason, trace_id, causation_id, actor_ref) do
+    OperatorActionClassification.declared_local_mutation(
+      :execution_cancel,
+      :record_operator_cancelled,
+      "execution://#{execution.id}",
+      %{
+        action: :cancel,
+        subject_id: execution.subject_id,
+        trace_id: trace_id,
+        causation_id: causation_id,
+        actor_ref: actor_ref,
+        reason: reason
+      }
+    )
+  end
+
+  defp action_context(action, subject, opts, trace_id, causation_id) do
+    %{
+      action: action,
+      subject_id: subject.id,
+      installation_id: subject.installation_id,
+      trace_id: trace_id,
+      causation_id: causation_id,
+      actor_ref: actor_ref(opts),
+      reason: keyword_reason(opts)
+    }
   end
 
   defp build_result(action, subject, details) do
+    details =
+      details
+      |> Map.new()
+      |> Map.put_new(:workflow_signal_actions, [])
+      |> Map.put_new(:local_mutations, [])
+      |> Map.put_new(:operator_actions, [])
+
     {:ok,
      %{
        action: action,
@@ -270,7 +438,7 @@ defmodule Mezzanine.OperatorCommands do
        status_reason: subject.status_reason,
        status_updated_at: subject.status_updated_at,
        terminal_at: subject.terminal_at,
-       details: Map.new(details)
+       details: details
      }}
   end
 

@@ -15,19 +15,21 @@ defmodule Mezzanine.OperatorActionsTest do
   test "pause and resume create durable control state and interventions" do
     %{tenant_id: tenant_id, work_object: work_object} = fixture_stack("tenant-c")
 
-    assert {:ok, %{control_session: paused}} =
+    assert {:ok, %{control_session: paused, operator_actions: pause_actions}} =
              OperatorActions.pause_work(tenant_id, work_object.id, "ops_lead", %{
                "reason" => "hold"
              })
 
     assert paused.current_mode == :paused
+    assert_declared_local_mutations!(pause_actions)
 
-    assert {:ok, %{control_session: resumed}} =
+    assert {:ok, %{control_session: resumed, operator_actions: resume_actions}} =
              OperatorActions.resume_work(tenant_id, work_object.id, "ops_lead", %{
                "reason" => "continue"
              })
 
     assert resumed.current_mode == :normal
+    assert_declared_local_mutations!(resume_actions)
   end
 
   test "pause_work invalidates subject leases even without an active execution" do
@@ -66,13 +68,15 @@ defmodule Mezzanine.OperatorActionsTest do
         repo: ExecutionRepo
       )
 
-    assert {:ok, %{invalidated_lease_ids: invalidated_lease_ids}} =
+    assert {:ok, %{invalidated_lease_ids: invalidated_lease_ids, operator_actions: actions}} =
              OperatorActions.pause_work(tenant_id, work_object.id, "ops_lead", %{
                "reason" => "hold"
              })
 
     assert Enum.sort(invalidated_lease_ids) ==
              Enum.sort([read_lease.lease_id, stream_lease.lease_id])
+
+    assert Enum.any?(actions, &match?(%{owner: :leasing}, &1))
 
     assert {:error, {:lease_invalidated, "subject_paused", _sequence_number}} =
              Leasing.authorize_read(
@@ -95,12 +99,13 @@ defmodule Mezzanine.OperatorActionsTest do
   test "override_grant_profile persists the override set on the control session" do
     %{tenant_id: tenant_id, work_object: work_object} = fixture_stack("tenant-d")
 
-    assert {:ok, %{control_session: control_session}} =
+    assert {:ok, %{control_session: control_session, operator_actions: actions}} =
              OperatorActions.override_grant_profile(tenant_id, work_object.id, "ops_lead", %{
                :"github.pr.write" => :approved
              })
 
     assert control_session.active_override_set == %{"github.pr.write" => "approved"}
+    assert_declared_local_mutations!(actions)
   end
 
   test "request_replan supersedes the current plan and compiles a replacement" do
@@ -118,7 +123,8 @@ defmodule Mezzanine.OperatorActionsTest do
 
     assert is_binary(planned_work.current_plan_id)
 
-    assert {:ok, %{work_object: replanned_work, prior_plan: prior_plan}} =
+    assert {:ok,
+            %{work_object: replanned_work, prior_plan: prior_plan, operator_actions: actions}} =
              OperatorActions.request_replan(tenant_id, planned_work.id, "ops_lead", %{
                "reason" => "policy change"
              })
@@ -126,6 +132,7 @@ defmodule Mezzanine.OperatorActionsTest do
     assert prior_plan.status == :superseded
     assert is_binary(replanned_work.current_plan_id)
     refute replanned_work.current_plan_id == prior_plan.id
+    assert_declared_local_mutations!(actions)
   end
 
   test "cancel_work closes the current run and work object" do
@@ -173,10 +180,12 @@ defmodule Mezzanine.OperatorActionsTest do
       |> Ash.Changeset.set_tenant(tenant_id)
       |> Ash.update(actor: actor, authorize?: false, domain: Mezzanine.Runs)
 
-    assert {:ok, %{work_object: cancelled_work}} =
+    assert {:ok, %{work_object: cancelled_work, operator_actions: actions}} =
              OperatorActions.cancel_work(tenant_id, work_object.id, "ops_lead", %{})
 
     assert cancelled_work.status == :cancelled
+    assert_declared_local_mutations!(actions)
+
     assert {:ok, cancelled_run} = fetch_run(tenant_id, run.id)
     assert cancelled_run.status == :cancelled
     assert {:ok, cancelled_series} = fetch_run_series(tenant_id, run_series.id)
@@ -266,6 +275,16 @@ defmodule Mezzanine.OperatorActionsTest do
       {:ok, []} -> {:error, :not_found}
       {:error, error} -> {:error, error}
     end
+  end
+
+  defp assert_declared_local_mutations!(actions) do
+    assert actions != []
+
+    assert Enum.all?(actions, fn action ->
+             action.kind == :declared_local_mutation and
+               is_binary(action.target_ref) and
+               is_binary(action.release_manifest_ref)
+           end)
   end
 
   defp fetch_run_series(tenant_id, run_series_id) do

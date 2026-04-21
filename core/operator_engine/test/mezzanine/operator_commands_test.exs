@@ -33,6 +33,19 @@ defmodule Mezzanine.OperatorCommandsTest do
              "workflow-signal://operator.pause/#{accepted_execution.id}"
            ]
 
+    assert [%{kind: :workflow_signal, signal_name: "operator.pause"}] =
+             pause_result.details.workflow_signal_actions
+
+    assert Enum.any?(
+             pause_result.details.local_mutations,
+             &match?(%{kind: :declared_local_mutation, owner: :object_lifecycle}, &1)
+           )
+
+    assert Enum.any?(
+             pause_result.details.local_mutations,
+             &match?(%{kind: :declared_local_mutation, owner: :leasing}, &1)
+           )
+
     assert Enum.sort(pause_result.details.invalidated_lease_ids) ==
              Enum.sort([read_lease.lease_id, stream_lease.lease_id])
 
@@ -54,13 +67,21 @@ defmodule Mezzanine.OperatorCommandsTest do
              "workflow-signal://operator.resume/#{accepted_execution.id}"
            ]
 
+    assert [%{kind: :workflow_signal, signal_name: "operator.resume"}] =
+             resume_result.details.workflow_signal_actions
+
+    assert Enum.any?(
+             resume_result.details.local_mutations,
+             &match?(%{kind: :declared_local_mutation, owner_action: :resume}, &1)
+           )
+
     assert Repo.aggregate(Oban.Job, :count, :id) == 0
 
     assert Enum.map(subject_invalidations("subject_paused"), & &1.lease_id) |> Enum.sort() ==
              Enum.sort([read_lease.lease_id, stream_lease.lease_id])
   end
 
-  test "cancel marks active executions cancelled and records workflow signal refs only" do
+  test "cancel locally cancels declared local executions and signals workflow-owned executions" do
     assert {:ok, subject} = ingest_subject("linear:ticket:cancel")
     assert {:ok, pending_execution} = dispatch_execution(subject, "cancel-pending")
     assert {:ok, accepted_execution} = accepted_execution(subject, "cancel-accepted")
@@ -82,17 +103,36 @@ defmodule Mezzanine.OperatorCommandsTest do
              "workflow-signal://operator.cancel/#{accepted_execution.id}"
            ]
 
-    assert Enum.sort(cancel_result.details.cancelled_execution_ids) ==
-             Enum.sort([pending_execution.id, accepted_execution.id])
+    assert cancel_result.details.cancelled_execution_ids == [pending_execution.id]
 
     assert Enum.sort(cancel_result.details.invalidated_lease_ids) ==
              Enum.sort([read_lease.lease_id, stream_lease.lease_id])
+
+    assert [%{kind: :workflow_signal, signal_name: "operator.cancel"}] =
+             cancel_result.details.workflow_signal_actions
+
+    assert Enum.any?(
+             cancel_result.details.local_mutations,
+             &match?(
+               %{
+                 kind: :declared_local_mutation,
+                 owner: :execution_ledger,
+                 owner_action: :record_operator_cancelled
+               },
+               &1
+             )
+           )
+
+    assert Enum.all?(
+             cancel_result.details.operator_actions,
+             &(&1.kind in [:workflow_signal, :declared_local_mutation])
+           )
 
     assert {:ok, pending_reloaded} = Ash.get(ExecutionRecord, pending_execution.id)
     assert pending_reloaded.dispatch_state == :cancelled
 
     assert {:ok, accepted_reloaded} = Ash.get(ExecutionRecord, accepted_execution.id)
-    assert accepted_reloaded.dispatch_state == :cancelled
+    assert accepted_reloaded.dispatch_state == :accepted_active
 
     assert :execution_cancelled in audit_kinds_for_trace("inst-1", "trace-operator-cancel")
     assert :subject_cancelled in audit_kinds_for_trace("inst-1", "trace-operator-cancel")
@@ -122,6 +162,7 @@ defmodule Mezzanine.OperatorCommandsTest do
     assert source =~ "SubjectRecord.pause"
     assert source =~ "SubjectRecord.cancel"
     assert source =~ "ExecutionRecord.record_operator_cancelled"
+    assert source =~ "OperatorActionClassification"
   end
 
   defp ingest_subject(source_ref) do
