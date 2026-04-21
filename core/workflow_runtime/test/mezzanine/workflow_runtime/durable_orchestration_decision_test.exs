@@ -185,13 +185,16 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecisionTest do
 
     assert Enum.any?(
              retained,
-             &(&1.role == :workflow_start_outbox and &1.classification == :valid_outbox)
+             &(&1.role == :workflow_start_outbox and
+                 &1.outcome_persistence == Mezzanine.WorkflowRuntime.OutboxPersistence and
+                 &1.classification == :valid_outbox)
            )
 
     assert Enum.any?(
              retained,
              &(&1.role == :workflow_signal_outbox and
                  &1.worker == Mezzanine.WorkflowRuntime.WorkflowSignalOutboxWorker and
+                 &1.outcome_persistence == Mezzanine.WorkflowRuntime.OutboxPersistence and
                  &1.classification == :valid_outbox)
            )
 

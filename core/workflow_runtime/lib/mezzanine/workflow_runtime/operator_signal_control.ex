@@ -11,6 +11,7 @@ defmodule Mezzanine.WorkflowRuntime.OperatorSignalControl do
 
   alias Mezzanine.OperatorWorkflowSignal
   alias Mezzanine.WorkflowDecisionTimer
+  alias Mezzanine.WorkflowRuntime.OutboxPersistence
   alias Mezzanine.WorkflowSignalAcknowledgement
   alias Mezzanine.WorkflowSignalOutboxRow
   alias Mezzanine.WorkflowSignalReceipt
@@ -67,6 +68,7 @@ defmodule Mezzanine.WorkflowRuntime.OperatorSignalControl do
       citadel_authority_contract: "Citadel.OperatorWorkflowSignalAuthority.v1",
       signal_boundary: Mezzanine.WorkflowRuntime,
       signal_outbox_queue: :workflow_signal_outbox,
+      outbox_persistence_boundary: OutboxPersistence,
       signal_registry: @operator_signal_registry,
       release_manifest_ref: @release_manifest_ref
     }
@@ -163,6 +165,55 @@ defmodule Mezzanine.WorkflowRuntime.OperatorSignalControl do
          receipt: delivered_receipt,
          runtime_receipt: sanitize_runtime_receipt(runtime_receipt)
        }}
+    end
+  end
+
+  @doc "Classifies a retained signal-outbox Temporal dispatch outcome."
+  @spec classify_signal_result(map() | struct(), {:ok, term()} | {:error, term()}) ::
+          {:ok, map()} | {:retry, map()} | {:error, map()}
+  def classify_signal_result(row, result) do
+    row =
+      row
+      |> normalize()
+      |> Map.update(:dispatch_attempt_count, 1, &(&1 + 1))
+
+    case result do
+      {:ok, runtime_receipt} ->
+        receipt = sanitize_runtime_receipt(runtime_receipt)
+
+        {:ok,
+         row
+         |> Map.put(
+           :dispatch_state,
+           receipt[:dispatch_state] || receipt[:status] || "delivered_to_temporal"
+         )
+         |> Map.put(:workflow_effect_state, receipt[:workflow_effect_state] || "pending_ack")
+         |> Map.put(:projection_state, receipt[:projection_state] || "pending")
+         |> Map.put(:last_error_class, "none")}
+
+      {:error, :workflow_runtime_unconfigured} ->
+        {:retry,
+         row
+         |> Map.put(:dispatch_state, "retryable_failure")
+         |> Map.put(:workflow_effect_state, "pending")
+         |> Map.put(:projection_state, "lagging")
+         |> Map.put(:last_error_class, "workflow_runtime_unconfigured")}
+
+      {:error, {:invalid_request, reason}} ->
+        {:error,
+         row
+         |> Map.put(:dispatch_state, "terminal_failure")
+         |> Map.put(:workflow_effect_state, "not_delivered")
+         |> Map.put(:projection_state, "fresh")
+         |> Map.put(:last_error_class, {:terminal_invalid_workflow_signal, reason})}
+
+      {:error, reason} ->
+        {:retry,
+         row
+         |> Map.put(:dispatch_state, "retryable_failure")
+         |> Map.put(:workflow_effect_state, "pending")
+         |> Map.put(:projection_state, "lagging")
+         |> Map.put(:last_error_class, {:retryable_temporal_signal_failure, reason})}
     end
   end
 
@@ -497,12 +548,21 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowSignalOutboxWorker do
 
   use Oban.Worker, queue: :workflow_signal_outbox, max_attempts: 20
 
+  alias Mezzanine.WorkflowRuntime.{OperatorSignalControl, OutboxPersistence}
+
   @impl true
   def perform(%Oban.Job{args: args}) do
-    case Mezzanine.WorkflowRuntime.signal_workflow(signal_request(args)) do
-      {:ok, _receipt} -> :ok
-      {:error, :workflow_runtime_unconfigured} -> {:snooze, 30}
-      {:error, reason} -> {:error, reason}
+    result = Mezzanine.WorkflowRuntime.signal_workflow(signal_request(args))
+
+    case OperatorSignalControl.classify_signal_result(args, result) do
+      {:ok, row} ->
+        persist_signal_outcome(args, row, :ok)
+
+      {:retry, row} ->
+        persist_signal_outcome(args, row, {:snooze, 30})
+
+      {:error, row} ->
+        persist_signal_outcome(args, row, {:error, Map.fetch!(row, :last_error_class)})
     end
   end
 
@@ -523,4 +583,11 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowSignalOutboxWorker do
 
   defp normalize_key(key) when is_atom(key), do: key
   defp normalize_key(key) when is_binary(key), do: String.to_atom(key)
+
+  defp persist_signal_outcome(args, row, worker_result) do
+    case OutboxPersistence.record_signal_outcome(args, row) do
+      :ok -> worker_result
+      {:error, reason} -> {:error, {:outbox_outcome_not_persisted, reason}}
+    end
+  end
 end

@@ -48,6 +48,7 @@ defmodule MezzanineWorkflowRuntime.MixProject do
     [
       {:mezzanine_core, path: "../mezzanine_core"},
       {:temporalex, path: "../../../temporalex"},
+      {:ecto_sql, "~> 3.13"},
       {:oban, "~> 2.17"},
       {:opentelemetry, "~> 1.5"},
       {:opentelemetry_api, "~> 1.4"},

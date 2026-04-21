@@ -11,3 +11,7 @@ config :mezzanine_workflow_runtime, :temporal,
   max_concurrent_workflow_tasks: 5,
   max_concurrent_activity_tasks: 5,
   headers: []
+
+config :mezzanine_workflow_runtime, :outbox_persistence,
+  store: Mezzanine.WorkflowRuntime.OutboxPersistence.SQL,
+  repo: Mezzanine.Execution.Repo

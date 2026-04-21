@@ -19,13 +19,31 @@ Postgres transaction must persist the accepted command receipt, the
 dispatcher. It does not contain workflow business logic and never talks to
 Temporal directly; it builds a compact start request and calls
 `Mezzanine.WorkflowRuntime.start_workflow/1`, which is the only public
-Mezzanine Temporal client facade.
+Mezzanine Temporal client facade. After Temporal returns a delivery outcome,
+the worker records the resulting `workflow_start_outbox` row state through
+`Mezzanine.WorkflowRuntime.OutboxPersistence` before it acknowledges,
+snoozes, or fails the Oban job.
 
 The row and job args carry refs, hashes, deterministic workflow identity,
 authority/decision refs, trace/idempotency scope, release-manifest ref, and
 scalar routing metadata only. Raw payloads, Temporal SDK structs, Temporal
 protobufs, NIF resources, task tokens, and raw history events stay outside the
 public DTO boundary.
+
+`Mezzanine.WorkflowRuntime.WorkflowSignalOutboxWorker` follows the same rule
+for retained workflow signals: the local `workflow_signal_outbox` row is the
+durable dispatch evidence, Oban only delivers it after commit, and the worker
+must persist `dispatch_state`, `workflow_effect_state`, `projection_state`,
+attempt count, and error class after each Temporal outcome.
+
+The default outbox persistence store is SQL-backed and targets the execution
+repo tables created by `20260420214500_create_workflow_runtime_outboxes.exs`:
+
+```elixir
+config :mezzanine_workflow_runtime, :outbox_persistence,
+  store: Mezzanine.WorkflowRuntime.OutboxPersistence.SQL,
+  repo: Mezzanine.Execution.Repo
+```
 
 ## Temporalex Runtime Adapter
 

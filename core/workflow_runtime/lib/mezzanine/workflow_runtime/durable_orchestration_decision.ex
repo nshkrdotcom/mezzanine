@@ -151,12 +151,14 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
       role: :workflow_start_outbox,
       queue: :workflow_start_outbox,
       worker: Mezzanine.WorkflowRuntime.WorkflowStarterOutboxWorker,
+      outcome_persistence: Mezzanine.WorkflowRuntime.OutboxPersistence,
       classification: :valid_outbox
     },
     %{
       role: :workflow_signal_outbox,
       queue: :workflow_signal_outbox,
       worker: Mezzanine.WorkflowRuntime.WorkflowSignalOutboxWorker,
+      outcome_persistence: Mezzanine.WorkflowRuntime.OutboxPersistence,
       classification: :valid_outbox
     },
     %{

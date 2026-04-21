@@ -86,6 +86,7 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowStarterOutbox do
       worker_module: Mezzanine.WorkflowRuntime.WorkflowStarterOutboxWorker,
       runtime_boundary: Mezzanine.WorkflowRuntime,
       temporal_client_boundary: Mezzanine.WorkflowRuntime.TemporalexBoundary,
+      outbox_persistence_boundary: Mezzanine.WorkflowRuntime.OutboxPersistence,
       required_fields: @required_fields,
       dispatch_states: @dispatch_states,
       failure_classes: @failure_classes,
@@ -378,6 +379,7 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowStarterOutboxWorker do
 
   use Oban.Worker, queue: :workflow_start_outbox, max_attempts: 20
 
+  alias Mezzanine.WorkflowRuntime.OutboxPersistence
   alias Mezzanine.WorkflowRuntime.WorkflowStarterOutbox
 
   @impl true
@@ -385,9 +387,14 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowStarterOutboxWorker do
     with {:ok, request} <- WorkflowStarterOutbox.start_request(args),
          result <- Mezzanine.WorkflowRuntime.start_workflow(request) do
       case WorkflowStarterOutbox.classify_start_result(args, result) do
-        {:ok, _row} -> :ok
-        {:retry, _row} -> {:snooze, 30}
-        {:error, row} -> {:error, Map.fetch!(row, :last_error_class)}
+        {:ok, row} ->
+          persist_start_outcome(args, row, :ok)
+
+        {:retry, row} ->
+          persist_start_outcome(args, row, {:snooze, 30})
+
+        {:error, row} ->
+          persist_start_outcome(args, row, {:error, Map.fetch!(row, :last_error_class)})
       end
     end
   end
@@ -395,4 +402,11 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowStarterOutboxWorker do
   @doc "Unique Oban declaration used by the retained workflow-start outbox worker."
   @spec unique_declaration() :: keyword()
   def unique_declaration, do: WorkflowStarterOutbox.unique_declaration()
+
+  defp persist_start_outcome(args, row, worker_result) do
+    case OutboxPersistence.record_start_outcome(args, row) do
+      :ok -> worker_result
+      {:error, reason} -> {:error, {:outbox_outcome_not_persisted, reason}}
+    end
+  end
 end

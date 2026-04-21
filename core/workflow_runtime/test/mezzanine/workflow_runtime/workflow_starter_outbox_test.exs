@@ -45,15 +45,50 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowStarterOutboxTest do
     def fetch_workflow_history_ref(_request), do: {:error, :not_used}
   end
 
+  defmodule RecordingOutboxStore do
+    @behaviour Mezzanine.WorkflowRuntime.OutboxPersistence
+
+    @impl true
+    def record_start_outcome(original_row, outcome_row) do
+      send(self(), {:record_start_outcome, original_row, outcome_row})
+      :ok
+    end
+
+    @impl true
+    def record_signal_outcome(_original_row, _outcome_row), do: {:error, :not_used}
+  end
+
+  defmodule FailingOutboxStore do
+    @behaviour Mezzanine.WorkflowRuntime.OutboxPersistence
+
+    @impl true
+    def record_start_outcome(_original_row, _outcome_row), do: {:error, :store_down}
+
+    @impl true
+    def record_signal_outcome(_original_row, _outcome_row), do: {:error, :not_used}
+  end
+
   setup do
     previous = Application.get_env(:mezzanine_core, :workflow_runtime_impl)
+    previous_outbox = Application.get_env(:mezzanine_workflow_runtime, :outbox_persistence)
+
     Application.put_env(:mezzanine_core, :workflow_runtime_impl, SuccessfulRuntime)
+
+    Application.put_env(:mezzanine_workflow_runtime, :outbox_persistence,
+      store: RecordingOutboxStore
+    )
 
     on_exit(fn ->
       if previous do
         Application.put_env(:mezzanine_core, :workflow_runtime_impl, previous)
       else
         Application.delete_env(:mezzanine_core, :workflow_runtime_impl)
+      end
+
+      if previous_outbox do
+        Application.put_env(:mezzanine_workflow_runtime, :outbox_persistence, previous_outbox)
+      else
+        Application.delete_env(:mezzanine_workflow_runtime, :outbox_persistence)
       end
     end)
   end
@@ -146,6 +181,24 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowStarterOutboxTest do
     refute Map.has_key?(request, :temporalex_struct)
 
     assert :ok =
+             WorkflowStarterOutboxWorker.perform(%Oban.Job{
+               args: WorkflowStarterOutbox.dispatch_job_args(row)
+             })
+
+    assert_received {:record_start_outcome, original_row, outcome_row}
+    assert original_row["outbox_id"] == row.outbox_id
+    assert outcome_row.dispatch_state == "started"
+    assert outcome_row.workflow_run_id == "run-001"
+  end
+
+  test "retained starter worker does not ack when outcome persistence fails" do
+    Application.put_env(:mezzanine_workflow_runtime, :outbox_persistence,
+      store: FailingOutboxStore
+    )
+
+    assert {:ok, row} = WorkflowStarterOutbox.new_row(row_attrs())
+
+    assert {:error, {:outbox_outcome_not_persisted, :store_down}} =
              WorkflowStarterOutboxWorker.perform(%Oban.Job{
                args: WorkflowStarterOutbox.dispatch_job_args(row)
              })

@@ -2,6 +2,7 @@ defmodule Mezzanine.WorkflowRuntime.OperatorSignalControlTest do
   use ExUnit.Case, async: false
 
   alias Mezzanine.WorkflowRuntime.OperatorSignalControl
+  alias Mezzanine.WorkflowRuntime.WorkflowSignalOutboxWorker
   alias Mezzanine.Workflows.DecisionReview
 
   defmodule SignalRuntime do
@@ -35,15 +36,50 @@ defmodule Mezzanine.WorkflowRuntime.OperatorSignalControlTest do
     def fetch_workflow_history_ref(_request), do: {:error, :not_used}
   end
 
+  defmodule RecordingOutboxStore do
+    @behaviour Mezzanine.WorkflowRuntime.OutboxPersistence
+
+    @impl true
+    def record_start_outcome(_original_row, _outcome_row), do: {:error, :not_used}
+
+    @impl true
+    def record_signal_outcome(original_row, outcome_row) do
+      send(self(), {:record_signal_outcome, original_row, outcome_row})
+      :ok
+    end
+  end
+
+  defmodule FailingOutboxStore do
+    @behaviour Mezzanine.WorkflowRuntime.OutboxPersistence
+
+    @impl true
+    def record_start_outcome(_original_row, _outcome_row), do: {:error, :not_used}
+
+    @impl true
+    def record_signal_outcome(_original_row, _outcome_row), do: {:error, :store_down}
+  end
+
   setup do
     previous = Application.get_env(:mezzanine_core, :workflow_runtime_impl)
+    previous_outbox = Application.get_env(:mezzanine_workflow_runtime, :outbox_persistence)
+
     Application.put_env(:mezzanine_core, :workflow_runtime_impl, SignalRuntime)
+
+    Application.put_env(:mezzanine_workflow_runtime, :outbox_persistence,
+      store: RecordingOutboxStore
+    )
 
     on_exit(fn ->
       if previous do
         Application.put_env(:mezzanine_core, :workflow_runtime_impl, previous)
       else
         Application.delete_env(:mezzanine_core, :workflow_runtime_impl)
+      end
+
+      if previous_outbox do
+        Application.put_env(:mezzanine_workflow_runtime, :outbox_persistence, previous_outbox)
+      else
+        Application.delete_env(:mezzanine_workflow_runtime, :outbox_persistence)
       end
     end)
   end
@@ -101,6 +137,35 @@ defmodule Mezzanine.WorkflowRuntime.OperatorSignalControlTest do
     assert acked.receipt.workflow_effect_state == "processed_by_workflow"
     assert acked.receipt.projection_state == "fresh"
     assert acked.ack.signal_effect == "cancel_requested"
+  end
+
+  test "retained signal worker persists Temporal outcome before acking" do
+    assert {:ok, accepted} = OperatorSignalControl.accept_operator_signal(signal_attrs())
+
+    assert :ok =
+             WorkflowSignalOutboxWorker.perform(%Oban.Job{
+               args: Map.from_struct(accepted.outbox)
+             })
+
+    assert_received {:record_signal_outcome, original_row, outcome_row}
+    assert original_row.outbox_id == accepted.outbox.outbox_id
+    assert outcome_row.dispatch_state == "delivered_to_temporal"
+    assert outcome_row.workflow_effect_state == "pending_ack"
+    assert outcome_row.projection_state == "pending"
+    assert outcome_row.dispatch_attempt_count == 1
+  end
+
+  test "retained signal worker does not ack when outcome persistence fails" do
+    Application.put_env(:mezzanine_workflow_runtime, :outbox_persistence,
+      store: FailingOutboxStore
+    )
+
+    assert {:ok, accepted} = OperatorSignalControl.accept_operator_signal(signal_attrs())
+
+    assert {:error, {:outbox_outcome_not_persisted, :store_down}} =
+             WorkflowSignalOutboxWorker.perform(%Oban.Job{
+               args: Map.from_struct(accepted.outbox)
+             })
   end
 
   test "unauthorized signal is denied before outbox dispatch" do
