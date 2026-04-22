@@ -255,6 +255,47 @@ defmodule Mezzanine.IdempotencyTest do
     assert evidence["release_manifest_ref"] == "release-1"
   end
 
+  test "retry replay changes attempt evidence without changing root or side effect keys" do
+    canonical_key = canonical_root_key()
+    attrs = retry_replay_correlation_attrs(canonical_key)
+
+    assert Idempotency.canonical_key!(
+             Map.put(canonical_root_attrs(), :temporal_activity_attempt_number, 1)
+           ) ==
+             canonical_key
+
+    assert Idempotency.canonical_key!(
+             Map.put(canonical_root_attrs(), :temporal_activity_attempt_number, 4)
+           ) ==
+             canonical_key
+
+    assert {:ok, first_attempt} =
+             attrs
+             |> Map.put(:temporal_activity_attempt_number, 1)
+             |> Idempotency.correlation_evidence()
+
+    assert {:ok, replay_attempt} =
+             attrs
+             |> Map.put(:temporal_activity_attempt_number, 4)
+             |> Idempotency.correlation_evidence()
+
+    assert first_attempt["canonical_idempotency_key"] == canonical_key
+    assert replay_attempt["canonical_idempotency_key"] == canonical_key
+
+    assert first_attempt["temporal_activity_side_effect_key"] ==
+             replay_attempt["temporal_activity_side_effect_key"]
+
+    assert first_attempt["jido_lower_submission_dedupe_key"] ==
+             replay_attempt["jido_lower_submission_dedupe_key"]
+
+    assert first_attempt["lower_provider_retry_key"] == replay_attempt["lower_provider_retry_key"]
+    assert first_attempt["temporal_activity_attempt_number"] == 1
+    assert replay_attempt["temporal_activity_attempt_number"] == 4
+
+    assert Map.delete(first_attempt, "temporal_activity_attempt_number") ==
+             Map.delete(replay_attempt, "temporal_activity_attempt_number")
+  end
+
   test "rejects idempotency correlation fields that no longer join to the root" do
     canonical_key = canonical_root_key()
 
@@ -300,6 +341,27 @@ defmodule Mezzanine.IdempotencyTest do
       subject_ref: %{kind: :work, id: "work-1"},
       payload_hash: "sha256:payload",
       source_event_position: "event:17"
+    }
+  end
+
+  defp retry_replay_correlation_attrs(canonical_key) do
+    %{
+      canonical_idempotency_key: canonical_key,
+      tenant_id: "tenant-1",
+      trace_id: "trace-retry",
+      causation_id: "cause:abc",
+      platform_envelope_idempotency_key: canonical_key,
+      temporal_start_idempotency_key: canonical_key,
+      temporal_workflow_id: "workflow-retry",
+      temporal_workflow_run_id: "run-retry",
+      temporal_activity_call_ref: "activity-call-retry",
+      jido_lower_activity_idempotency_key: canonical_key,
+      lower_submission_ref: "lower-submission-retry",
+      lower_provider_retry_stable_ref: "provider-retry-stable",
+      execution_plane_envelope_idempotency_key: canonical_key,
+      execution_plane_route_idempotency_key: canonical_key,
+      execution_plane_route_id: "route-retry",
+      release_manifest_ref: "release-retry"
     }
   end
 end
