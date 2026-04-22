@@ -39,9 +39,10 @@ defmodule Mezzanine.Audit.ExecutionLineage do
 
   alias Mezzanine.Audit.TraceContract
 
-  @enforce_keys [:trace_id, :installation_id, :subject_id, :execution_id]
+  @enforce_keys [:trace_id, :tenant_id, :installation_id, :subject_id, :execution_id]
   defstruct trace_id: nil,
             causation_id: nil,
+            tenant_id: nil,
             installation_id: nil,
             subject_id: nil,
             execution_id: nil,
@@ -55,6 +56,7 @@ defmodule Mezzanine.Audit.ExecutionLineage do
   @type t :: %__MODULE__{
           trace_id: String.t(),
           causation_id: String.t() | nil,
+          tenant_id: String.t(),
           installation_id: String.t(),
           subject_id: String.t(),
           execution_id: String.t(),
@@ -66,15 +68,27 @@ defmodule Mezzanine.Audit.ExecutionLineage do
           artifact_refs: [String.t()]
         }
 
-  @required_fields [:trace_id, :installation_id, :subject_id, :execution_id]
+  @required_fields [:trace_id, :tenant_id, :installation_id, :subject_id, :execution_id]
+
+  @spec new(map()) :: {:ok, t()} | {:error, {:missing_execution_lineage_fields, [atom()]}}
+  def new(attrs) when is_map(attrs) do
+    attrs = attrs |> Map.new() |> Map.update(:artifact_refs, [], &List.wrap/1)
+    missing_fields = Enum.filter(@required_fields, &blank?(Map.get(attrs, &1)))
+
+    case missing_fields do
+      [] -> {:ok, struct!(__MODULE__, attrs)}
+      missing_fields -> {:error, {:missing_execution_lineage_fields, missing_fields}}
+    end
+  end
 
   @spec new!(map()) :: t()
   def new!(attrs) when is_map(attrs) do
-    attrs = attrs |> Map.new() |> Map.update(:artifact_refs, [], &List.wrap/1)
+    case new(attrs) do
+      {:ok, lineage} ->
+        lineage
 
-    case Enum.find(@required_fields, &blank?(Map.get(attrs, &1))) do
-      nil -> struct!(__MODULE__, attrs)
-      field -> raise ArgumentError, "missing required execution lineage field: #{field}"
+      {:error, {:missing_execution_lineage_fields, [field | _fields]}} ->
+        raise ArgumentError, "missing required execution lineage field: #{field}"
     end
   end
 

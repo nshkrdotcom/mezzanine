@@ -182,7 +182,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
   end
 
   test "dispatch_read passes tenant scope to the substrate read slice and fails closed on mismatch" do
-    store_lineage!()
+    store_lineage!(tenant_id: "tenant-other")
 
     Process.put(:integration_bridge_test_responses, %{
       fetch_run: fn [%TenantScope{tenant_id: "tenant-other"}, _run_id] ->
@@ -213,6 +213,26 @@ defmodule Mezzanine.IntegrationBridgeTest do
                      ]}
   end
 
+  test "dispatch_read rejects missing execution lineage before lower fact access" do
+    intent =
+      ReadIntent.new!(%{
+        intent_id: "read-missing-lineage",
+        read_type: :lower_fact,
+        subject: %{
+          actor_id: "actor-1",
+          tenant_id: "tenant-1",
+          installation_id: "inst-1",
+          execution_id: "exec-missing"
+        },
+        query: %{operation: :fetch_run}
+      })
+
+    assert {:error, :unknown_execution_lineage} =
+             IntegrationBridge.dispatch_read(intent, lower_facts: LowerFactsStub)
+
+    refute_received {:fetch_run, _args}
+  end
+
   test "dispatch_read denies lower reads when installation context does not match the stored lineage" do
     store_lineage!()
 
@@ -224,6 +244,28 @@ defmodule Mezzanine.IntegrationBridgeTest do
           actor_id: "actor-1",
           tenant_id: "tenant-1",
           installation_id: "inst-2",
+          execution_id: "exec-1"
+        },
+        query: %{operation: :fetch_run}
+      })
+
+    assert {:error, :unauthorized_lower_read} =
+             IntegrationBridge.dispatch_read(intent, lower_facts: LowerFactsStub)
+
+    refute_received {:fetch_run, _args}
+  end
+
+  test "dispatch_read denies cross-tenant lineage reuse before lower fact access" do
+    store_lineage!(tenant_id: "tenant-1")
+
+    intent =
+      ReadIntent.new!(%{
+        intent_id: "read-cross-tenant-lineage",
+        read_type: :lower_fact,
+        subject: %{
+          actor_id: "actor-1",
+          tenant_id: "tenant-2",
+          installation_id: "inst-1",
           execution_id: "exec-1"
         },
         query: %{operation: :fetch_run}
@@ -253,7 +295,16 @@ defmodule Mezzanine.IntegrationBridgeTest do
       })
 
     assert {:error, {:lower_identifier_override_forbidden, :run_id}} =
-             IntegrationBridge.dispatch_read(intent, lower_facts: LowerFactsStub)
+             IntegrationBridge.dispatch_read(intent,
+               lower_facts: LowerFactsStub,
+               fetch_lineage: fn _execution_id ->
+                 send(self(), :lineage_fetch_called)
+                 {:error, :should_not_fetch}
+               end
+             )
+
+    refute_received :lineage_fetch_called
+    refute_received {:fetch_run, _args}
   end
 
   test "dispatch_read rejects mismatched lower artifacts even after authorization succeeds" do
@@ -306,10 +357,11 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert mapped.work_object_id == "work-1"
   end
 
-  defp store_lineage! do
+  defp store_lineage!(opts \\ []) do
     lineage =
       ExecutionLineage.new!(%{
         trace_id: "trace-1",
+        tenant_id: Keyword.get(opts, :tenant_id, "tenant-1"),
         installation_id: "inst-1",
         subject_id: "subject-1",
         execution_id: "exec-1",

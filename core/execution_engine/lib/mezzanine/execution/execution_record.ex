@@ -829,6 +829,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
     %{
       trace_id: execution.trace_id,
       causation_id: execution.causation_id,
+      tenant_id: execution.tenant_id,
       installation_id: execution.installation_id,
       subject_id: execution.subject_id,
       execution_id: execution.id
@@ -847,6 +848,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
         |> Map.merge(%{
           trace_id: execution.trace_id,
           causation_id: execution.causation_id,
+          tenant_id: execution.tenant_id,
           installation_id: execution.installation_id,
           subject_id: execution.subject_id,
           execution_id: execution.id,
@@ -880,6 +882,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
     %{
       trace_id: execution.trace_id,
       causation_id: execution.causation_id,
+      tenant_id: execution.tenant_id,
       installation_id: execution.installation_id,
       subject_id: execution.subject_id,
       execution_id: execution.id,

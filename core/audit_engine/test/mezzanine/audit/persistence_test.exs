@@ -346,6 +346,7 @@ defmodule Mezzanine.Audit.PersistenceTest do
       ExecutionLineage.new!(%{
         trace_id: "trace-1",
         causation_id: "cause-1",
+        tenant_id: "tenant-1",
         installation_id: "inst-1",
         subject_id: "subject-1",
         execution_id: "exec-1",
@@ -360,6 +361,7 @@ defmodule Mezzanine.Audit.PersistenceTest do
       ExecutionLineage.new!(%{
         trace_id: "trace-1",
         causation_id: "cause-1",
+        tenant_id: "tenant-1",
         installation_id: "inst-1",
         subject_id: "subject-1",
         execution_id: "exec-1",
@@ -395,6 +397,29 @@ defmodule Mezzanine.Audit.PersistenceTest do
 
     assert has_index?("execution_lineage_records", ["execution_id"])
     assert has_index?("execution_lineage_records", ["installation_id", "trace_id"])
+  end
+
+  test "execution lineage store fails closed when durable lineage is missing tenant evidence" do
+    Repo.query!(
+      """
+      INSERT INTO execution_lineage_records (
+        id,
+        tenant_id,
+        trace_id,
+        installation_id,
+        subject_id,
+        execution_id,
+        artifact_refs,
+        inserted_at,
+        updated_at
+      )
+      VALUES (gen_random_uuid(), '', $1, $2, $3, $4, '{}', now(), now())
+      """,
+      ["trace-missing-tenant", "inst-1", "subject-1", "exec-missing-tenant"]
+    )
+
+    assert {:error, {:missing_execution_lineage_fields, [:tenant_id]}} =
+             ExecutionLineageStore.fetch("exec-missing-tenant")
   end
 
   defp has_index?(table_name, columns) when is_binary(table_name) and is_list(columns) do
