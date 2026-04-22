@@ -98,6 +98,45 @@ defmodule Mezzanine.IdempotencyTest do
            }
   end
 
+  test "excludes volatile runtime evidence from the canonical root key" do
+    base = canonical_root_attrs()
+    root_key = Idempotency.canonical_key!(base)
+
+    volatile_first =
+      Map.merge(base, %{
+        payload: %{"ignored" => "raw payload is not identity"},
+        raw_payload_bytes: "payload-bytes-1",
+        wall_clock_timestamp: "2026-04-21T23:40:00Z",
+        temporal_workflow_run_id: "run-001",
+        temporal_activity_attempt_number: 1,
+        provider_response: %{"request_id" => "provider-1", "body" => "raw"},
+        random_retry_counter: 1
+      })
+
+    volatile_replay =
+      Map.merge(base, %{
+        payload: %{"ignored" => "different raw payload"},
+        raw_payload_bytes: "payload-bytes-2",
+        wall_clock_timestamp: "2026-04-21T23:41:00Z",
+        temporal_workflow_run_id: "run-002",
+        temporal_activity_attempt_number: 3,
+        provider_response: %{"request_id" => "provider-2", "body" => "changed"},
+        random_retry_counter: 7
+      })
+
+    assert Idempotency.canonical_key!(volatile_first) == root_key
+    assert Idempotency.canonical_key!(volatile_replay) == root_key
+
+    assert {:ok, payload} = Idempotency.canonical_payload(volatile_replay)
+    refute Map.has_key?(payload, "payload")
+    refute Map.has_key?(payload, "raw_payload_bytes")
+    refute Map.has_key?(payload, "wall_clock_timestamp")
+    refute Map.has_key?(payload, "temporal_workflow_run_id")
+    refute Map.has_key?(payload, "temporal_activity_attempt_number")
+    refute Map.has_key?(payload, "provider_response")
+    refute Map.has_key?(payload, "random_retry_counter")
+  end
+
   test "derives domain separated child keys from a canonical root" do
     canonical_key = canonical_root_key()
 
@@ -247,7 +286,11 @@ defmodule Mezzanine.IdempotencyTest do
   end
 
   defp canonical_root_key do
-    Idempotency.canonical_key!(%{
+    Idempotency.canonical_key!(canonical_root_attrs())
+  end
+
+  defp canonical_root_attrs do
+    %{
       tenant_id: "tenant-1",
       installation_id: "inst-1",
       operation_family: "workflow.start",
@@ -257,6 +300,6 @@ defmodule Mezzanine.IdempotencyTest do
       subject_ref: %{kind: :work, id: "work-1"},
       payload_hash: "sha256:payload",
       source_event_position: "event:17"
-    })
+    }
   end
 end
