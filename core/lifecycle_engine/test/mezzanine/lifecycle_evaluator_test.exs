@@ -55,6 +55,31 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
     assert execution.submission_dedupe_key == result.submission_dedupe_key
     assert execution.trace_id == result.trace_id
 
+    assert %{
+             rows: [
+               [
+                 "tenant-lifecycle-engine",
+                 installation_id,
+                 subject_id,
+                 execution_id,
+                 trace_id
+               ]
+             ]
+           } =
+             Repo.query!(
+               """
+               SELECT tenant_id, installation_id, subject_id, execution_id, trace_id
+               FROM execution_lineage_records
+               WHERE execution_id = $1
+               """,
+               [result.execution_id]
+             )
+
+    assert installation_id == installation.id
+    assert subject_id == subject.id
+    assert execution_id == result.execution_id
+    assert trace_id == result.trace_id
+
     assert execution.binding_snapshot == %{
              "placement_ref" => "local_runner",
              "execution_params" => %{"timeout_ms" => 300_000},
