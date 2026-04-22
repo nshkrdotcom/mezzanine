@@ -8,7 +8,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
     data_layer: AshPostgres.DataLayer
 
   alias Mezzanine.Audit.{AuditAppend, ExecutionLineage, ExecutionLineageStore}
-  alias Mezzanine.Execution.{DispatchState, Repo}
+  alias Mezzanine.Execution.{DispatchState, PayloadBoundary, Repo}
 
   @active_dispatch_states DispatchState.active_states()
   @failure_kinds [
@@ -80,6 +80,14 @@ defmodule Mezzanine.Execution.ExecutionRecord do
       change(set_attribute(:dispatch_state, :queued))
       change(set_attribute(:dispatch_attempt_count, 0))
       change(set_attribute(:next_dispatch_at, &DateTime.utc_now/0, set_when_nil?: false))
+
+      change(fn changeset, _context ->
+        validate_payload_attributes(changeset, [
+          :binding_snapshot,
+          :dispatch_envelope,
+          :intent_snapshot
+        ])
+      end)
     end
 
     update :mark_dispatching do
@@ -104,6 +112,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
       argument(:causation_id, :string, allow_nil?: false)
       argument(:actor_ref, :map, allow_nil?: false)
 
+      change(fn changeset, _context -> validate_payload_argument(changeset, :lower_receipt) end)
       change(optimistic_lock(:row_version))
       change(set_attribute(:dispatch_state, :accepted_active))
       change(set_attribute(:submission_ref, arg(:submission_ref)))
@@ -145,6 +154,10 @@ defmodule Mezzanine.Execution.ExecutionRecord do
       argument(:causation_id, :string, allow_nil?: false)
       argument(:actor_ref, :map, allow_nil?: false)
 
+      change(fn changeset, _context ->
+        validate_payload_argument(changeset, :last_dispatch_error_payload)
+      end)
+
       change(optimistic_lock(:row_version))
       change(set_attribute(:dispatch_state, :in_flight))
       change(increment(:dispatch_attempt_count))
@@ -182,6 +195,10 @@ defmodule Mezzanine.Execution.ExecutionRecord do
       argument(:trace_id, :string, allow_nil?: false)
       argument(:causation_id, :string, allow_nil?: false)
       argument(:actor_ref, :map, allow_nil?: false)
+
+      change(fn changeset, _context ->
+        validate_payload_argument(changeset, :last_dispatch_error_payload)
+      end)
 
       change(optimistic_lock(:row_version))
       change(set_attribute(:dispatch_state, :rejected))
@@ -221,6 +238,12 @@ defmodule Mezzanine.Execution.ExecutionRecord do
       argument(:trace_id, :string, allow_nil?: false)
       argument(:causation_id, :string, allow_nil?: false)
       argument(:actor_ref, :map, allow_nil?: false)
+
+      change(fn changeset, _context ->
+        changeset
+        |> validate_payload_argument(:lower_receipt)
+        |> validate_payload_argument(:normalized_outcome, :last_dispatch_error_payload)
+      end)
 
       change(optimistic_lock(:row_version))
       change(set_attribute(:dispatch_state, :completed))
@@ -269,6 +292,12 @@ defmodule Mezzanine.Execution.ExecutionRecord do
       argument(:causation_id, :string, allow_nil?: false)
       argument(:actor_ref, :map, allow_nil?: false)
 
+      change(fn changeset, _context ->
+        changeset
+        |> validate_payload_argument(:lower_receipt)
+        |> validate_payload_argument(:normalized_outcome, :last_dispatch_error_payload)
+      end)
+
       change(optimistic_lock(:row_version))
       change(set_attribute(:dispatch_state, :failed))
       change(set_attribute(:failure_kind, arg(:failure_kind)))
@@ -316,6 +345,12 @@ defmodule Mezzanine.Execution.ExecutionRecord do
       argument(:trace_id, :string, allow_nil?: false)
       argument(:causation_id, :string, allow_nil?: false)
       argument(:actor_ref, :map, allow_nil?: false)
+
+      change(fn changeset, _context ->
+        changeset
+        |> validate_payload_argument(:lower_receipt)
+        |> validate_payload_argument(:normalized_outcome, :last_dispatch_error_payload)
+      end)
 
       change(optimistic_lock(:row_version))
       change(set_attribute(:dispatch_state, :cancelled))
@@ -369,11 +404,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
       change(set_attribute(:terminal_rejection_reason, nil))
       change(set_attribute(:failure_kind, nil))
 
-      change(fn changeset, _context ->
-        Ash.Changeset.change_attribute(changeset, :last_dispatch_error_payload, %{
-          "reason" => Ash.Changeset.get_argument(changeset, :reason)
-        })
-      end)
+      change(&put_operator_cancelled_payload/2)
 
       change(
         after_action(fn changeset, execution, _context ->
@@ -402,6 +433,10 @@ defmodule Mezzanine.Execution.ExecutionRecord do
       argument(:trace_id, :string, allow_nil?: false)
       argument(:causation_id, :string, allow_nil?: false)
       argument(:actor_ref, :map, allow_nil?: false)
+
+      change(fn changeset, _context ->
+        validate_payload_argument(changeset, :last_dispatch_error_payload)
+      end)
 
       change(optimistic_lock(:row_version))
       change(set_attribute(:dispatch_state, :in_flight))
@@ -440,6 +475,10 @@ defmodule Mezzanine.Execution.ExecutionRecord do
       argument(:causation_id, :string, allow_nil?: false)
       argument(:actor_ref, :map, allow_nil?: false)
 
+      change(fn changeset, _context ->
+        validate_payload_argument(changeset, :last_dispatch_error_payload)
+      end)
+
       change(optimistic_lock(:row_version))
       change(set_attribute(:dispatch_state, :failed))
       change(set_attribute(:failure_kind, :infrastructure_error))
@@ -476,6 +515,12 @@ defmodule Mezzanine.Execution.ExecutionRecord do
       argument(:trace_id, :string, allow_nil?: false)
       argument(:causation_id, :string, allow_nil?: false)
       argument(:actor_ref, :map, allow_nil?: false)
+
+      change(fn changeset, _context ->
+        changeset
+        |> validate_payload_argument(:lower_receipt)
+        |> validate_payload_argument(:last_dispatch_error_payload)
+      end)
 
       change(optimistic_lock(:row_version))
       change(set_attribute(:dispatch_state, :failed))
@@ -717,6 +762,52 @@ defmodule Mezzanine.Execution.ExecutionRecord do
       {:ok, [_ | _]} -> true
       _ -> false
     end
+  end
+
+  defp validate_payload_attributes(changeset, fields) do
+    Enum.reduce(fields, changeset, &validate_payload_attribute(&2, &1))
+  end
+
+  defp validate_payload_attribute(changeset, field) do
+    changeset
+    |> Ash.Changeset.get_attribute(field)
+    |> validate_payload_value(changeset, field, field)
+  end
+
+  defp validate_payload_argument(changeset, argument),
+    do: validate_payload_argument(changeset, argument, argument)
+
+  defp validate_payload_argument(changeset, argument, column) do
+    changeset
+    |> Ash.Changeset.get_argument(argument)
+    |> validate_payload_value(changeset, argument, column)
+  end
+
+  defp put_operator_cancelled_payload(changeset, _context) do
+    payload = %{"reason" => Ash.Changeset.get_argument(changeset, :reason)}
+
+    case PayloadBoundary.validate_execution_column(:last_dispatch_error_payload, payload) do
+      :ok ->
+        Ash.Changeset.change_attribute(changeset, :last_dispatch_error_payload, payload)
+
+      {:error, reason} ->
+        payload_boundary_error(changeset, :last_dispatch_error_payload, reason)
+    end
+  end
+
+  defp validate_payload_value(value, changeset, field, column) do
+    case PayloadBoundary.validate_execution_column(column, value || %{}) do
+      :ok -> changeset
+      {:error, reason} -> payload_boundary_error(changeset, field, reason)
+    end
+  end
+
+  defp payload_boundary_error(changeset, field, reason) do
+    Ash.Changeset.add_error(
+      changeset,
+      field: field,
+      message: "artifact payload boundary rejected #{field}: #{inspect(reason)}"
+    )
   end
 
   defp load_execution(%{id: _id} = execution), do: {:ok, execution}
