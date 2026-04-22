@@ -96,6 +96,7 @@ defmodule Mezzanine.Audit.PersistenceTest do
     guard = guarded_attrs.payload["audit_amplification_guard"]
 
     assert guard["window_ms"] == 60_000
+    assert guard["window_started_at"] == "2026-04-20T19:45:00.000Z"
     assert guard["max_events_per_key_per_window"] == 1
     assert guard["aggregate_counter_ref"] == "mezzanine.audit_repeat_aggregation.v1"
     assert guard["suppressed_count"] == 0
@@ -113,10 +114,65 @@ defmodule Mezzanine.Audit.PersistenceTest do
            }
 
     assert {:ok, result} = AuditAppend.append_fact(guarded_attrs)
-    assert result.idempotency_key == idempotency_key
+    assert String.starts_with?(result.idempotency_key, "audit-aggregate:")
+    refute result.idempotency_key == idempotency_key
 
     assert {:ok, [reloaded]} = AuditFact.list_trace("inst-failure", "trace-failure")
     assert reloaded.payload["audit_amplification_guard"] == guard
+    assert reloaded.idempotency_key == result.idempotency_key
+  end
+
+  test "repeated same-key failure audit appends aggregate inside declared window" do
+    attrs = failure_audit_attrs()
+    idempotency_key = AuditAppend.idempotency_key(attrs)
+
+    first_attrs =
+      attrs
+      |> Map.put(:idempotency_key, idempotency_key)
+      |> AuditAppend.put_amplification_guard()
+
+    repeated_attrs =
+      attrs
+      |> Map.put(:occurred_at, DateTime.add(attrs.occurred_at, 30, :second))
+      |> Map.put(:idempotency_key, idempotency_key)
+      |> AuditAppend.put_amplification_guard()
+
+    next_window_attrs =
+      attrs
+      |> Map.put(:occurred_at, DateTime.add(attrs.occurred_at, 61, :second))
+      |> Map.put(:idempotency_key, idempotency_key)
+      |> AuditAppend.put_amplification_guard()
+
+    assert {:ok, first} = AuditAppend.append_fact(first_attrs)
+    assert {:ok, repeated} = AuditAppend.append_fact(repeated_attrs)
+
+    assert repeated.audit_fact_id == first.audit_fact_id
+    assert repeated.idempotency_key == first.idempotency_key
+
+    assert {:ok, [aggregated]} = AuditFact.list_trace("inst-failure", "trace-failure")
+    guard = aggregated.payload["audit_amplification_guard"]
+
+    assert guard["first_seen_at"] ==
+             first_attrs.payload["audit_amplification_guard"]["first_seen_at"]
+
+    assert guard["last_seen_at"] ==
+             repeated_attrs.payload["audit_amplification_guard"]["last_seen_at"]
+
+    assert guard["suppressed_count"] == 1
+
+    assert aggregated.payload["audit_aggregation"]["aggregate_counter_ref"] ==
+             "mezzanine.audit_repeat_aggregation.v1"
+
+    assert aggregated.payload["audit_aggregation"]["suppressed_count"] == 1
+
+    assert aggregated.payload["audit_aggregation"]["safe_action"] ==
+             "aggregate_repeated_audit_fact"
+
+    assert {:ok, next_window} = AuditAppend.append_fact(next_window_attrs)
+    refute next_window.audit_fact_id == first.audit_fact_id
+
+    assert {:ok, facts} = AuditFact.list_trace("inst-failure", "trace-failure")
+    assert length(facts) == 2
   end
 
   test "audit-owned query returns decision terminal attempt facts" do

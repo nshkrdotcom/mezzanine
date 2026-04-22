@@ -50,6 +50,86 @@ defmodule Mezzanine.Audit.AuditAppend do
   RETURNING id, idempotency_key
   """
 
+  @insert_new_audit_fact_sql """
+  INSERT INTO audit_facts (
+    id,
+    installation_id,
+    subject_id,
+    execution_id,
+    decision_id,
+    evidence_id,
+    trace_id,
+    causation_id,
+    fact_kind,
+    actor_ref,
+    payload,
+    occurred_at,
+    idempotency_key,
+    inserted_at,
+    updated_at
+  )
+  VALUES (
+    gen_random_uuid(),
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9,
+    $10,
+    $11,
+    $12,
+    $11,
+    $11
+  )
+  ON CONFLICT (installation_id, idempotency_key) DO NOTHING
+  RETURNING id, idempotency_key
+  """
+
+  @aggregate_repeated_audit_fact_sql """
+  WITH target AS (
+    SELECT
+      id,
+      COALESCE((payload #>> '{audit_amplification_guard,suppressed_count}')::integer, 0) + 1
+        AS next_suppressed_count
+    FROM audit_facts
+    WHERE installation_id = $1
+      AND idempotency_key = $2
+    FOR UPDATE
+  )
+  UPDATE audit_facts AS facts
+  SET payload =
+        jsonb_set(
+          jsonb_set(
+            jsonb_set(
+              facts.payload,
+              '{audit_amplification_guard,suppressed_count}',
+              to_jsonb(target.next_suppressed_count),
+              true
+            ),
+            '{audit_amplification_guard,last_seen_at}',
+            to_jsonb($3::text),
+            true
+          ),
+          '{audit_aggregation}',
+          jsonb_build_object(
+            'aggregate_counter_ref', $4::text,
+            'overflow_counter_ref', $5::text,
+            'safe_action', $6::text,
+            'suppressed_count', target.next_suppressed_count,
+            'last_suppressed_at', $3::text
+          ),
+          true
+        ),
+      updated_at = $7
+  FROM target
+  WHERE facts.id = target.id
+  RETURNING facts.id, facts.idempotency_key
+  """
+
   @required_fields [:installation_id, :trace_id, :fact_kind, :actor_ref, :occurred_at]
   @amplification_guard_key "audit_amplification_guard"
   @guard_ref "mezzanine.audit_amplification_guard.v1"
@@ -81,16 +161,28 @@ defmodule Mezzanine.Audit.AuditAppend do
   @failure_fact_markers [
     "failed",
     "failure",
+    "fail_closed",
+    "context_budget",
+    "semantic_failure",
+    "actor_evidence",
+    "decision_evidence",
     "rejected",
     "rejection",
     "error",
     "mismatch",
     "overflow",
+    "export_overflow",
     "replay",
     "revocation",
     "signature",
     "trust_root",
-    "version_skew"
+    "version_skew",
+    "tenant_authority",
+    "tenant",
+    "authority",
+    "artifact",
+    "schema_hash",
+    "webhook"
   ]
   @identity_fields [
     :installation_id,
@@ -121,36 +213,84 @@ defmodule Mezzanine.Audit.AuditAppend do
 
     with :ok <- ensure_required(attrs),
          :ok <- ensure_amplification_guard(attrs) do
-      idempotency_key = idempotency_key(attrs)
+      idempotency_key = append_idempotency_key(attrs)
       repo = Keyword.get(opts, :repo, Repo)
 
-      params = [
-        string_value(attrs, :installation_id),
-        optional_string_value(attrs, :subject_id),
-        optional_string_value(attrs, :execution_id),
-        optional_string_value(attrs, :decision_id),
-        optional_string_value(attrs, :evidence_id),
-        string_value(attrs, :trace_id),
-        optional_string_value(attrs, :causation_id),
-        fact_kind(attrs),
-        map_value(attrs, :actor_ref),
-        map_value(attrs, :payload) || %{},
-        occurred_at(attrs),
-        idempotency_key
-      ]
+      attrs
+      |> audit_fact_params(idempotency_key)
+      |> append_or_aggregate_fact(repo, attrs, idempotency_key)
+    end
+  end
 
+  defp audit_fact_params(attrs, idempotency_key) do
+    [
+      string_value(attrs, :installation_id),
+      optional_string_value(attrs, :subject_id),
+      optional_string_value(attrs, :execution_id),
+      optional_string_value(attrs, :decision_id),
+      optional_string_value(attrs, :evidence_id),
+      string_value(attrs, :trace_id),
+      optional_string_value(attrs, :causation_id),
+      fact_kind(attrs),
+      map_value(attrs, :actor_ref),
+      map_value(attrs, :payload) || %{},
+      occurred_at(attrs),
+      idempotency_key
+    ]
+  end
+
+  defp append_or_aggregate_fact(params, repo, attrs, idempotency_key) do
+    if aggregate_repeated_failure?(attrs) do
+      case SQL.query(repo, @insert_new_audit_fact_sql, params) do
+        {:ok, %{rows: [[audit_fact_id, returned_idempotency_key]]}} ->
+          audit_result(audit_fact_id, returned_idempotency_key || idempotency_key)
+
+        {:ok, %{rows: []}} ->
+          aggregate_repeated_fact(repo, attrs, idempotency_key)
+
+        {:error, error} ->
+          {:error, error}
+      end
+    else
       case SQL.query(repo, @insert_audit_fact_sql, params) do
         {:ok, %{rows: [[audit_fact_id, returned_idempotency_key]]}} ->
-          {:ok,
-           %{
-             audit_fact_id: normalize_uuid(audit_fact_id),
-             idempotency_key: returned_idempotency_key || idempotency_key
-           }}
+          audit_result(audit_fact_id, returned_idempotency_key || idempotency_key)
 
         {:error, error} ->
           {:error, error}
       end
     end
+  end
+
+  defp aggregate_repeated_fact(repo, attrs, idempotency_key) do
+    guard = attrs |> map_value(:payload) |> guard_from_payload() |> stringify_keys()
+    admission_key = guard |> Map.get("admission_key", %{}) |> stringify_keys()
+
+    params = [
+      string_value(attrs, :installation_id),
+      idempotency_key,
+      Map.get(guard, "last_seen_at", seen_at(occurred_at(attrs))),
+      Map.get(guard, "aggregate_counter_ref"),
+      Map.get(guard, "overflow_counter_ref"),
+      Map.get(admission_key, "safe_action", "aggregate_repeated_audit_fact"),
+      DateTime.utc_now() |> DateTime.truncate(:microsecond)
+    ]
+
+    case SQL.query(repo, @aggregate_repeated_audit_fact_sql, params) do
+      {:ok, %{rows: [[audit_fact_id, returned_idempotency_key]]}} ->
+        audit_result(audit_fact_id, returned_idempotency_key || idempotency_key)
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  defp audit_result(audit_fact_id, idempotency_key) do
+    {:ok,
+     %{
+       audit_fact_id: normalize_uuid(audit_fact_id),
+       idempotency_key: idempotency_key
+     }}
   end
 
   @spec put_amplification_guard(map() | keyword(), keyword()) :: map()
@@ -273,6 +413,24 @@ defmodule Mezzanine.Audit.AuditAppend do
     {:error, {:invalid_audit_amplification_guard, :admission_key}}
   end
 
+  defp append_idempotency_key(attrs) do
+    if aggregate_repeated_failure?(attrs) do
+      guard = attrs |> map_value(:payload) |> guard_from_payload() |> stringify_keys()
+
+      "audit-aggregate:" <>
+        digest(%{
+          "admission_key" => Map.get(guard, "admission_key"),
+          "aggregate_counter_ref" => Map.get(guard, "aggregate_counter_ref"),
+          "window_ms" => Map.get(guard, "window_ms"),
+          "window_started_at" => aggregate_window_started_at(attrs, guard)
+        })
+    else
+      idempotency_key(attrs)
+    end
+  end
+
+  defp aggregate_repeated_failure?(attrs), do: amplification_guard_required?(attrs)
+
   defp missing_guard_fields(guard),
     do: Enum.reject(@required_guard_fields, &Map.has_key?(guard, &1))
 
@@ -281,12 +439,15 @@ defmodule Mezzanine.Audit.AuditAppend do
 
   defp build_amplification_guard(attrs, opts) do
     occurred_at = occurred_at(attrs)
+    window_ms = Keyword.get(opts, :window_ms, @guard_window_ms)
     seen_at = seen_at(occurred_at)
 
     %{
       "guard_ref" => Keyword.get(opts, :guard_ref, @guard_ref),
       "admission_key" => admission_key(attrs, opts),
-      "window_ms" => Keyword.get(opts, :window_ms, @guard_window_ms),
+      "window_ms" => window_ms,
+      "window_started_at" =>
+        Keyword.get(opts, :window_started_at, window_started_at(occurred_at, window_ms)),
       "max_events_per_key_per_window" =>
         Keyword.get(opts, :max_events_per_key_per_window, @max_events_per_key_per_window),
       "aggregate_counter_ref" =>
@@ -345,6 +506,11 @@ defmodule Mezzanine.Audit.AuditAppend do
       payload_value(payload, "failure_kind") ||
       payload_value(payload, "error_kind") ||
       fact_kind
+  end
+
+  defp aggregate_window_started_at(attrs, guard) do
+    Map.get(guard, "window_started_at") ||
+      window_started_at(occurred_at(attrs), Map.get(guard, "window_ms", @guard_window_ms))
   end
 
   defp present?(nil), do: false
@@ -414,6 +580,30 @@ defmodule Mezzanine.Audit.AuditAppend do
 
   defp seen_at(_value),
     do: DateTime.utc_now() |> DateTime.truncate(:microsecond) |> DateTime.to_iso8601()
+
+  defp window_started_at(%DateTime{} = datetime, window_ms) when is_integer(window_ms) do
+    millisecond = DateTime.to_unix(datetime, :millisecond)
+
+    (millisecond - rem(millisecond, window_ms))
+    |> DateTime.from_unix!(:millisecond)
+    |> DateTime.to_iso8601()
+  end
+
+  defp window_started_at(%NaiveDateTime{} = datetime, window_ms) do
+    datetime
+    |> DateTime.from_naive!("Etc/UTC")
+    |> window_started_at(window_ms)
+  end
+
+  defp window_started_at(value, window_ms) when is_binary(value) do
+    case DateTime.from_iso8601(value) do
+      {:ok, datetime, _offset} -> window_started_at(datetime, window_ms)
+      {:error, _reason} -> value
+    end
+  end
+
+  defp window_started_at(_value, window_ms),
+    do: window_started_at(DateTime.utc_now() |> DateTime.truncate(:microsecond), window_ms)
 
   defp valid_positive_integer?(value), do: is_integer(value) and value > 0
   defp valid_non_negative_integer?(value), do: is_integer(value) and value >= 0
