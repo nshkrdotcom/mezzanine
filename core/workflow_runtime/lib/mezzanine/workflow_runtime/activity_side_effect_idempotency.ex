@@ -10,6 +10,7 @@ defmodule Mezzanine.WorkflowRuntime.ActivitySideEffectIdempotency do
 
   alias Mezzanine.ActivityLeaseBroker
   alias Mezzanine.ActivityLeaseScopeRequest
+  alias Mezzanine.Idempotency
 
   @release_manifest_ref "phase4-v6-milestone29-activity-side-effect-idempotency"
   @activity_versions %{
@@ -97,22 +98,27 @@ defmodule Mezzanine.WorkflowRuntime.ActivitySideEffectIdempotency do
     with {:ok, input} <- activity_input(attrs, @lease_required_fields ++ [:lower_submission_ref]),
          {:ok, request} <- lease_request(input, "lower.execute"),
          {:ok, bundle} <- ActivityLeaseBroker.acquire(request) do
-      {:ok,
-       %{
-         contract_name: @activity_versions.lower_submission,
-         owner_repo: :jido_integration,
-         activity_call_ref: input.activity_call_ref,
-         lower_submission_ref: input.lower_submission_ref,
-         submission_dedupe_key: Map.get(input, :submission_dedupe_key, input.idempotency_key),
-         tenant_ref: input.tenant_ref,
-         idempotency_key: input.idempotency_key,
-         lease_ref: bundle.lease_ref,
-         lease_evidence_ref: bundle.evidence_ref,
-         trace_id: input.trace_id,
-         retry_policy: "safe_idempotent",
-         timeout_policy: "bounded",
-         heartbeat_policy: "not_required_for_submission_intake"
-       }}
+      %{
+        contract_name: @activity_versions.lower_submission,
+        owner_repo: :jido_integration,
+        activity_call_ref: input.activity_call_ref,
+        lower_submission_ref: input.lower_submission_ref,
+        submission_dedupe_key: Map.get(input, :submission_dedupe_key, input.idempotency_key),
+        tenant_ref: input.tenant_ref,
+        idempotency_key: input.idempotency_key,
+        lease_ref: bundle.lease_ref,
+        lease_evidence_ref: bundle.evidence_ref,
+        trace_id: input.trace_id,
+        retry_policy: "safe_idempotent",
+        timeout_policy: "bounded",
+        heartbeat_policy: "not_required_for_submission_intake"
+      }
+      |> maybe_attach_idempotency_correlation(input, %{
+        jido_lower_activity_idempotency_key: input.idempotency_key,
+        jido_lower_submission_dedupe_key:
+          Map.get(input, :submission_dedupe_key, input.idempotency_key),
+        lower_submission_stable_ref: input.lower_submission_ref
+      })
     end
   end
 
@@ -122,21 +128,28 @@ defmodule Mezzanine.WorkflowRuntime.ActivitySideEffectIdempotency do
     with {:ok, input} <- activity_input(attrs, @lease_required_fields ++ [:intent_id]),
          {:ok, request} <- lease_request(input, "execution.side_effect"),
          {:ok, bundle} <- ActivityLeaseBroker.acquire(request) do
-      {:ok,
-       %{
-         contract_name: @activity_versions.execution_side_effect,
-         owner_repo: :execution_plane,
-         activity_call_ref: input.activity_call_ref,
-         intent_id: input.intent_id,
-         idempotency_key: input.idempotency_key,
-         tenant_ref: input.tenant_ref,
-         lease_ref: bundle.lease_ref,
-         lease_evidence_ref: bundle.evidence_ref,
-         trace_id: input.trace_id,
-         retry_policy: "safe_idempotent",
-         timeout_policy: "bounded",
-         heartbeat_policy: "lease_bound"
-       }}
+      %{
+        contract_name: @activity_versions.execution_side_effect,
+        owner_repo: :execution_plane,
+        activity_call_ref: input.activity_call_ref,
+        intent_id: input.intent_id,
+        idempotency_key: input.idempotency_key,
+        tenant_ref: input.tenant_ref,
+        lease_ref: bundle.lease_ref,
+        lease_evidence_ref: bundle.evidence_ref,
+        trace_id: input.trace_id,
+        retry_policy: "safe_idempotent",
+        timeout_policy: "bounded",
+        heartbeat_policy: "lease_bound"
+      }
+      |> maybe_attach_idempotency_correlation(input, %{
+        execution_plane_intent_id: input.intent_id,
+        execution_plane_envelope_idempotency_key:
+          Map.get(input, :execution_plane_envelope_idempotency_key),
+        execution_plane_route_id: Map.get(input, :execution_plane_route_id),
+        execution_plane_route_idempotency_key:
+          Map.get(input, :execution_plane_route_idempotency_key)
+      })
     end
   end
 
@@ -207,6 +220,37 @@ defmodule Mezzanine.WorkflowRuntime.ActivitySideEffectIdempotency do
       trace_id: input.trace_id,
       deadline: input.deadline
     })
+  end
+
+  defp maybe_attach_idempotency_correlation(result, input, extra) do
+    case Map.get(input, :canonical_idempotency_key) do
+      canonical_key when is_binary(canonical_key) and canonical_key != "" ->
+        attrs =
+          %{
+            canonical_idempotency_key: canonical_key,
+            tenant_id: input.tenant_ref,
+            trace_id: input.trace_id,
+            causation_id: Map.get(input, :causation_id, Map.get(input, :request_id)),
+            client_retry_key: Map.get(input, :client_retry_key),
+            platform_envelope_idempotency_key: Map.get(input, :platform_envelope_idempotency_key),
+            temporal_workflow_id: Map.get(input, :workflow_id, input.workflow_ref),
+            temporal_workflow_run_id: Map.get(input, :workflow_run_id),
+            temporal_start_idempotency_key: Map.get(input, :temporal_start_idempotency_key),
+            temporal_activity_call_ref: input.activity_call_ref,
+            temporal_activity_attempt_number: Map.get(input, :activity_attempt_number),
+            release_manifest_ref: Map.get(input, :release_manifest_ref),
+            idempotency_key: input.idempotency_key
+          }
+          |> Map.merge(extra)
+
+        case Idempotency.correlation_evidence(attrs) do
+          {:ok, correlation} -> {:ok, Map.put(result, :idempotency_correlation, correlation)}
+          {:error, reason} -> {:error, reason}
+        end
+
+      _missing ->
+        {:ok, result}
+    end
   end
 
   defp routing_facts(attrs) do

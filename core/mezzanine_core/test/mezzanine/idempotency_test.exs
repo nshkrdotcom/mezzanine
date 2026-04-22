@@ -162,6 +162,90 @@ defmodule Mezzanine.IdempotencyTest do
              Idempotency.child_key(canonical_root_key(), :activity, nil)
   end
 
+  test "builds idempotency correlation evidence across workflow and lower refs" do
+    canonical_key = canonical_root_key()
+    activity_key = Idempotency.child_key!(canonical_key, :activity, "activity-call-1")
+    lower_key = Idempotency.child_key!(canonical_key, :lower_submission, "lower-submission-1")
+    retry_key = Idempotency.child_key!(canonical_key, :provider_retry, "provider-retry-1")
+
+    assert {:ok, evidence} =
+             Idempotency.correlation_evidence(%{
+               canonical_idempotency_key: canonical_key,
+               tenant_id: "tenant-1",
+               trace_id: "trace-1",
+               causation_id: "cause-1",
+               client_retry_key: "client-retry-1",
+               platform_envelope_idempotency_key: canonical_key,
+               lower_submission_ref: "lower-submission-1",
+               temporal_workflow_id: "workflow-1",
+               temporal_workflow_run_id: "run-1",
+               temporal_start_idempotency_key: canonical_key,
+               temporal_activity_call_ref: "activity-call-1",
+               temporal_activity_attempt_number: 3,
+               jido_lower_activity_idempotency_key: canonical_key,
+               lower_provider_retry_stable_ref: "provider-retry-1",
+               execution_plane_intent_id: "intent-1",
+               execution_plane_route_id: "route-1",
+               execution_plane_envelope_idempotency_key: canonical_key,
+               execution_plane_route_idempotency_key: canonical_key,
+               release_manifest_ref: "release-1"
+             })
+
+    assert evidence["contract_name"] == "Mezzanine.IdempotencyCorrelationEvidence.v1"
+    assert evidence["derivation_algorithm"] == "idem:v1:sha256_jcs"
+    assert evidence["canonical_idempotency_key"] == canonical_key
+    assert evidence["client_retry_key"] == "client-retry-1"
+    assert evidence["platform_envelope_idempotency_key"] == canonical_key
+    assert evidence["mezzanine_submission_dedupe_key"] == lower_key
+    assert evidence["temporal_workflow_id"] == "workflow-1"
+    assert evidence["temporal_workflow_run_id"] == "run-1"
+    assert evidence["temporal_start_idempotency_key"] == canonical_key
+    assert evidence["temporal_activity_call_ref"] == "activity-call-1"
+    assert evidence["temporal_activity_side_effect_key"] == activity_key
+    assert evidence["temporal_activity_attempt_number"] == 3
+    assert evidence["jido_lower_activity_idempotency_key"] == canonical_key
+    assert evidence["jido_lower_submission_dedupe_key"] == lower_key
+    assert evidence["lower_provider_retry_key"] == retry_key
+    assert evidence["execution_plane_intent_id"] == "intent-1"
+    assert evidence["execution_plane_route_id"] == "route-1"
+    assert evidence["execution_plane_envelope_idempotency_key"] == canonical_key
+    assert evidence["execution_plane_route_idempotency_key"] == canonical_key
+    assert evidence["trace_id"] == "trace-1"
+    assert evidence["causation_id"] == "cause-1"
+    assert evidence["tenant_id"] == "tenant-1"
+    assert evidence["release_manifest_ref"] == "release-1"
+  end
+
+  test "rejects idempotency correlation fields that no longer join to the root" do
+    canonical_key = canonical_root_key()
+
+    assert {:error,
+            {:idempotency_correlation_mismatch, :platform_envelope_idempotency_key,
+             ^canonical_key, "idem:v1:bad"}} =
+             Idempotency.correlation_evidence(%{
+               canonical_idempotency_key: canonical_key,
+               tenant_id: "tenant-1",
+               trace_id: "trace-1",
+               causation_id: "cause-1",
+               platform_envelope_idempotency_key: "idem:v1:bad"
+             })
+
+    lower_key = Idempotency.child_key!(canonical_key, :lower_submission, "lower-submission-1")
+
+    assert {:error,
+            {:idempotency_correlation_mismatch, :mezzanine_submission_dedupe_key, ^lower_key,
+             "different-lower-key"}} =
+             Idempotency.correlation_evidence(%{
+               canonical_idempotency_key: canonical_key,
+               tenant_id: "tenant-1",
+               trace_id: "trace-1",
+               causation_id: "cause-1",
+               lower_submission_ref: "lower-submission-1",
+               mezzanine_submission_dedupe_key: lower_key,
+               jido_lower_submission_dedupe_key: "different-lower-key"
+             })
+  end
+
   defp canonical_root_key do
     Idempotency.canonical_key!(%{
       tenant_id: "tenant-1",

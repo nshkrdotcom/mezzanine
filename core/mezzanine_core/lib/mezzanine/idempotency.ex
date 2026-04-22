@@ -10,6 +10,8 @@ defmodule Mezzanine.Idempotency do
 
   @root_prefix "idem:v1:"
   @root_digest_length 64
+  @correlation_contract "Mezzanine.IdempotencyCorrelationEvidence.v1"
+  @correlation_algorithm "idem:v1:sha256_jcs"
   @known_child_scopes [
     "activity",
     "lower_side_effect",
@@ -32,7 +34,10 @@ defmodule Mezzanine.Idempotency do
           {:invalid_canonical_idempotency_key, term()}
           | {:invalid_child_idempotency_scope, term()}
           | :missing_child_idempotency_stable_ref
-  @type error :: root_error() | child_error()
+  @type correlation_error ::
+          {:missing_idempotency_correlation_fields, [atom()]}
+          | {:idempotency_correlation_mismatch, atom(), term(), term()}
+  @type error :: root_error() | child_error() | correlation_error()
 
   @spec root_prefix() :: String.t()
   def root_prefix, do: @root_prefix
@@ -107,6 +112,33 @@ defmodule Mezzanine.Idempotency do
     end
   end
 
+  @doc """
+  Build the idempotency correlation evidence map carried by workflow boundaries.
+
+  The map preserves the canonical root plus layer-specific aliases and child
+  keys. Fields that must equal the root are validated when present. Child keys
+  are derived or validated when their stable refs are available.
+  """
+  @spec correlation_evidence(attrs()) :: {:ok, map()} | {:error, error()}
+  def correlation_evidence(attrs) when is_map(attrs) or is_list(attrs) do
+    attrs = normalize_attrs(attrs)
+
+    with {:ok, canonical_key} <- canonical_root_from(attrs),
+         :ok <- validate_root_key(canonical_key),
+         :ok <- validate_correlation_required(attrs, canonical_key),
+         :ok <- validate_root_equivalent_fields(attrs, canonical_key) do
+      build_correlation_evidence(attrs, canonical_key)
+    end
+  end
+
+  @spec correlation_evidence!(attrs()) :: map()
+  def correlation_evidence!(attrs) when is_map(attrs) or is_list(attrs) do
+    case correlation_evidence(attrs) do
+      {:ok, evidence} -> evidence
+      {:error, reason} -> raise ArgumentError, inspect(reason)
+    end
+  end
+
   defp normalize_attrs(attrs) when is_list(attrs), do: attrs |> Map.new() |> normalize_attrs()
 
   defp normalize_attrs(attrs) when is_map(attrs) do
@@ -124,6 +156,10 @@ defmodule Mezzanine.Idempotency do
   defp normalize_value(value), do: value
 
   defp value(attrs, key), do: Map.get(attrs, key) || Map.get(attrs, Atom.to_string(key))
+
+  defp first_value(attrs, keys) do
+    Enum.find_value(keys, &value(attrs, &1))
+  end
 
   defp authority_decision_ref_or_hash(attrs) do
     value(attrs, :authority_decision_ref) ||
@@ -168,6 +204,210 @@ defmodule Mezzanine.Idempotency do
   end
 
   defp validate_root_key(key), do: {:error, {:invalid_canonical_idempotency_key, key}}
+
+  defp canonical_root_from(attrs) do
+    case first_value(attrs, [:canonical_idempotency_key, :idempotency_key]) do
+      root when is_binary(root) and root != "" ->
+        {:ok, root}
+
+      root ->
+        {:error, {:invalid_canonical_idempotency_key, root}}
+    end
+  end
+
+  defp validate_correlation_required(attrs, canonical_key) do
+    required = [
+      {:canonical_idempotency_key, canonical_key},
+      {:tenant_id, first_value(attrs, [:tenant_id, :tenant_ref])},
+      {:trace_id, value(attrs, :trace_id)},
+      {:causation_id, first_value(attrs, [:causation_id, :request_id])}
+    ]
+
+    missing =
+      required
+      |> Enum.reject(fn {_field, field_value} -> present?(field_value) end)
+      |> Enum.map(fn {field, _field_value} -> field end)
+
+    if missing == [] do
+      :ok
+    else
+      {:error, {:missing_idempotency_correlation_fields, missing}}
+    end
+  end
+
+  defp validate_root_equivalent_fields(attrs, canonical_key) do
+    [
+      :idempotency_key,
+      :platform_envelope_idempotency_key,
+      :temporal_start_idempotency_key,
+      :jido_lower_activity_idempotency_key,
+      :execution_plane_envelope_idempotency_key,
+      :execution_plane_route_idempotency_key
+    ]
+    |> Enum.reduce_while(:ok, fn field, :ok ->
+      case value(attrs, field) do
+        nil ->
+          {:cont, :ok}
+
+        "" ->
+          {:cont, :ok}
+
+        ^canonical_key ->
+          {:cont, :ok}
+
+        actual ->
+          {:halt, {:error, {:idempotency_correlation_mismatch, field, canonical_key, actual}}}
+      end
+    end)
+  end
+
+  defp build_correlation_evidence(attrs, canonical_key) do
+    with {:ok, child_fields} <- child_correlation_fields(attrs, canonical_key) do
+      base =
+        %{
+          "contract_name" => @correlation_contract,
+          "derivation_algorithm" => @correlation_algorithm,
+          "canonical_idempotency_key" => canonical_key,
+          "tenant_id" => first_value(attrs, [:tenant_id, :tenant_ref]),
+          "trace_id" => value(attrs, :trace_id),
+          "causation_id" => first_value(attrs, [:causation_id, :request_id]),
+          "client_retry_key" => value(attrs, :client_retry_key),
+          "platform_envelope_idempotency_key" => value(attrs, :platform_envelope_idempotency_key),
+          "mezzanine_submission_dedupe_key" => value(attrs, :mezzanine_submission_dedupe_key),
+          "temporal_workflow_id" => first_value(attrs, [:temporal_workflow_id, :workflow_id]),
+          "temporal_workflow_run_id" =>
+            first_value(attrs, [:temporal_workflow_run_id, :workflow_run_id]),
+          "temporal_start_idempotency_key" => value(attrs, :temporal_start_idempotency_key),
+          "temporal_activity_call_ref" =>
+            first_value(attrs, [:temporal_activity_call_ref, :activity_call_ref]),
+          "temporal_activity_attempt_number" =>
+            first_value(attrs, [:temporal_activity_attempt_number, :activity_attempt_number]),
+          "jido_lower_activity_idempotency_key" =>
+            value(attrs, :jido_lower_activity_idempotency_key),
+          "jido_lower_submission_dedupe_key" => value(attrs, :jido_lower_submission_dedupe_key),
+          "lower_provider_retry_key" =>
+            first_value(attrs, [:lower_provider_retry_key, :provider_retry_key]),
+          "execution_plane_intent_id" =>
+            first_value(attrs, [:execution_plane_intent_id, :intent_id]),
+          "execution_plane_route_id" =>
+            first_value(attrs, [:execution_plane_route_id, :route_id]),
+          "execution_plane_envelope_idempotency_key" =>
+            value(attrs, :execution_plane_envelope_idempotency_key),
+          "execution_plane_route_idempotency_key" =>
+            value(attrs, :execution_plane_route_idempotency_key),
+          "release_manifest_ref" => value(attrs, :release_manifest_ref)
+        }
+        |> Map.merge(child_fields)
+
+      {:ok, compact_evidence(base)}
+    end
+  end
+
+  defp child_correlation_fields(attrs, canonical_key) do
+    with {:ok, activity_key} <-
+           child_correlation_key(
+             attrs,
+             canonical_key,
+             :activity,
+             :temporal_activity_side_effect_key,
+             [:activity_side_effect_key],
+             first_value(attrs, [:temporal_activity_call_ref, :activity_call_ref])
+           ),
+         {:ok, lower_submission_key} <-
+           child_correlation_key(
+             attrs,
+             canonical_key,
+             :lower_submission,
+             :mezzanine_submission_dedupe_key,
+             [:jido_lower_submission_dedupe_key, :submission_dedupe_key],
+             first_value(attrs, [:lower_submission_stable_ref, :lower_submission_ref])
+           ),
+         {:ok, provider_retry_key} <-
+           child_correlation_key(
+             attrs,
+             canonical_key,
+             :provider_retry,
+             :lower_provider_retry_key,
+             [:provider_retry_key],
+             first_value(attrs, [:lower_provider_retry_stable_ref, :provider_retry_stable_ref])
+           ) do
+      {:ok,
+       %{
+         "temporal_activity_side_effect_key" => activity_key,
+         "mezzanine_submission_dedupe_key" => lower_submission_key,
+         "jido_lower_submission_dedupe_key" => lower_submission_key,
+         "lower_provider_retry_key" => provider_retry_key
+       }}
+    end
+  end
+
+  defp child_correlation_key(attrs, canonical_key, scope, primary_field, alias_fields, stable_ref) do
+    with {:ok, provided} <- provided_child_key(attrs, primary_field, alias_fields) do
+      derive_child_correlation_key(provided, stable_ref, canonical_key, scope, primary_field)
+    end
+  end
+
+  defp derive_child_correlation_key(provided, stable_ref, canonical_key, scope, primary_field) do
+    cond do
+      present?(provided) and present?(stable_ref) ->
+        validate_child_correlation_stable_ref(
+          provided,
+          stable_ref,
+          canonical_key,
+          scope,
+          primary_field
+        )
+
+      present?(provided) ->
+        {:ok, provided}
+
+      present?(stable_ref) ->
+        child_key(canonical_key, scope, stable_ref)
+
+      true ->
+        {:ok, nil}
+    end
+  end
+
+  defp validate_child_correlation_stable_ref(
+         provided,
+         stable_ref,
+         canonical_key,
+         scope,
+         primary_field
+       ) do
+    with {:ok, expected} <- child_key(canonical_key, scope, stable_ref) do
+      validate_child_correlation_key(primary_field, provided, expected)
+    end
+  end
+
+  defp provided_child_key(attrs, primary_field, alias_fields) do
+    values =
+      [primary_field | alias_fields]
+      |> Enum.map(&value(attrs, &1))
+      |> Enum.filter(&present?/1)
+      |> Enum.uniq()
+
+    case values do
+      [] -> {:ok, nil}
+      [provided] -> {:ok, provided}
+      [expected, actual | _extra] -> child_alias_mismatch(primary_field, expected, actual)
+    end
+  end
+
+  defp validate_child_correlation_key(_field, provided, provided), do: {:ok, provided}
+
+  defp validate_child_correlation_key(field, provided, expected),
+    do: child_alias_mismatch(field, expected, provided)
+
+  defp child_alias_mismatch(field, expected, actual),
+    do: {:error, {:idempotency_correlation_mismatch, field, expected, actual}}
+
+  defp compact_evidence(evidence) do
+    evidence
+    |> Enum.reject(fn {_key, field_value} -> not present?(field_value) end)
+    |> Map.new()
+  end
 
   defp normalize_scope(scope) when is_atom(scope),
     do: scope |> Atom.to_string() |> normalize_scope()

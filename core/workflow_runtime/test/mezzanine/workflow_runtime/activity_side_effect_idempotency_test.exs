@@ -2,6 +2,7 @@ defmodule Mezzanine.WorkflowRuntime.ActivitySideEffectIdempotencyTest do
   use ExUnit.Case, async: false
 
   alias Mezzanine.ActivityLeaseBroker
+  alias Mezzanine.Idempotency
   alias Mezzanine.WorkflowRuntime.ActivitySideEffectIdempotency
 
   setup do
@@ -61,6 +62,48 @@ defmodule Mezzanine.WorkflowRuntime.ActivitySideEffectIdempotencyTest do
     assert execution.intent_id == "intent-100"
     assert execution.heartbeat_policy == "lease_bound"
     assert String.starts_with?(execution.lease_evidence_ref, "evidence://activity-lease/")
+  end
+
+  test "activity outputs carry canonical idempotency correlation evidence when rooted" do
+    canonical_key = canonical_root_key()
+    lower_key = Idempotency.child_key!(canonical_key, :lower_submission, "lower-submission-099")
+    activity_key = Idempotency.child_key!(canonical_key, :activity, "activity://wf-099/lower")
+
+    assert {:ok, lower} =
+             ActivitySideEffectIdempotency.lower_submission_activity(
+               activity_attrs(%{
+                 canonical_idempotency_key: canonical_key,
+                 causation_id: "cause-099",
+                 platform_envelope_idempotency_key: canonical_key,
+                 temporal_start_idempotency_key: canonical_key,
+                 workflow_id: "workflow-099",
+                 workflow_run_id: "run-099",
+                 activity_call_ref: "activity://wf-099/lower",
+                 activity_attempt_number: 2,
+                 lower_submission_ref: "lower-submission-099",
+                 submission_dedupe_key: lower_key,
+                 idempotency_key: canonical_key,
+                 requested_capabilities: ["lower.submit"],
+                 release_manifest_ref: "phase5-v7-idempotency-correlation"
+               })
+             )
+
+    assert lower.idempotency_correlation["canonical_idempotency_key"] == canonical_key
+    assert lower.idempotency_correlation["platform_envelope_idempotency_key"] == canonical_key
+    assert lower.idempotency_correlation["temporal_workflow_id"] == "workflow-099"
+    assert lower.idempotency_correlation["temporal_workflow_run_id"] == "run-099"
+    assert lower.idempotency_correlation["temporal_start_idempotency_key"] == canonical_key
+
+    assert lower.idempotency_correlation["temporal_activity_call_ref"] ==
+             "activity://wf-099/lower"
+
+    assert lower.idempotency_correlation["temporal_activity_side_effect_key"] == activity_key
+    assert lower.idempotency_correlation["temporal_activity_attempt_number"] == 2
+    assert lower.idempotency_correlation["jido_lower_activity_idempotency_key"] == canonical_key
+    assert lower.idempotency_correlation["jido_lower_submission_dedupe_key"] == lower_key
+    assert lower.idempotency_correlation["trace_id"] == "trace-099"
+    assert lower.idempotency_correlation["causation_id"] == "cause-099"
+    assert lower.idempotency_correlation["tenant_id"] == "tenant-alpha"
   end
 
   test "semantic workflow history payload keeps routing facts and rejects raw bodies" do
@@ -138,5 +181,19 @@ defmodule Mezzanine.WorkflowRuntime.ActivitySideEffectIdempotencyTest do
       retry_class: "none",
       terminal_class: "none"
     }
+  end
+
+  defp canonical_root_key do
+    Idempotency.canonical_key!(%{
+      tenant_id: "tenant-alpha",
+      installation_id: "installation-main",
+      operation_family: "workflow.activity",
+      operation_ref: "activity://wf-099/lower",
+      causation_id: "cause-099",
+      authority_decision_ref: "decision-099",
+      subject_ref: "resource-work-1",
+      payload_hash: "sha256:payload-099",
+      source_event_position: "event:099"
+    })
   end
 end
