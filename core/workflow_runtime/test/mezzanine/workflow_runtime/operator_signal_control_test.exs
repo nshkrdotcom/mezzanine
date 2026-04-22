@@ -110,6 +110,22 @@ defmodule Mezzanine.WorkflowRuntime.OperatorSignalControlTest do
     refute OperatorSignalControl.registered_signal?("operator.cancel", "bad-version")
   end
 
+  test "decision review workflow rejects unversioned operator signals without deriving old shape" do
+    payload =
+      signal_attrs()
+      |> Map.delete(:signal_name)
+      |> Map.delete(:signal_version)
+
+    state = OperatorSignalControl.initial_ordering_state()
+
+    assert {:noreply, next_state} =
+             DecisionReview.handle_signal("operator.cancel", payload, state)
+
+    assert next_state.workflow_mode == "running"
+    assert next_state.ordering_state == "ready"
+    assert next_state.last_signal_error == {:missing_required_fields, [:signal_version]}
+  end
+
   test "authorized cancel persists local receipt/outbox before dispatch and never claims workflow effect early" do
     assert {:ok, accepted} = OperatorSignalControl.accept_operator_signal(signal_attrs())
 

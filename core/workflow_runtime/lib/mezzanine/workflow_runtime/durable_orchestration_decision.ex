@@ -692,7 +692,6 @@ defmodule Mezzanine.Workflows.DecisionReview do
       payload
       |> Support.normalize_payload()
       |> Map.put(:signal_name, signal_name)
-      |> Map.put_new(:signal_version, "#{String.replace(signal_name, ".", "-")}.v1")
 
     case OperatorSignalControl.apply_ordered_signal(
            state || OperatorSignalControl.initial_ordering_state(),
