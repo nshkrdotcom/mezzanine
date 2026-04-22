@@ -899,20 +899,22 @@ defmodule Mezzanine.Execution.ExecutionRecord do
   defp lineage_missing?(_error), do: false
 
   defp append_audit_fact(execution, actor_ref, fact_kind, payload) do
-    AuditAppend.append_fact(
-      %{
-        installation_id: execution.installation_id,
-        subject_id: execution.subject_id,
-        execution_id: execution.id,
-        trace_id: execution.trace_id,
-        causation_id: execution.causation_id,
-        fact_kind: fact_kind,
-        actor_ref: actor_ref,
-        payload: payload,
-        occurred_at: DateTime.utc_now()
-      },
-      []
-    )
+    attrs = %{
+      installation_id: execution.installation_id,
+      subject_id: execution.subject_id,
+      execution_id: execution.id,
+      trace_id: execution.trace_id,
+      causation_id: execution.causation_id,
+      fact_kind: fact_kind,
+      actor_ref: actor_ref,
+      payload: payload,
+      occurred_at: DateTime.utc_now()
+    }
+
+    attrs
+    |> Map.put(:idempotency_key, AuditAppend.idempotency_key(attrs))
+    |> AuditAppend.put_amplification_guard()
+    |> AuditAppend.append_fact([])
   end
 
   defp create_dispatch_record_for_workflow(create_attrs) do

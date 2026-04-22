@@ -203,7 +203,17 @@ defmodule Mezzanine.Execution.PersistenceTest do
     assert {:ok, audit_facts} = AuditFact.list_trace("inst-1", "trace-semantic-bootstrap")
 
     assert Enum.any?(audit_facts, &(&1.fact_kind == :execution_dispatched))
-    assert Enum.any?(audit_facts, &(&1.fact_kind == :execution_failed))
+    failed_fact = Enum.find(audit_facts, &(&1.fact_kind == :execution_failed))
+    assert failed_fact
+
+    guard = failed_fact.payload["audit_amplification_guard"]
+    assert guard["window_ms"] == 60_000
+    assert guard["max_events_per_key_per_window"] == 1
+    assert guard["suppressed_count"] == 0
+    assert guard["overflow_counter_ref"] == "mezzanine.audit_overflow.count"
+    assert guard["unavailable_guard_safe_action"] == "reject_audit_append"
+    assert guard["admission_key"]["event_name"] == "execution_failed"
+    assert guard["admission_key"]["error_class"] == "semantic_failure"
   end
 
   test "semantic failure rejects raw lower bodies in execution map columns" do

@@ -72,6 +72,53 @@ defmodule Mezzanine.Audit.PersistenceTest do
     assert has_index?("audit_facts", ["installation_id", "idempotency_key"])
   end
 
+  test "failure audit append requires amplification guard evidence" do
+    attrs = failure_audit_attrs()
+
+    assert {:error, {:missing_audit_amplification_guard, required_fields}} =
+             AuditAppend.append_fact(attrs)
+
+    assert "admission_key" in required_fields
+    assert "suppressed_count" in required_fields
+    assert "overflow_counter_ref" in required_fields
+    assert "unavailable_guard_safe_action" in required_fields
+  end
+
+  test "audit amplification guard declares admission window and aggregate counters" do
+    attrs = failure_audit_attrs()
+    idempotency_key = AuditAppend.idempotency_key(attrs)
+
+    guarded_attrs =
+      attrs
+      |> Map.put(:idempotency_key, idempotency_key)
+      |> AuditAppend.put_amplification_guard()
+
+    guard = guarded_attrs.payload["audit_amplification_guard"]
+
+    assert guard["window_ms"] == 60_000
+    assert guard["max_events_per_key_per_window"] == 1
+    assert guard["aggregate_counter_ref"] == "mezzanine.audit_repeat_aggregation.v1"
+    assert guard["suppressed_count"] == 0
+    assert guard["overflow_counter_ref"] == "mezzanine.audit_overflow.count"
+    assert guard["unavailable_guard_safe_action"] == "reject_audit_append"
+
+    assert guard["admission_key"] == %{
+             "tenant_or_partition" => "inst-failure",
+             "owner_package" => "core/audit_engine",
+             "source_boundary" => "Mezzanine.Audit.AuditAppend",
+             "event_name" => "execution_failed",
+             "error_class" => "semantic_failure",
+             "safe_action" => "aggregate_repeated_audit_fact",
+             "canonical_idempotency_key_or_payload_hash" => idempotency_key
+           }
+
+    assert {:ok, result} = AuditAppend.append_fact(guarded_attrs)
+    assert result.idempotency_key == idempotency_key
+
+    assert {:ok, [reloaded]} = AuditFact.list_trace("inst-failure", "trace-failure")
+    assert reloaded.payload["audit_amplification_guard"] == guard
+  end
+
   test "audit-owned query returns decision terminal attempt facts" do
     assert {:ok, _fact} =
              AuditAppend.append_fact(%{
@@ -306,6 +353,20 @@ defmodule Mezzanine.Audit.PersistenceTest do
       checkpoint_ref: "audit-checkpoint:inst-fields:11",
       algorithm: AuditInclusionProof.default_algorithm(),
       release_manifest_ref: "phase5-v7-hardening"
+    }
+  end
+
+  defp failure_audit_attrs do
+    %{
+      installation_id: "inst-failure",
+      subject_id: "subject-failure",
+      execution_id: "exec-failure",
+      fact_kind: :execution_failed,
+      actor_ref: %{kind: :system},
+      payload: %{classification: "semantic_failure", failure_kind: "semantic_failure"},
+      trace_id: "trace-failure",
+      causation_id: "cause-failure",
+      occurred_at: ~U[2026-04-20 19:45:00.000000Z]
     }
   end
 end

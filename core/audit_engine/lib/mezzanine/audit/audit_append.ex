@@ -51,6 +51,47 @@ defmodule Mezzanine.Audit.AuditAppend do
   """
 
   @required_fields [:installation_id, :trace_id, :fact_kind, :actor_ref, :occurred_at]
+  @amplification_guard_key "audit_amplification_guard"
+  @guard_ref "mezzanine.audit_amplification_guard.v1"
+  @repeat_aggregation_ref "mezzanine.audit_repeat_aggregation.v1"
+  @overflow_counter_ref "mezzanine.audit_overflow.count"
+  @guard_window_ms 60_000
+  @max_events_per_key_per_window 1
+  @unavailable_guard_safe_action "reject_audit_append"
+  @required_guard_fields [
+    "admission_key",
+    "window_ms",
+    "max_events_per_key_per_window",
+    "aggregate_counter_ref",
+    "suppressed_count",
+    "first_seen_at",
+    "last_seen_at",
+    "overflow_counter_ref",
+    "unavailable_guard_safe_action"
+  ]
+  @required_admission_key_fields [
+    "tenant_or_partition",
+    "owner_package",
+    "source_boundary",
+    "event_name",
+    "error_class",
+    "safe_action",
+    "canonical_idempotency_key_or_payload_hash"
+  ]
+  @failure_fact_markers [
+    "failed",
+    "failure",
+    "rejected",
+    "rejection",
+    "error",
+    "mismatch",
+    "overflow",
+    "replay",
+    "revocation",
+    "signature",
+    "trust_root",
+    "version_skew"
+  ]
   @identity_fields [
     :installation_id,
     :subject_id,
@@ -78,7 +119,8 @@ defmodule Mezzanine.Audit.AuditAppend do
       |> normalize_attrs()
       |> Map.put_new(:occurred_at, DateTime.utc_now() |> DateTime.truncate(:microsecond))
 
-    with :ok <- ensure_required(attrs) do
+    with :ok <- ensure_required(attrs),
+         :ok <- ensure_amplification_guard(attrs) do
       idempotency_key = idempotency_key(attrs)
       repo = Keyword.get(opts, :repo, Repo)
 
@@ -111,6 +153,26 @@ defmodule Mezzanine.Audit.AuditAppend do
     end
   end
 
+  @spec put_amplification_guard(map() | keyword(), keyword()) :: map()
+  def put_amplification_guard(attrs, opts \\ []) when is_map(attrs) or is_list(attrs) do
+    attrs =
+      attrs
+      |> normalize_attrs()
+      |> Map.put_new(:occurred_at, DateTime.utc_now() |> DateTime.truncate(:microsecond))
+
+    if amplification_guard_required?(attrs) do
+      payload = map_value(attrs, :payload) || %{}
+
+      Map.put(
+        attrs,
+        :payload,
+        Map.put_new(payload, @amplification_guard_key, build_amplification_guard(attrs, opts))
+      )
+    else
+      attrs
+    end
+  end
+
   @spec idempotency_key(map() | keyword()) :: String.t()
   def idempotency_key(attrs) when is_map(attrs) or is_list(attrs) do
     attrs = normalize_attrs(attrs)
@@ -134,6 +196,155 @@ defmodule Mezzanine.Audit.AuditAppend do
       [] -> :ok
       _missing -> {:error, {:missing_audit_append_fields, missing}}
     end
+  end
+
+  defp ensure_amplification_guard(attrs) do
+    if amplification_guard_required?(attrs) do
+      attrs
+      |> map_value(:payload)
+      |> guard_from_payload()
+      |> validate_amplification_guard()
+    else
+      :ok
+    end
+  end
+
+  defp guard_from_payload(payload) when is_map(payload) do
+    Map.get(payload, @amplification_guard_key)
+  end
+
+  defp guard_from_payload(_payload), do: nil
+
+  defp validate_amplification_guard(nil) do
+    {:error, {:missing_audit_amplification_guard, @required_guard_fields}}
+  end
+
+  defp validate_amplification_guard(guard) when is_map(guard) do
+    guard = stringify_keys(guard)
+
+    cond do
+      missing_guard_fields(guard) != [] ->
+        {:error, {:missing_audit_amplification_guard_fields, missing_guard_fields(guard)}}
+
+      not valid_positive_integer?(Map.get(guard, "window_ms")) ->
+        {:error, {:invalid_audit_amplification_guard, :window_ms}}
+
+      not valid_positive_integer?(Map.get(guard, "max_events_per_key_per_window")) ->
+        {:error, {:invalid_audit_amplification_guard, :max_events_per_key_per_window}}
+
+      not valid_non_negative_integer?(Map.get(guard, "suppressed_count")) ->
+        {:error, {:invalid_audit_amplification_guard, :suppressed_count}}
+
+      not non_empty_string?(Map.get(guard, "first_seen_at")) ->
+        {:error, {:invalid_audit_amplification_guard, :first_seen_at}}
+
+      not non_empty_string?(Map.get(guard, "last_seen_at")) ->
+        {:error, {:invalid_audit_amplification_guard, :last_seen_at}}
+
+      Map.get(guard, "unavailable_guard_safe_action") != @unavailable_guard_safe_action ->
+        {:error, {:invalid_audit_amplification_guard, :unavailable_guard_safe_action}}
+
+      true ->
+        validate_admission_key(Map.get(guard, "admission_key"))
+    end
+  end
+
+  defp validate_amplification_guard(_guard) do
+    {:error, {:invalid_audit_amplification_guard, :not_a_map}}
+  end
+
+  defp validate_admission_key(admission_key) when is_map(admission_key) do
+    admission_key = stringify_keys(admission_key)
+    missing = missing_admission_key_fields(admission_key)
+
+    cond do
+      missing != [] ->
+        {:error, {:missing_audit_admission_key_fields, missing}}
+
+      Enum.all?(@required_admission_key_fields, &non_empty_string?(Map.get(admission_key, &1))) ->
+        :ok
+
+      true ->
+        {:error, {:invalid_audit_admission_key, @required_admission_key_fields}}
+    end
+  end
+
+  defp validate_admission_key(_admission_key) do
+    {:error, {:invalid_audit_amplification_guard, :admission_key}}
+  end
+
+  defp missing_guard_fields(guard),
+    do: Enum.reject(@required_guard_fields, &Map.has_key?(guard, &1))
+
+  defp missing_admission_key_fields(admission_key),
+    do: Enum.reject(@required_admission_key_fields, &Map.has_key?(admission_key, &1))
+
+  defp build_amplification_guard(attrs, opts) do
+    occurred_at = occurred_at(attrs)
+    seen_at = seen_at(occurred_at)
+
+    %{
+      "guard_ref" => Keyword.get(opts, :guard_ref, @guard_ref),
+      "admission_key" => admission_key(attrs, opts),
+      "window_ms" => Keyword.get(opts, :window_ms, @guard_window_ms),
+      "max_events_per_key_per_window" =>
+        Keyword.get(opts, :max_events_per_key_per_window, @max_events_per_key_per_window),
+      "aggregate_counter_ref" =>
+        Keyword.get(opts, :aggregate_counter_ref, @repeat_aggregation_ref),
+      "suppressed_count" => Keyword.get(opts, :suppressed_count, 0),
+      "first_seen_at" => Keyword.get(opts, :first_seen_at, seen_at),
+      "last_seen_at" => Keyword.get(opts, :last_seen_at, seen_at),
+      "overflow_counter_ref" => Keyword.get(opts, :overflow_counter_ref, @overflow_counter_ref),
+      "unavailable_guard_safe_action" =>
+        Keyword.get(opts, :unavailable_guard_safe_action, @unavailable_guard_safe_action)
+    }
+  end
+
+  defp admission_key(attrs, opts) do
+    payload = map_value(attrs, :payload) || %{}
+    fact_kind = fact_kind(attrs)
+
+    %{
+      "tenant_or_partition" => string_value(attrs, :installation_id),
+      "owner_package" => Keyword.get(opts, :owner_package, "core/audit_engine"),
+      "source_boundary" => Keyword.get(opts, :source_boundary, "Mezzanine.Audit.AuditAppend"),
+      "event_name" => fact_kind,
+      "error_class" => error_class(fact_kind, payload),
+      "safe_action" => Keyword.get(opts, :safe_action, "aggregate_repeated_audit_fact"),
+      "canonical_idempotency_key_or_payload_hash" =>
+        Keyword.get(opts, :canonical_idempotency_key_or_payload_hash, idempotency_key(attrs))
+    }
+  end
+
+  defp amplification_guard_required?(attrs) do
+    attrs
+    |> failure_markers()
+    |> Enum.any?(&failure_marker?/1)
+  end
+
+  defp failure_markers(attrs) do
+    payload = map_value(attrs, :payload) || %{}
+
+    [
+      fact_kind(attrs),
+      payload_value(payload, "classification"),
+      payload_value(payload, "failure_kind"),
+      payload_value(payload, "error_kind")
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.map(&to_string/1)
+  end
+
+  defp failure_marker?(marker) do
+    marker = String.downcase(marker)
+    Enum.any?(@failure_fact_markers, &String.contains?(marker, &1))
+  end
+
+  defp error_class(fact_kind, payload) do
+    payload_value(payload, "classification") ||
+      payload_value(payload, "failure_kind") ||
+      payload_value(payload, "error_kind") ||
+      fact_kind
   end
 
   defp present?(nil), do: false
@@ -161,7 +372,17 @@ defmodule Mezzanine.Audit.AuditAppend do
     Map.new(value, fn {key, nested} -> {to_string(key), normalize_value(nested)} end)
   end
 
+  defp stringify_keys(value) when is_map(value) do
+    Map.new(value, fn {key, nested} -> {to_string(key), nested} end)
+  end
+
   defp map_value(attrs, key), do: Map.get(attrs, key) || Map.get(attrs, to_string(key))
+
+  defp payload_value(payload, key) when is_map(payload) do
+    Map.get(payload, key)
+  end
+
+  defp payload_value(_payload, _key), do: nil
 
   defp identity_attrs(attrs) do
     Map.new(@identity_fields, fn field -> {field, map_value(attrs, field)} end)
@@ -184,6 +405,21 @@ defmodule Mezzanine.Audit.AuditAppend do
       other -> other
     end
   end
+
+  defp seen_at(%DateTime{} = datetime),
+    do: datetime |> DateTime.truncate(:microsecond) |> DateTime.to_iso8601()
+
+  defp seen_at(%NaiveDateTime{} = datetime), do: NaiveDateTime.to_iso8601(datetime)
+  defp seen_at(value) when is_binary(value), do: value
+
+  defp seen_at(_value),
+    do: DateTime.utc_now() |> DateTime.truncate(:microsecond) |> DateTime.to_iso8601()
+
+  defp valid_positive_integer?(value), do: is_integer(value) and value > 0
+  defp valid_non_negative_integer?(value), do: is_integer(value) and value >= 0
+
+  defp non_empty_string?(value) when is_binary(value), do: String.trim(value) != ""
+  defp non_empty_string?(_value), do: false
 
   defp digest(value) do
     :sha256
