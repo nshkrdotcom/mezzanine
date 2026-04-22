@@ -244,6 +244,30 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowStarterOutboxTest do
     assert started.idempotency_correlation["temporal_workflow_run_id"] == "run-091"
   end
 
+  test "canonical workflow starts reject missing causation instead of minting it" do
+    canonical_key = canonical_root_key()
+
+    assert {:ok, row} =
+             row_attrs()
+             |> Map.merge(%{
+               canonical_idempotency_key: canonical_key,
+               idempotency_key: canonical_key,
+               client_retry_key: "client-retry-091",
+               platform_envelope_idempotency_key: canonical_key
+             })
+             |> WorkflowStarterOutbox.new_row()
+
+    assert {:error, {:missing_idempotency_correlation_fields, [:causation_id]}} =
+             WorkflowStarterOutbox.start_request(row)
+
+    assert {:error, {:missing_idempotency_correlation_fields, [:causation_id]}} =
+             WorkflowStarterOutboxWorker.perform(%Oban.Job{
+               args: WorkflowStarterOutbox.dispatch_job_args(row)
+             })
+
+    refute_received {:record_start_outcome, _original_row, _outcome_row}
+  end
+
   test "retained starter worker does not ack when outcome persistence fails" do
     Application.put_env(:mezzanine_workflow_runtime, :outbox_persistence,
       store: FailingOutboxStore

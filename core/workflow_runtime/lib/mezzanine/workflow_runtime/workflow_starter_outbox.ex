@@ -191,33 +191,32 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowStarterOutbox do
 
     case missing_required(row) do
       [] ->
-        {:ok,
-         %{
-           workflow_id: row.workflow_id,
-           workflow_type: row.workflow_type,
-           workflow_version: row.workflow_version,
-           workflow_module: workflow_module(row.workflow_type),
-           task_queue: task_queue(row.workflow_type),
-           workflow_input_ref: row.workflow_input_ref,
-           workflow_input_version: row.workflow_input_version,
-           args: %{
-             tenant_ref: row.tenant_ref,
-             resource_ref: row.resource_ref,
-             command_id: row.command_id,
-             workflow_input_ref: row.workflow_input_ref,
-             trace_id: row.trace_id,
-             correlation_id: row.correlation_id,
-             routing_facts: %{}
-           },
-           search_attributes: search_attributes(row),
-           idempotency_key: row.idempotency_key,
-           dedupe_scope: row.dedupe_scope,
-           authority_packet_ref: row.authority_packet_ref,
-           permission_decision_ref: row.permission_decision_ref,
-           trace_id: row.trace_id,
-           release_manifest_ref: row.release_manifest_ref
-         }
-         |> maybe_put_idempotency_correlation(row)}
+        %{
+          workflow_id: row.workflow_id,
+          workflow_type: row.workflow_type,
+          workflow_version: row.workflow_version,
+          workflow_module: workflow_module(row.workflow_type),
+          task_queue: task_queue(row.workflow_type),
+          workflow_input_ref: row.workflow_input_ref,
+          workflow_input_version: row.workflow_input_version,
+          args: %{
+            tenant_ref: row.tenant_ref,
+            resource_ref: row.resource_ref,
+            command_id: row.command_id,
+            workflow_input_ref: row.workflow_input_ref,
+            trace_id: row.trace_id,
+            correlation_id: row.correlation_id,
+            routing_facts: %{}
+          },
+          search_attributes: search_attributes(row),
+          idempotency_key: row.idempotency_key,
+          dedupe_scope: row.dedupe_scope,
+          authority_packet_ref: row.authority_packet_ref,
+          permission_decision_ref: row.permission_decision_ref,
+          trace_id: row.trace_id,
+          release_manifest_ref: row.release_manifest_ref
+        }
+        |> maybe_put_idempotency_correlation(row)
 
       missing ->
         {:error, {:missing_required_fields, missing}}
@@ -256,12 +255,22 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowStarterOutbox do
 
     case result do
       {:ok, %WorkflowStartReceipt{} = receipt} ->
-        {:ok,
-         row
-         |> Map.put(:dispatch_state, "started")
-         |> Map.put(:workflow_run_id, receipt.workflow_run_id)
-         |> Map.put(:last_error_class, "none")
-         |> put_start_outcome_idempotency_correlation(receipt)}
+        started =
+          row
+          |> Map.put(:dispatch_state, "started")
+          |> Map.put(:workflow_run_id, receipt.workflow_run_id)
+          |> Map.put(:last_error_class, "none")
+
+        case put_start_outcome_idempotency_correlation(started, receipt) do
+          {:ok, row} ->
+            {:ok, row}
+
+          {:error, reason} ->
+            {:error,
+             started
+             |> Map.put(:dispatch_state, "terminal_failure")
+             |> Map.put(:last_error_class, {:terminal_invalid_workflow_start, reason})}
+        end
 
       {:error, {:already_started, existing_ref}} ->
         {:ok,
@@ -333,7 +342,7 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowStarterOutbox do
 
   defp maybe_put_idempotency_correlation(request, %{idempotency_correlation: correlation})
        when is_map(correlation) and map_size(correlation) > 0 do
-    Map.put(request, :idempotency_correlation, correlation)
+    {:ok, Map.put(request, :idempotency_correlation, correlation)}
   end
 
   defp maybe_put_idempotency_correlation(
@@ -345,7 +354,7 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowStarterOutbox do
            canonical_idempotency_key: canonical_key,
            tenant_id: row.tenant_ref,
            trace_id: row.trace_id,
-           causation_id: Map.get(row, :causation_id, row.command_id),
+           causation_id: Map.get(row, :causation_id),
            client_retry_key: Map.get(row, :client_retry_key),
            platform_envelope_idempotency_key: Map.get(row, :platform_envelope_idempotency_key),
            temporal_workflow_id: row.workflow_id,
@@ -353,12 +362,12 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowStarterOutbox do
            temporal_start_idempotency_key: row.idempotency_key,
            release_manifest_ref: row.release_manifest_ref
          }) do
-      {:ok, correlation} -> Map.put(request, :idempotency_correlation, correlation)
-      {:error, reason} -> raise ArgumentError, inspect(reason)
+      {:ok, correlation} -> {:ok, Map.put(request, :idempotency_correlation, correlation)}
+      {:error, reason} -> {:error, reason}
     end
   end
 
-  defp maybe_put_idempotency_correlation(request, _row), do: request
+  defp maybe_put_idempotency_correlation(request, _row), do: {:ok, request}
 
   defp put_start_outcome_idempotency_correlation(
          %{canonical_idempotency_key: canonical_key} = row,
@@ -369,7 +378,7 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowStarterOutbox do
            canonical_idempotency_key: canonical_key,
            tenant_id: row.tenant_ref,
            trace_id: row.trace_id,
-           causation_id: Map.get(row, :causation_id, row.command_id),
+           causation_id: Map.get(row, :causation_id),
            client_retry_key: Map.get(row, :client_retry_key),
            platform_envelope_idempotency_key: Map.get(row, :platform_envelope_idempotency_key),
            temporal_workflow_id: row.workflow_id,
@@ -377,12 +386,12 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowStarterOutbox do
            temporal_start_idempotency_key: row.idempotency_key,
            release_manifest_ref: row.release_manifest_ref
          }) do
-      {:ok, correlation} -> Map.put(row, :idempotency_correlation, correlation)
-      {:error, reason} -> raise ArgumentError, inspect(reason)
+      {:ok, correlation} -> {:ok, Map.put(row, :idempotency_correlation, correlation)}
+      {:error, reason} -> {:error, reason}
     end
   end
 
-  defp put_start_outcome_idempotency_correlation(row, _receipt), do: row
+  defp put_start_outcome_idempotency_correlation(row, _receipt), do: {:ok, row}
 
   defp workflow_module("agent_run"), do: Mezzanine.Workflows.AgentRun
   defp workflow_module("execution_attempt"), do: Mezzanine.Workflows.ExecutionAttempt
