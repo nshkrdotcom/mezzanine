@@ -46,7 +46,36 @@ defmodule Mezzanine.Audit.AuditAppend do
     $11
   )
   ON CONFLICT (installation_id, idempotency_key) DO UPDATE
-  SET idempotency_key = audit_facts.idempotency_key
+  SET payload = jsonb_set(
+        COALESCE(audit_facts.payload, '{}'::jsonb),
+        '{audit_observability_counts}',
+        COALESCE(audit_facts.payload->'audit_observability_counts', '{}'::jsonb) ||
+          jsonb_build_object(
+            'count_ref', 'mezzanine.audit_append.observability_counts.v1',
+            'admitted_count',
+              COALESCE((audit_facts.payload #>> '{audit_observability_counts,admitted_count}')::integer, 0) + 1,
+            'deduped_count',
+              COALESCE((audit_facts.payload #>> '{audit_observability_counts,deduped_count}')::integer, 0) + 1,
+            'aggregated_count',
+              COALESCE((audit_facts.payload #>> '{audit_observability_counts,aggregated_count}')::integer, 0),
+            'dropped_count',
+              COALESCE((audit_facts.payload #>> '{audit_observability_counts,dropped_count}')::integer, 0),
+            'truncated_count',
+              COALESCE((audit_facts.payload #>> '{audit_observability_counts,truncated_count}')::integer, 0),
+            'hashed_count',
+              COALESCE((audit_facts.payload #>> '{audit_observability_counts,hashed_count}')::integer, 0) + $14::integer,
+            'spilled_count',
+              COALESCE((audit_facts.payload #>> '{audit_observability_counts,spilled_count}')::integer, 0),
+            'sampled_count',
+              COALESCE((audit_facts.payload #>> '{audit_observability_counts,sampled_count}')::integer, 0),
+            'rejected_count',
+              COALESCE((audit_facts.payload #>> '{audit_observability_counts,rejected_count}')::integer, 0),
+            'overflow_count',
+              COALESCE((audit_facts.payload #>> '{audit_observability_counts,overflow_count}')::integer, 0)
+          ),
+        true
+      ),
+      updated_at = $13
   RETURNING id, idempotency_key
   """
 
@@ -105,23 +134,51 @@ defmodule Mezzanine.Audit.AuditAppend do
         jsonb_set(
           jsonb_set(
             jsonb_set(
-              facts.payload,
-              '{audit_amplification_guard,suppressed_count}',
-              to_jsonb(target.next_suppressed_count),
+              jsonb_set(
+                COALESCE(facts.payload, '{}'::jsonb),
+                '{audit_amplification_guard,suppressed_count}',
+                to_jsonb(target.next_suppressed_count),
+                true
+              ),
+              '{audit_amplification_guard,last_seen_at}',
+              to_jsonb($3::text),
               true
             ),
-            '{audit_amplification_guard,last_seen_at}',
-            to_jsonb($3::text),
+            '{audit_aggregation}',
+            jsonb_build_object(
+              'aggregate_counter_ref', $4::text,
+              'overflow_counter_ref', $5::text,
+              'safe_action', $6::text,
+              'suppressed_count', target.next_suppressed_count,
+              'last_suppressed_at', $3::text
+            ),
             true
           ),
-          '{audit_aggregation}',
-          jsonb_build_object(
-            'aggregate_counter_ref', $4::text,
-            'overflow_counter_ref', $5::text,
-            'safe_action', $6::text,
-            'suppressed_count', target.next_suppressed_count,
-            'last_suppressed_at', $3::text
-          ),
+          '{audit_observability_counts}',
+          COALESCE(facts.payload->'audit_observability_counts', '{}'::jsonb) ||
+            jsonb_build_object(
+              'count_ref', 'mezzanine.audit_append.observability_counts.v1',
+              'admitted_count',
+                COALESCE((facts.payload #>> '{audit_observability_counts,admitted_count}')::integer, 0) + 1,
+              'deduped_count',
+                COALESCE((facts.payload #>> '{audit_observability_counts,deduped_count}')::integer, 0),
+              'aggregated_count',
+                COALESCE((facts.payload #>> '{audit_observability_counts,aggregated_count}')::integer, 0) + 1,
+              'dropped_count',
+                COALESCE((facts.payload #>> '{audit_observability_counts,dropped_count}')::integer, 0),
+              'truncated_count',
+                COALESCE((facts.payload #>> '{audit_observability_counts,truncated_count}')::integer, 0),
+              'hashed_count',
+                COALESCE((facts.payload #>> '{audit_observability_counts,hashed_count}')::integer, 0) + $8::integer,
+              'spilled_count',
+                COALESCE((facts.payload #>> '{audit_observability_counts,spilled_count}')::integer, 0),
+              'sampled_count',
+                COALESCE((facts.payload #>> '{audit_observability_counts,sampled_count}')::integer, 0),
+              'rejected_count',
+                COALESCE((facts.payload #>> '{audit_observability_counts,rejected_count}')::integer, 0),
+              'overflow_count',
+                COALESCE((facts.payload #>> '{audit_observability_counts,overflow_count}')::integer, 0)
+            ),
           true
         ),
       updated_at = $7
@@ -132,6 +189,8 @@ defmodule Mezzanine.Audit.AuditAppend do
 
   @required_fields [:installation_id, :trace_id, :fact_kind, :actor_ref, :occurred_at]
   @amplification_guard_key "audit_amplification_guard"
+  @observability_counts_key "audit_observability_counts"
+  @observability_counts_ref "mezzanine.audit_append.observability_counts.v1"
   @guard_ref "mezzanine.audit_amplification_guard.v1"
   @repeat_aggregation_ref "mezzanine.audit_repeat_aggregation.v1"
   @overflow_counter_ref "mezzanine.audit_overflow.count"
@@ -157,6 +216,18 @@ defmodule Mezzanine.Audit.AuditAppend do
     "error_class",
     "safe_action",
     "canonical_idempotency_key_or_payload_hash"
+  ]
+  @observability_count_fields [
+    "admitted_count",
+    "deduped_count",
+    "aggregated_count",
+    "dropped_count",
+    "truncated_count",
+    "hashed_count",
+    "spilled_count",
+    "sampled_count",
+    "rejected_count",
+    "overflow_count"
   ]
   @failure_fact_markers [
     "failed",
@@ -215,10 +286,12 @@ defmodule Mezzanine.Audit.AuditAppend do
          :ok <- ensure_amplification_guard(attrs) do
       idempotency_key = append_idempotency_key(attrs)
       repo = Keyword.get(opts, :repo, Repo)
+      hash_count = append_hash_count(attrs)
+      attrs = put_observability_counts(attrs, hash_count)
 
       attrs
       |> audit_fact_params(idempotency_key)
-      |> append_or_aggregate_fact(repo, attrs, idempotency_key)
+      |> append_or_aggregate_fact(repo, attrs, idempotency_key, hash_count)
     end
   end
 
@@ -239,20 +312,25 @@ defmodule Mezzanine.Audit.AuditAppend do
     ]
   end
 
-  defp append_or_aggregate_fact(params, repo, attrs, idempotency_key) do
+  defp append_or_aggregate_fact(params, repo, attrs, idempotency_key, hash_count) do
     if aggregate_repeated_failure?(attrs) do
       case SQL.query(repo, @insert_new_audit_fact_sql, params) do
         {:ok, %{rows: [[audit_fact_id, returned_idempotency_key]]}} ->
           audit_result(audit_fact_id, returned_idempotency_key || idempotency_key)
 
         {:ok, %{rows: []}} ->
-          aggregate_repeated_fact(repo, attrs, idempotency_key)
+          aggregate_repeated_fact(repo, attrs, idempotency_key, hash_count)
 
         {:error, error} ->
           {:error, error}
       end
     else
-      case SQL.query(repo, @insert_audit_fact_sql, params) do
+      standard_params = [
+        DateTime.utc_now() |> DateTime.truncate(:microsecond),
+        hash_count
+      ]
+
+      case SQL.query(repo, @insert_audit_fact_sql, params ++ standard_params) do
         {:ok, %{rows: [[audit_fact_id, returned_idempotency_key]]}} ->
           audit_result(audit_fact_id, returned_idempotency_key || idempotency_key)
 
@@ -262,7 +340,7 @@ defmodule Mezzanine.Audit.AuditAppend do
     end
   end
 
-  defp aggregate_repeated_fact(repo, attrs, idempotency_key) do
+  defp aggregate_repeated_fact(repo, attrs, idempotency_key, hash_count) do
     guard = attrs |> map_value(:payload) |> guard_from_payload() |> stringify_keys()
     admission_key = guard |> Map.get("admission_key", %{}) |> stringify_keys()
 
@@ -273,7 +351,8 @@ defmodule Mezzanine.Audit.AuditAppend do
       Map.get(guard, "aggregate_counter_ref"),
       Map.get(guard, "overflow_counter_ref"),
       Map.get(admission_key, "safe_action", "aggregate_repeated_audit_fact"),
-      DateTime.utc_now() |> DateTime.truncate(:microsecond)
+      DateTime.utc_now() |> DateTime.truncate(:microsecond),
+      hash_count
     ]
 
     case SQL.query(repo, @aggregate_repeated_audit_fact_sql, params) do
@@ -291,6 +370,26 @@ defmodule Mezzanine.Audit.AuditAppend do
        audit_fact_id: normalize_uuid(audit_fact_id),
        idempotency_key: idempotency_key
      }}
+  end
+
+  defp put_observability_counts(attrs, hash_count) do
+    payload = map_value(attrs, :payload) || %{}
+
+    Map.put(
+      attrs,
+      :payload,
+      Map.put(payload, @observability_counts_key, initial_observability_counts(hash_count))
+    )
+  end
+
+  defp initial_observability_counts(hash_count) do
+    @observability_count_fields
+    |> Map.new(&{&1, 0})
+    |> Map.merge(%{
+      "count_ref" => @observability_counts_ref,
+      "admitted_count" => 1,
+      "hashed_count" => hash_count
+    })
   end
 
   @spec put_amplification_guard(map() | keyword(), keyword()) :: map()
@@ -430,6 +529,14 @@ defmodule Mezzanine.Audit.AuditAppend do
   end
 
   defp aggregate_repeated_failure?(attrs), do: amplification_guard_required?(attrs)
+
+  defp append_hash_count(attrs) do
+    cond do
+      aggregate_repeated_failure?(attrs) -> 1
+      present?(map_value(attrs, :idempotency_key)) -> 0
+      true -> 1
+    end
+  end
 
   defp missing_guard_fields(guard),
     do: Enum.reject(@required_guard_fields, &Map.has_key?(guard, &1))

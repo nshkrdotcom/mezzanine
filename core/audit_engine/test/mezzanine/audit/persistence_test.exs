@@ -69,6 +69,12 @@ defmodule Mezzanine.Audit.PersistenceTest do
     assert reloaded.payload["result_summary"]["status"] == "ok"
     assert reloaded.idempotency_key == "audit-append:test:exec-append"
 
+    assert reloaded.payload["audit_observability_counts"] ==
+             expected_observability_counts(%{
+               "admitted_count" => 2,
+               "deduped_count" => 1
+             })
+
     assert has_index?("audit_facts", ["installation_id", "idempotency_key"])
   end
 
@@ -120,6 +126,12 @@ defmodule Mezzanine.Audit.PersistenceTest do
     assert {:ok, [reloaded]} = AuditFact.list_trace("inst-failure", "trace-failure")
     assert reloaded.payload["audit_amplification_guard"] == guard
     assert reloaded.idempotency_key == result.idempotency_key
+
+    assert reloaded.payload["audit_observability_counts"] ==
+             expected_observability_counts(%{
+               "admitted_count" => 1,
+               "hashed_count" => 1
+             })
   end
 
   test "repeated same-key failure audit appends aggregate inside declared window" do
@@ -167,6 +179,13 @@ defmodule Mezzanine.Audit.PersistenceTest do
 
     assert aggregated.payload["audit_aggregation"]["safe_action"] ==
              "aggregate_repeated_audit_fact"
+
+    assert aggregated.payload["audit_observability_counts"] ==
+             expected_observability_counts(%{
+               "admitted_count" => 2,
+               "aggregated_count" => 1,
+               "hashed_count" => 2
+             })
 
     assert {:ok, next_window} = AuditAppend.append_fact(next_window_attrs)
     refute next_window.audit_fact_id == first.audit_fact_id
@@ -410,6 +429,23 @@ defmodule Mezzanine.Audit.PersistenceTest do
       algorithm: AuditInclusionProof.default_algorithm(),
       release_manifest_ref: "phase5-v7-hardening"
     }
+  end
+
+  defp expected_observability_counts(overrides) do
+    %{
+      "count_ref" => "mezzanine.audit_append.observability_counts.v1",
+      "admitted_count" => 0,
+      "deduped_count" => 0,
+      "aggregated_count" => 0,
+      "dropped_count" => 0,
+      "truncated_count" => 0,
+      "hashed_count" => 0,
+      "spilled_count" => 0,
+      "sampled_count" => 0,
+      "rejected_count" => 0,
+      "overflow_count" => 0
+    }
+    |> Map.merge(overrides)
   end
 
   defp failure_audit_attrs do
