@@ -97,4 +97,82 @@ defmodule Mezzanine.IdempotencyTest do
              "tenant_id" => "tenant-1"
            }
   end
+
+  test "derives domain separated child keys from a canonical root" do
+    canonical_key = canonical_root_key()
+
+    expected_json =
+      ~s({"canonical_idempotency_key":"#{canonical_key}","scope":"activity","stable_ref":"activity-call-1"})
+
+    expected_digest =
+      :sha256
+      |> :crypto.hash(expected_json)
+      |> Base.encode16(case: :lower)
+
+    assert {:ok, "idem:v1:activity:" <> digest} =
+             Idempotency.child_key(canonical_key, :activity, "activity-call-1")
+
+    assert digest == expected_digest
+  end
+
+  test "normalizes child scope and structured stable refs" do
+    canonical_key = canonical_root_key()
+
+    atom_key =
+      Idempotency.child_key!(
+        canonical_key,
+        :lower_submission,
+        %{tenant_ref: "tenant-1", submission_key: "submission-1"}
+      )
+
+    string_key =
+      Idempotency.child_key!(
+        canonical_key,
+        "lower_submission",
+        %{"submission_key" => "submission-1", "tenant_ref" => "tenant-1"}
+      )
+
+    assert atom_key == string_key
+    assert String.starts_with?(atom_key, "idem:v1:lower_submission:")
+  end
+
+  test "defines the required child idempotency scopes" do
+    assert Idempotency.known_child_scopes() == [
+             "activity",
+             "lower_side_effect",
+             "lower_submission",
+             "provider_retry"
+           ]
+
+    canonical_key = canonical_root_key()
+
+    for scope <- Idempotency.known_child_scopes() do
+      assert {:ok, "idem:v1:" <> _key} = Idempotency.child_key(canonical_key, scope, "#{scope}:1")
+    end
+  end
+
+  test "rejects child keys without a canonical root, safe scope, and stable ref" do
+    assert {:error, {:invalid_canonical_idempotency_key, "idem:v1:activity:abc"}} =
+             Idempotency.child_key("idem:v1:activity:abc", :activity, "call-1")
+
+    assert {:error, {:invalid_child_idempotency_scope, "activity:attempt"}} =
+             Idempotency.child_key(canonical_root_key(), "activity:attempt", "call-1")
+
+    assert {:error, :missing_child_idempotency_stable_ref} =
+             Idempotency.child_key(canonical_root_key(), :activity, nil)
+  end
+
+  defp canonical_root_key do
+    Idempotency.canonical_key!(%{
+      tenant_id: "tenant-1",
+      installation_id: "inst-1",
+      operation_family: "workflow.start",
+      operation_ref: "expense:run",
+      causation_id: "cause:abc",
+      authority_decision_ref: "authz:decision:42",
+      subject_ref: %{kind: :work, id: "work-1"},
+      payload_hash: "sha256:payload",
+      source_event_position: "event:17"
+    })
+  end
 end

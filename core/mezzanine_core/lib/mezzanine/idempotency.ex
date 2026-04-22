@@ -9,6 +9,13 @@ defmodule Mezzanine.Idempotency do
   """
 
   @root_prefix "idem:v1:"
+  @root_digest_length 64
+  @known_child_scopes [
+    "activity",
+    "lower_side_effect",
+    "lower_submission",
+    "provider_retry"
+  ]
   @required_root_fields [
     :tenant_id,
     :operation_family,
@@ -20,10 +27,18 @@ defmodule Mezzanine.Idempotency do
   ]
 
   @type attrs :: map() | keyword()
-  @type error :: {:missing_canonical_idempotency_fields, [atom()]}
+  @type root_error :: {:missing_canonical_idempotency_fields, [atom()]}
+  @type child_error ::
+          {:invalid_canonical_idempotency_key, term()}
+          | {:invalid_child_idempotency_scope, term()}
+          | :missing_child_idempotency_stable_ref
+  @type error :: root_error() | child_error()
 
   @spec root_prefix() :: String.t()
   def root_prefix, do: @root_prefix
+
+  @spec known_child_scopes() :: [String.t()]
+  def known_child_scopes, do: @known_child_scopes
 
   @spec canonical_key(attrs()) :: {:ok, String.t()} | {:error, error()}
   def canonical_key(attrs) when is_map(attrs) or is_list(attrs) do
@@ -59,6 +74,36 @@ defmodule Mezzanine.Idempotency do
     case missing_fields(payload) do
       [] -> {:ok, canonical_value(payload)}
       missing -> {:error, {:missing_canonical_idempotency_fields, missing}}
+    end
+  end
+
+  @spec child_key(String.t(), String.t() | atom(), term()) ::
+          {:ok, String.t()} | {:error, error()}
+  def child_key(canonical_idempotency_key, scope, stable_ref) do
+    with {:ok, payload} <- child_payload(canonical_idempotency_key, scope, stable_ref) do
+      {:ok, @root_prefix <> payload["scope"] <> ":" <> sha256(canonical_json(payload))}
+    end
+  end
+
+  @spec child_key!(String.t(), String.t() | atom(), term()) :: String.t()
+  def child_key!(canonical_idempotency_key, scope, stable_ref) do
+    case child_key(canonical_idempotency_key, scope, stable_ref) do
+      {:ok, key} -> key
+      {:error, reason} -> raise ArgumentError, inspect(reason)
+    end
+  end
+
+  @spec child_payload(String.t(), String.t() | atom(), term()) :: {:ok, map()} | {:error, error()}
+  def child_payload(canonical_idempotency_key, scope, stable_ref) do
+    with :ok <- validate_root_key(canonical_idempotency_key),
+         {:ok, normalized_scope} <- normalize_scope(scope),
+         {:ok, normalized_ref} <- normalize_stable_ref(stable_ref) do
+      {:ok,
+       %{
+         "canonical_idempotency_key" => canonical_idempotency_key,
+         "scope" => normalized_scope,
+         "stable_ref" => normalized_ref
+       }}
     end
   end
 
@@ -112,6 +157,40 @@ defmodule Mezzanine.Idempotency do
   defp present?(value) when is_list(value), do: value != []
   defp present?(value) when is_map(value), do: map_size(value) > 0
   defp present?(_value), do: true
+
+  defp validate_root_key(@root_prefix <> digest = key) do
+    with true <- String.length(digest) == @root_digest_length,
+         {:ok, _decoded} <- Base.decode16(digest, case: :mixed) do
+      :ok
+    else
+      _invalid -> {:error, {:invalid_canonical_idempotency_key, key}}
+    end
+  end
+
+  defp validate_root_key(key), do: {:error, {:invalid_canonical_idempotency_key, key}}
+
+  defp normalize_scope(scope) when is_atom(scope),
+    do: scope |> Atom.to_string() |> normalize_scope()
+
+  defp normalize_scope(scope) when is_binary(scope) do
+    if Regex.match?(~r/^[a-z0-9][a-z0-9_.-]*$/, scope) do
+      {:ok, scope}
+    else
+      {:error, {:invalid_child_idempotency_scope, scope}}
+    end
+  end
+
+  defp normalize_scope(scope), do: {:error, {:invalid_child_idempotency_scope, scope}}
+
+  defp normalize_stable_ref(stable_ref) do
+    stable_ref = canonical_value(normalize_value(stable_ref))
+
+    if present?(stable_ref) do
+      {:ok, stable_ref}
+    else
+      {:error, :missing_child_idempotency_stable_ref}
+    end
+  end
 
   defp canonical_value(%DateTime{} = datetime), do: DateTime.to_iso8601(datetime)
   defp canonical_value(%NaiveDateTime{} = datetime), do: NaiveDateTime.to_iso8601(datetime)
