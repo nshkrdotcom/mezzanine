@@ -645,6 +645,7 @@ defmodule Mezzanine.Workflows.ExecutionAttempt do
   use Temporalex.Workflow, task_queue: "mezzanine.hazmat"
 
   alias Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow
+  alias Mezzanine.Workflows.Support
 
   @impl Temporalex.Workflow
   def run(input) do
@@ -660,7 +661,12 @@ defmodule Mezzanine.Workflows.ExecutionAttempt do
            ) do
       result = ExecutionLifecycleWorkflow.runtime_result(lifecycle_input, authority, lower)
       set_state(result)
-      {:ok, result}
+
+      if hold_for_receipt?(input) do
+        await_lower_receipt(result)
+      else
+        {:ok, result}
+      end
     end
   end
 
@@ -668,6 +674,37 @@ defmodule Mezzanine.Workflows.ExecutionAttempt do
   def handle_query("operator_state.v1", _args, state), do: {:reply, state || %{}}
 
   def handle_query("execution_state.v1", _args, state), do: {:reply, state || %{}}
+
+  defp await_lower_receipt(result) do
+    with {:ok, signal_payload} <- wait_for_signal("lower_receipt") do
+      signal_payload = Support.normalize_payload(signal_payload)
+
+      resumed =
+        result
+        |> Map.merge(%{
+          workflow_state: "completed",
+          signal_state: "accepted",
+          last_receipt_ref:
+            Map.get(signal_payload, :lower_receipt_ref, "lower-receipt://unknown"),
+          last_signal_ref: Map.get(signal_payload, :signal_id),
+          replay_resume_mode: "temporal_signal_resume"
+        })
+        |> Support.safe_state()
+
+      set_state(resumed)
+      {:ok, resumed}
+    end
+  end
+
+  defp hold_for_receipt?(input) when is_map(input) do
+    Map.get(input, :hold_for_receipt?) ||
+      Map.get(input, "hold_for_receipt?") ||
+      Map.get(input, :hold_for_receipt) ||
+      Map.get(input, "hold_for_receipt") ||
+      false
+  end
+
+  defp hold_for_receipt?(_input), do: false
 end
 
 defmodule Mezzanine.Workflows.DecisionReview do
