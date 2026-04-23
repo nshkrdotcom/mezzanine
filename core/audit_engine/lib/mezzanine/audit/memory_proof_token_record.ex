@@ -31,6 +31,7 @@ defmodule Mezzanine.Audit.MemoryProofTokenRecord do
 
     create :store do
       accept([
+        :proof_hash_version,
         :proof_id,
         :kind,
         :tenant_ref,
@@ -47,6 +48,9 @@ defmodule Mezzanine.Audit.MemoryProofTokenRecord do
         :access_projection_hashes,
         :proof_hash,
         :trace_id,
+        :source_node_ref,
+        :commit_lsn,
+        :commit_hlc,
         :parent_fragment_id,
         :child_fragment_id,
         :evidence_refs,
@@ -71,6 +75,11 @@ defmodule Mezzanine.Audit.MemoryProofTokenRecord do
 
   attributes do
     uuid_primary_key(:id)
+
+    attribute :proof_hash_version, :string do
+      allow_nil?(false)
+      public?(true)
+    end
 
     attribute :proof_id, :string do
       allow_nil?(false)
@@ -149,6 +158,18 @@ defmodule Mezzanine.Audit.MemoryProofTokenRecord do
 
     attribute :trace_id, :string do
       allow_nil?(false)
+      public?(true)
+    end
+
+    attribute :source_node_ref, :string do
+      public?(true)
+    end
+
+    attribute :commit_lsn, :string do
+      public?(true)
+    end
+
+    attribute :commit_hlc, :map do
       public?(true)
     end
 

@@ -5,7 +5,10 @@ defmodule Mezzanine.Audit.MemoryProofToken do
 
   @kinds [:recall, :write_private, :share_up, :promote, :invalidate, :audit]
   @kind_map Map.new(@kinds, &{Atom.to_string(&1), &1})
-  @required_fields [
+  @hash_versions ["m6.v1", "m7a.v1"]
+  @m7a_ordering_fields [:source_node_ref, :commit_lsn, :commit_hlc]
+  @base_required_fields [
+    :proof_hash_version,
     :proof_id,
     :kind,
     :tenant_ref,
@@ -17,7 +20,7 @@ defmodule Mezzanine.Audit.MemoryProofToken do
     :access_projection_hashes,
     :trace_id
   ]
-  @hash_fields [
+  @m6_hash_fields [
     :proof_id,
     :kind,
     :tenant_ref,
@@ -39,14 +42,41 @@ defmodule Mezzanine.Audit.MemoryProofToken do
     :governance_decision_ref,
     :metadata
   ]
+  @m7a_hash_fields [
+    :proof_hash_version,
+    :proof_id,
+    :kind,
+    :tenant_ref,
+    :installation_id,
+    :subject_id,
+    :execution_id,
+    :user_ref,
+    :agent_ref,
+    :t_event,
+    :epoch_used,
+    :source_node_ref,
+    :commit_lsn,
+    :commit_hlc,
+    :policy_refs,
+    :fragment_ids,
+    :transform_hashes,
+    :access_projection_hashes,
+    :trace_id,
+    :parent_fragment_id,
+    :child_fragment_id,
+    :evidence_refs,
+    :governance_decision_ref,
+    :metadata
+  ]
   @string_list_fields [:fragment_ids, :transform_hashes, :access_projection_hashes]
 
   @type kind :: :recall | :write_private | :share_up | :promote | :invalidate | :audit
   @type policy_ref :: map()
   @type evidence_ref :: map()
 
-  @enforce_keys @required_fields
-  defstruct proof_id: nil,
+  @enforce_keys @base_required_fields
+  defstruct proof_hash_version: nil,
+            proof_id: nil,
             kind: nil,
             tenant_ref: nil,
             installation_id: nil,
@@ -62,6 +92,9 @@ defmodule Mezzanine.Audit.MemoryProofToken do
             access_projection_hashes: [],
             proof_hash: nil,
             trace_id: nil,
+            source_node_ref: nil,
+            commit_lsn: nil,
+            commit_hlc: nil,
             parent_fragment_id: nil,
             child_fragment_id: nil,
             evidence_refs: [],
@@ -69,6 +102,7 @@ defmodule Mezzanine.Audit.MemoryProofToken do
             metadata: %{}
 
   @type t :: %__MODULE__{
+          proof_hash_version: String.t(),
           proof_id: String.t(),
           kind: kind(),
           tenant_ref: String.t(),
@@ -85,6 +119,9 @@ defmodule Mezzanine.Audit.MemoryProofToken do
           access_projection_hashes: [String.t()],
           proof_hash: String.t(),
           trace_id: String.t(),
+          source_node_ref: String.t() | nil,
+          commit_lsn: String.t() | nil,
+          commit_hlc: map() | nil,
           parent_fragment_id: String.t() | nil,
           child_fragment_id: String.t() | nil,
           evidence_refs: [evidence_ref()],
@@ -95,15 +132,20 @@ defmodule Mezzanine.Audit.MemoryProofToken do
   @spec kinds() :: [kind()]
   def kinds, do: @kinds
 
+  @spec hash_versions() :: [String.t()]
+  def hash_versions, do: @hash_versions
+
   @spec new(map()) ::
           {:ok, t()}
           | {:error, {:invalid_proof_hash, :proof_hash}}
+          | {:error, {:invalid_proof_hash_version, term()}}
           | {:error, {:invalid_proof_token_kind, term()}}
           | {:error, {:missing_proof_token_fields, [atom()]}}
           | {:error, {:proof_hash_mismatch, map()}}
+          | {:error, {:version_field_mismatch, String.t(), [atom()]}}
   def new(attrs) when is_map(attrs) do
     with {:ok, normalized_attrs} <- normalize(attrs),
-         :ok <- validate_required_fields(normalized_attrs),
+         :ok <- validate_versioned_fields(normalized_attrs),
          {:ok, proof_hash} <- resolve_proof_hash(normalized_attrs) do
       {:ok, struct!(__MODULE__, Map.put(normalized_attrs, :proof_hash, proof_hash))}
     end
@@ -121,18 +163,25 @@ defmodule Mezzanine.Audit.MemoryProofToken do
       {:error, {:invalid_proof_token_kind, kind}} ->
         raise ArgumentError, "invalid proof token kind: #{inspect(kind)}"
 
+      {:error, {:invalid_proof_hash_version, version}} ->
+        raise ArgumentError, "invalid proof token hash version: #{inspect(version)}"
+
       {:error, {:invalid_proof_hash, :proof_hash}} ->
         raise ArgumentError, "invalid proof token proof_hash"
 
       {:error, {:proof_hash_mismatch, details}} ->
         raise ArgumentError, "proof token proof_hash mismatch: #{inspect(details)}"
+
+      {:error, {:version_field_mismatch, version, fields}} ->
+        raise ArgumentError,
+              "proof token #{version} field mismatch: #{inspect(Enum.sort(fields))}"
     end
   end
 
   @spec compute_proof_hash(t()) :: String.t()
   def compute_proof_hash(%__MODULE__{} = token) do
     token
-    |> Map.take(@hash_fields)
+    |> Map.take(hash_fields_for(token.proof_hash_version))
     |> canonical_json()
     |> then(&:crypto.hash(:sha256, &1))
     |> Base.encode16(case: :lower)
@@ -172,9 +221,11 @@ defmodule Mezzanine.Audit.MemoryProofToken do
         attrs
       end
 
-    with {:ok, kind} <- normalize_kind(fetch(source, :kind)) do
+    with {:ok, kind} <- normalize_kind(fetch(source, :kind)),
+         {:ok, proof_hash_version} <- normalize_hash_version(fetch(source, :proof_hash_version)) do
       {:ok,
        %{
+         proof_hash_version: proof_hash_version,
          proof_id: normalize_string(fetch(source, :proof_id)),
          kind: kind,
          tenant_ref: normalize_string(fetch(source, :tenant_ref)),
@@ -192,6 +243,9 @@ defmodule Mezzanine.Audit.MemoryProofToken do
            normalize_string_list(fetch(source, :access_projection_hashes)),
          trace_id:
            normalize_string(fetch(source, :trace_id)) || normalize_trace_id_from_process_context(),
+         source_node_ref: normalize_string(fetch(source, :source_node_ref)),
+         commit_lsn: normalize_string(fetch(source, :commit_lsn)),
+         commit_hlc: normalize_optional_map(fetch(source, :commit_hlc)),
          parent_fragment_id: normalize_string(fetch(source, :parent_fragment_id)),
          child_fragment_id: normalize_string(fetch(source, :child_fragment_id)),
          evidence_refs: normalize_map_list(fetch(source, :evidence_refs)),
@@ -202,9 +256,18 @@ defmodule Mezzanine.Audit.MemoryProofToken do
     end
   end
 
+  defp validate_versioned_fields(attrs) do
+    case validate_required_fields(attrs) do
+      :ok -> validate_field_set(attrs)
+      error -> error
+    end
+  end
+
   defp validate_required_fields(attrs) do
     missing_fields =
-      Enum.filter(@required_fields, fn field ->
+      attrs
+      |> required_fields_for()
+      |> Enum.filter(fn field ->
         missing_required_field?(field, Map.get(attrs, field))
       end)
 
@@ -213,6 +276,21 @@ defmodule Mezzanine.Audit.MemoryProofToken do
       fields -> {:error, {:missing_proof_token_fields, fields}}
     end
   end
+
+  defp validate_field_set(%{proof_hash_version: "m6.v1"} = attrs) do
+    present_fields =
+      Enum.filter(@m7a_ordering_fields, fn field ->
+        not missing_required_field?(field, Map.get(attrs, field))
+      end)
+
+    case present_fields do
+      [] -> :ok
+      fields -> {:error, {:version_field_mismatch, "m6.v1", fields}}
+    end
+  end
+
+  defp validate_field_set(%{proof_hash_version: "m7a.v1"}), do: :ok
+  defp validate_field_set(_attrs), do: :ok
 
   defp resolve_proof_hash(attrs) do
     token = struct!(__MODULE__, Map.put(attrs, :proof_hash, nil))
@@ -241,6 +319,14 @@ defmodule Mezzanine.Audit.MemoryProofToken do
   defp resolve_existing_proof_hash(:error, _expected_hash, _proof_id),
     do: {:error, {:invalid_proof_hash, :proof_hash}}
 
+  defp required_fields_for(%{proof_hash_version: "m7a.v1"}),
+    do: @base_required_fields ++ @m7a_ordering_fields
+
+  defp required_fields_for(_attrs), do: @base_required_fields
+
+  defp hash_fields_for("m7a.v1"), do: @m7a_hash_fields
+  defp hash_fields_for(_version), do: @m6_hash_fields
+
   defp normalize_kind(kind) when kind in @kinds, do: {:ok, kind}
 
   defp normalize_kind(kind) when is_binary(kind) do
@@ -252,6 +338,21 @@ defmodule Mezzanine.Audit.MemoryProofToken do
 
   defp normalize_kind(nil), do: {:ok, nil}
   defp normalize_kind(kind), do: {:error, {:invalid_proof_token_kind, kind}}
+
+  defp normalize_hash_version(version) when version in @hash_versions, do: {:ok, version}
+
+  defp normalize_hash_version(version) when is_binary(version) do
+    version
+    |> String.trim()
+    |> case do
+      "" -> {:ok, nil}
+      normalized_version when normalized_version in @hash_versions -> {:ok, normalized_version}
+      normalized_version -> {:error, {:invalid_proof_hash_version, normalized_version}}
+    end
+  end
+
+  defp normalize_hash_version(nil), do: {:ok, nil}
+  defp normalize_hash_version(version), do: {:error, {:invalid_proof_hash_version, version}}
 
   defp normalize_policy_refs(policy_refs) when is_list(policy_refs) do
     policy_refs
@@ -368,6 +469,7 @@ defmodule Mezzanine.Audit.MemoryProofToken do
   defp normalize_hash(_hash), do: :error
 
   defp missing_required_field?(:policy_refs, []), do: true
+  defp missing_required_field?(:commit_hlc, value) when value == %{}, do: true
   defp missing_required_field?(field, value) when field in @string_list_fields, do: is_nil(value)
   defp missing_required_field?(_field, nil), do: true
   defp missing_required_field?(_field, _value), do: false
