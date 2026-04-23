@@ -5,6 +5,7 @@ defmodule MezzanineAuditEngineTest do
     assert [
              Mezzanine.Audit.TraceContract,
              Mezzanine.Audit.ExecutionLineage,
+             Mezzanine.Audit.MemoryProofToken,
              Mezzanine.Audit.Staleness,
              Mezzanine.Audit.TenantScopedTraceJoin,
              Mezzanine.Audit.UnifiedTrace

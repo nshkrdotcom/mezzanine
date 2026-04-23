@@ -8,6 +8,7 @@ defmodule MezzanineAuditEngine do
     [
       Mezzanine.Audit.TraceContract,
       Mezzanine.Audit.ExecutionLineage,
+      Mezzanine.Audit.MemoryProofToken,
       Mezzanine.Audit.Staleness,
       Mezzanine.Audit.TenantScopedTraceJoin,
       Mezzanine.Audit.UnifiedTrace
@@ -24,6 +25,8 @@ defmodule MezzanineAuditEngine do
       Mezzanine.Audit.AuditQuery,
       Mezzanine.Audit.ExecutionLineageRecord,
       Mezzanine.Audit.ExecutionLineageStore,
+      Mezzanine.Audit.MemoryProofTokenRecord,
+      Mezzanine.Audit.MemoryProofTokenStore,
       Mezzanine.Audit.WorkAudit
     ]
   end

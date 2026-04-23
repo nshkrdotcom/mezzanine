@@ -8,5 +8,6 @@ defmodule Mezzanine.Audit do
   resources do
     resource(Mezzanine.Audit.AuditFact)
     resource(Mezzanine.Audit.ExecutionLineageRecord)
+    resource(Mezzanine.Audit.MemoryProofTokenRecord)
   end
 end
