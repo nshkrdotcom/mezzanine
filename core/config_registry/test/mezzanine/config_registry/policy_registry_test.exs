@@ -48,6 +48,8 @@ defmodule Mezzanine.ConfigRegistry.PolicyRegistryTest do
     assert message.source_node_ref == "node://mez_1@127.0.0.1/node-a"
     assert is_binary(message.commit_lsn)
     assert message.commit_hlc == commit_hlc()
+    assert_iso_datetime(message.metadata["effective_from"], @effective_from)
+    assert_iso_datetime(message.metadata["effective_until"], @effective_until)
 
     expected_topic =
       ClusterInvalidation.policy_topic!(
@@ -246,6 +248,11 @@ defmodule Mezzanine.ConfigRegistry.PolicyRegistryTest do
       "l" => 0,
       "n" => "node://mez_1@127.0.0.1/node-a"
     }
+  end
+
+  defp assert_iso_datetime(encoded, expected) do
+    assert {:ok, actual, _offset} = DateTime.from_iso8601(encoded)
+    assert DateTime.compare(actual, expected) == :eq
   end
 
   def reject_invalidation(_message), do: {:error, :publish_failed}

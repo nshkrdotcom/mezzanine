@@ -140,6 +140,9 @@ defmodule Mezzanine.ConfigRegistry.PolicyRegistry do
         "policy_id" => policy.policy_id,
         "kind" => Atom.to_string(policy.kind),
         "version" => policy.version,
+        "policy_version" => policy.version,
+        "effective_from" => DateTime.to_iso8601(policy.effective_from),
+        "effective_until" => maybe_datetime(policy.effective_until),
         "granularity_scope" => Atom.to_string(policy.granularity_scope),
         "installation_ref" => policy.installation_ref
       }
@@ -155,6 +158,9 @@ defmodule Mezzanine.ConfigRegistry.PolicyRegistry do
     %{rows: [[commit_lsn]]} = Repo.query!("SELECT pg_current_wal_lsn()::text", [])
     commit_lsn
   end
+
+  defp maybe_datetime(nil), do: nil
+  defp maybe_datetime(%DateTime{} = datetime), do: DateTime.to_iso8601(datetime)
 
   defp reject_conflict(attrs) do
     Policy
