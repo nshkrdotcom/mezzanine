@@ -80,6 +80,35 @@ defmodule Mezzanine.ConfigRegistry.PolicyRegistryTest do
              )
   end
 
+  test "validates proof-token policy refs at event time and reports missing or expired refs" do
+    assert {:ok, %Policy{}} =
+             read_policy("read-proof-ref", :tenant)
+             |> register_policy(tenant_ref: "tenant-a")
+
+    context = %{tenant_ref: "tenant-a"}
+    refs = [%{"id" => "read-proof-ref", "version" => 1, "kind" => "read"}]
+
+    assert {:ok, [%Policy{policy_id: "read-proof-ref", version: 1}]} =
+             PolicyRegistry.validate_refs_at(refs, context,
+               at: ~U[2026-04-23 12:00:00Z],
+               snapshot_epoch: 42
+             )
+
+    assert {:error, {:policy_ref_not_effective, %{"id" => "read-proof-ref", "version" => 1}}} =
+             PolicyRegistry.validate_refs_at(refs, context,
+               at: ~U[2026-04-24 12:00:00Z],
+               snapshot_epoch: 42
+             )
+
+    assert {:error, {:missing_policy_ref, %{"id" => "read-missing", "version" => 1}}} =
+             PolicyRegistry.validate_refs_at(
+               [%{"id" => "read-missing", "version" => 1, "kind" => "read"}],
+               context,
+               at: ~U[2026-04-23 12:00:00Z],
+               snapshot_epoch: 42
+             )
+  end
+
   test "snapshot-bound resolution carries one recall epoch through policy lookup" do
     assert {:ok, %Policy{}} =
              read_policy("read-snapshot-bound", :tenant)

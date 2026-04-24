@@ -57,6 +57,22 @@ defmodule Mezzanine.ConfigRegistry.PolicyRegistry do
     end
   end
 
+  @spec validate_refs_at([map()], map(), keyword()) ::
+          {:ok, [Policy.t()]}
+          | {:error,
+             {:missing_policy_ref, map()}
+             | {:policy_ref_not_effective, map()}
+             | {:invalid_policy_ref, term()}
+             | {:invalid_snapshot_epoch, term()}}
+  def validate_refs_at(policy_refs, context, opts \\ [])
+      when is_list(policy_refs) and is_map(context) and is_list(opts) do
+    at = Keyword.get(opts, :at, DateTime.utc_now())
+
+    with :ok <- validate_optional_snapshot_epoch(opts) do
+      validate_policy_refs(policy_refs, context, at)
+    end
+  end
+
   defp policy_attrs(policy_contract, opts) do
     %{
       policy_id: policy_contract.policy_id,
@@ -204,6 +220,74 @@ defmodule Mezzanine.ConfigRegistry.PolicyRegistry do
     policy.kind == kind and active_at?(policy, at) and scope_matches?(policy, context)
   end
 
+  defp validate_ref_at(policy_ref, context, at) when is_map(policy_ref) do
+    with {:ok, normalized_ref} <- normalize_policy_ref(policy_ref) do
+      candidates =
+        Policy
+        |> Ash.read!(domain: ConfigRegistry)
+        |> Enum.map(&normalize_policy/1)
+        |> Enum.filter(&same_policy_ref?(&1, normalized_ref))
+
+      cond do
+        candidates == [] ->
+          {:error, {:missing_policy_ref, public_policy_ref(normalized_ref)}}
+
+        Enum.find(candidates, &(active_at?(&1, at) and scope_matches?(&1, context))) ->
+          {:ok, Enum.find(candidates, &(active_at?(&1, at) and scope_matches?(&1, context)))}
+
+        true ->
+          {:error, {:policy_ref_not_effective, public_policy_ref(normalized_ref)}}
+      end
+    end
+  end
+
+  defp validate_ref_at(policy_ref, _context, _at), do: {:error, {:invalid_policy_ref, policy_ref}}
+
+  defp validate_policy_refs(policy_refs, context, at) do
+    policy_refs
+    |> Enum.reduce_while([], &validate_policy_ref_reducer(&1, &2, context, at))
+    |> finalize_policy_refs()
+  end
+
+  defp validate_policy_ref_reducer(policy_ref, policies, context, at) do
+    case validate_ref_at(policy_ref, context, at) do
+      {:ok, policy} -> {:cont, [policy | policies]}
+      {:error, reason} -> {:halt, {:error, reason}}
+    end
+  end
+
+  defp finalize_policy_refs({:error, reason}), do: {:error, reason}
+  defp finalize_policy_refs(policies), do: {:ok, Enum.reverse(policies)}
+
+  defp same_policy_ref?(%Policy{} = policy, ref) do
+    policy.policy_id == ref.policy_id and policy.version == ref.version and
+      (is_nil(ref.kind) or policy.kind == ref.kind)
+  end
+
+  defp normalize_policy_ref(policy_ref) do
+    policy_id = fetch_context(policy_ref, :id) || fetch_context(policy_ref, :policy_id)
+    version = fetch_context(policy_ref, :version)
+    kind = fetch_context(policy_ref, :kind)
+
+    cond do
+      not is_binary(policy_id) or policy_id == "" ->
+        {:error, {:invalid_policy_ref, policy_ref}}
+
+      not is_integer(version) ->
+        {:error, {:invalid_policy_ref, policy_ref}}
+
+      true ->
+        {:ok, %{policy_id: policy_id, version: version, kind: normalize_optional_kind(kind)}}
+    end
+  end
+
+  defp normalize_optional_kind(nil), do: nil
+  defp normalize_optional_kind(kind), do: normalize_kind!(kind)
+
+  defp public_policy_ref(%{policy_id: policy_id, version: version}) do
+    %{"id" => policy_id, "version" => version}
+  end
+
   defp intervals_overlap?(left_from, left_until, right_from, right_until) do
     DateTime.compare(left_from, right_until || DateTime.from_unix!(4_102_444_800)) == :lt and
       DateTime.compare(right_from, left_until || DateTime.from_unix!(4_102_444_800)) == :lt
@@ -267,6 +351,19 @@ defmodule Mezzanine.ConfigRegistry.PolicyRegistry do
 
   defp normalize_snapshot_epoch(value) do
     {:error, {:invalid_snapshot_epoch, value}}
+  end
+
+  defp validate_optional_snapshot_epoch(opts) do
+    case Keyword.fetch(opts, :snapshot_epoch) do
+      {:ok, snapshot_epoch} ->
+        case normalize_snapshot_epoch(snapshot_epoch) do
+          {:ok, _snapshot_epoch} -> :ok
+          {:error, reason} -> {:error, reason}
+        end
+
+      :error ->
+        :ok
+    end
   end
 
   defp bind_snapshot_context(context, snapshot_epoch) do
