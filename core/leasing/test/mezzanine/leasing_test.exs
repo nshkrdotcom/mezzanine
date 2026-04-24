@@ -5,6 +5,9 @@ defmodule Mezzanine.LeasingTest do
   alias Mezzanine.Leasing
   alias Mezzanine.Leasing.AuthorizationScope
 
+  @node_ref "node://mez_1@127.0.0.1/node-a"
+  @commit_hlc %{"w" => 1_776_947_200_000_000_000, "l" => 0, "n" => @node_ref}
+
   test "issues and authorizes a scoped read lease" do
     telemetry_ids = attach_telemetry([[:mezzanine, :lease, :issued]])
 
@@ -134,6 +137,52 @@ defmodule Mezzanine.LeasingTest do
     end
   end
 
+  test "lease invalidation closes subject access graph edges with revoking authority" do
+    subject_id = Ecto.UUID.generate()
+    installation_id = Ecto.UUID.generate()
+    revoking_authority_ref = governance_ref("lease-revocation")
+
+    {:ok, read_lease} =
+      Leasing.issue_read_lease(%{
+        trace_id: "trace-graph-revocation",
+        tenant_id: "tenant-graph",
+        installation_id: installation_id,
+        installation_revision: 12,
+        activation_epoch: 8,
+        lease_epoch: 4,
+        subject_id: subject_id,
+        lineage_anchor: %{"submission_ref" => "sub-graph"},
+        allowed_family: "unified_trace",
+        allowed_operations: [:fetch_run]
+      })
+
+    assert {:ok, [%LeaseInvalidation{}]} =
+             Leasing.invalidate_subject_leases(subject_id, "subject_paused",
+               access_graph_store: __MODULE__.AccessGraphRecorder,
+               access_graph_test_pid: self(),
+               revoking_authority_ref: revoking_authority_ref,
+               source_node_ref: @node_ref,
+               commit_hlc: @commit_hlc,
+               trace_id: "trace-graph-revocation"
+             )
+
+    assert_receive {:access_graph_revoke_subject_edges, "tenant-graph", ^subject_id,
+                    ^revoking_authority_ref, opts}
+
+    assert Keyword.fetch!(opts, :cause) == "lease_revoked"
+    assert Keyword.fetch!(opts, :source_node_ref) == @node_ref
+    assert Keyword.fetch!(opts, :commit_hlc) == @commit_hlc
+    assert Keyword.fetch!(opts, :trace_id) == "trace-graph-revocation"
+
+    assert get_in(Keyword.fetch!(opts, :metadata), ["lease_revocations"]) == [
+             %{
+               "lease_kind" => "read",
+               "reason" => "subject_paused",
+               "revocation_ref" => "lease-revocation:read:#{read_lease.lease_id}:1"
+             }
+           ]
+  end
+
   test "serializes concurrent invalidations with a gap-free cursor" do
     stream_lease_ids =
       Enum.map(1..10, fn index ->
@@ -204,6 +253,45 @@ defmodule Mezzanine.LeasingTest do
       actor_ref: %{id: "lease-test"},
       authorized_at: DateTime.utc_now()
     })
+  end
+
+  defp governance_ref(id) do
+    subject = %{
+      kind: :install,
+      id: "install-#{id}",
+      metadata: %{phase: 7}
+    }
+
+    %{
+      kind: :policy_decision,
+      id: id,
+      subject: subject,
+      evidence: [
+        %{
+          kind: :install,
+          id: "evidence-#{id}",
+          packet_ref: "jido://v2/review_packet/install/#{id}",
+          subject: subject,
+          metadata: %{phase: 7}
+        }
+      ],
+      metadata: %{phase: 7}
+    }
+  end
+
+  defmodule AccessGraphRecorder do
+    @moduledoc false
+
+    def revoke_subject_edges(tenant_ref, subject_ref, revoking_authority_ref, opts) do
+      opts
+      |> Keyword.fetch!(:access_graph_test_pid)
+      |> send(
+        {:access_graph_revoke_subject_edges, tenant_ref, subject_ref, revoking_authority_ref,
+         opts}
+      )
+
+      {:ok, %{epoch: 2, revoked_edges: []}}
+    end
   end
 
   def handle_telemetry_event(event, measurements, metadata, pid) do

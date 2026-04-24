@@ -72,6 +72,91 @@ defmodule MezzanineConfigRegistryTest do
     assert updated_installation.compiled_pack_revision == 2
   end
 
+  test "installation activation writes access graph scope, resource, and policy edges" do
+    registration = register_fixture_pack!()
+    authority_ref = governance_ref("installation-activation")
+
+    assert {:ok, %Installation{} = installation} =
+             MezzanineConfigRegistry.create_installation(%{
+               tenant_id: "tenant-graph",
+               environment: "prod",
+               pack_registration_id: registration.id,
+               binding_config: %{
+                 "access_graph" => %{
+                   "user_refs" => ["user-1"],
+                   "scope_refs" => ["scope-1"],
+                   "resource_refs" => ["resource-1"],
+                   "policy_refs" => ["policy-v1"],
+                   "granting_authority_ref" => authority_ref,
+                   "trace_id" => "trace-installation-activation"
+                 }
+               }
+             })
+
+    assert {:ok, %Installation{} = active_installation} =
+             MezzanineConfigRegistry.activate_installation(installation,
+               access_graph_store: __MODULE__.AccessGraphRecorder,
+               access_graph_test_pid: self(),
+               source_node_ref: @node_ref,
+               commit_hlc: @commit_hlc
+             )
+
+    assert active_installation.status == :active
+
+    assert_receive {:access_graph_insert_edges, "tenant-graph", edges, opts}
+    assert Keyword.fetch!(opts, :cause) == "installation_activation"
+    assert Keyword.fetch!(opts, :source_node_ref) == @node_ref
+    assert Keyword.fetch!(opts, :commit_hlc) == @commit_hlc
+    assert Keyword.fetch!(opts, :trace_id) == "trace-installation-activation"
+
+    assert MapSet.new(Enum.map(edges, &{&1.edge_type, &1.head_ref, &1.tail_ref})) ==
+             MapSet.new([
+               {:us, "user-1", "scope-1"},
+               {:sr, "scope-1", "resource-1"},
+               {:up, "user-1", "policy-v1"}
+             ])
+
+    assert Enum.all?(edges, &(&1.granting_authority_ref == stringify_keys(authority_ref)))
+  end
+
+  test "binding updates advance the access graph epoch for policy compilation changes" do
+    registration = register_fixture_pack!()
+
+    assert {:ok, %Installation{} = installation} =
+             MezzanineConfigRegistry.create_installation(%{
+               tenant_id: "tenant-policy-ship",
+               environment: "prod",
+               pack_registration_id: registration.id
+             })
+
+    assert {:ok, %Installation{} = active_installation} =
+             MezzanineConfigRegistry.activate_installation(installation)
+
+    assert {:ok, %Installation{} = updated_installation} =
+             MezzanineConfigRegistry.update_bindings(
+               active_installation,
+               %{
+                 "execution_bindings" => %{
+                   "expense_capture" => %{"placement_ref" => "policy-ship-runner"}
+                 }
+               },
+               access_graph_store: __MODULE__.AccessGraphRecorder,
+               access_graph_test_pid: self(),
+               source_node_ref: @node_ref,
+               commit_hlc: @commit_hlc,
+               trace_id: "trace-policy-ship"
+             )
+
+    assert updated_installation.compiled_pack_revision ==
+             active_installation.compiled_pack_revision + 1
+
+    assert_receive {:access_graph_advance_epoch, "tenant-policy-ship", opts}
+    assert Keyword.fetch!(opts, :cause) == "policy_compilation_change"
+    assert Keyword.fetch!(opts, :source_node_ref) == @node_ref
+    assert Keyword.fetch!(opts, :commit_hlc) == @commit_hlc
+    assert Keyword.fetch!(opts, :trace_id) == "trace-policy-ship"
+  end
+
   test "runtime registry serves warm cache hits without a database query" do
     registration = register_fixture_pack!()
 
@@ -397,6 +482,67 @@ defmodule MezzanineConfigRegistryTest do
     case Compiler.compile(manifest) do
       {:ok, %CompiledPack{} = compiled_pack} -> compiled_pack
       {:error, errors} -> raise "failed to compile registry fixture pack: #{inspect(errors)}"
+    end
+  end
+
+  defp governance_ref(id) do
+    subject = %{
+      kind: :install,
+      id: "install-#{id}",
+      metadata: %{phase: 7}
+    }
+
+    %{
+      kind: :policy_decision,
+      id: id,
+      subject: subject,
+      evidence: [
+        %{
+          kind: :install,
+          id: "evidence-#{id}",
+          packet_ref: "jido://v2/review_packet/install/#{id}",
+          subject: subject,
+          metadata: %{phase: 7}
+        }
+      ],
+      metadata: %{phase: 7}
+    }
+  end
+
+  defp stringify_keys(%{} = map) do
+    Map.new(map, fn {key, value} -> {to_string(key), stringify_keys(value)} end)
+  end
+
+  defp stringify_keys(list) when is_list(list), do: Enum.map(list, &stringify_keys/1)
+
+  defp stringify_keys(value) when is_atom(value), do: to_string(value)
+
+  defp stringify_keys(value), do: value
+
+  defmodule AccessGraphRecorder do
+    @moduledoc false
+
+    def insert_edges(tenant_ref, edge_attrs, opts) do
+      opts
+      |> Keyword.fetch!(:access_graph_test_pid)
+      |> send({:access_graph_insert_edges, tenant_ref, edge_attrs, opts})
+
+      {:ok, %{epoch: 1, edges: edge_attrs}}
+    end
+
+    def advance_epoch(tenant_ref, opts) do
+      opts
+      |> Keyword.fetch!(:access_graph_test_pid)
+      |> send({:access_graph_advance_epoch, tenant_ref, opts})
+
+      {:ok,
+       %{
+         tenant_ref: tenant_ref,
+         epoch: 2,
+         source_node_ref: Keyword.fetch!(opts, :source_node_ref),
+         commit_lsn: "16/B374D848",
+         commit_hlc: Keyword.get(opts, :commit_hlc, %{})
+       }}
     end
   end
 

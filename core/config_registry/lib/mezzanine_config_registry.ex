@@ -91,10 +91,12 @@ defmodule MezzanineConfigRegistry do
     end
   end
 
-  @spec activate_installation(Installation.t()) :: {:ok, Installation.t()} | {:error, term()}
-  def activate_installation(%Installation{} = installation) do
+  @spec activate_installation(Installation.t(), keyword()) ::
+          {:ok, Installation.t()} | {:error, term()}
+  def activate_installation(%Installation{} = installation, opts \\ []) do
     with :ok <- LifecycleHintContract.validate(installation),
-         {:ok, updated_installation} <- Installation.activate_installation(installation) do
+         {:ok, updated_installation} <- Installation.activate_installation(installation),
+         :ok <- maybe_write_installation_graph(updated_installation, opts) do
       :ok =
         Registry.reload_installation(
           updated_installation.id,
@@ -136,12 +138,14 @@ defmodule MezzanineConfigRegistry do
     end
   end
 
-  @spec update_bindings(Installation.t(), map()) :: {:ok, Installation.t()} | {:error, term()}
-  def update_bindings(%Installation{} = installation, binding_config)
+  @spec update_bindings(Installation.t(), map(), keyword()) ::
+          {:ok, Installation.t()} | {:error, term()}
+  def update_bindings(%Installation{} = installation, binding_config, opts \\ [])
       when is_map(binding_config) do
     with :ok <- LifecycleHintContract.validate(installation, binding_config),
          {:ok, updated_installation} <-
-           Installation.update_bindings(installation, %{binding_config: binding_config}) do
+           Installation.update_bindings(installation, %{binding_config: binding_config}),
+         :ok <- maybe_advance_policy_epoch(updated_installation, opts) do
       :ok =
         Registry.reload_installation(
           updated_installation.id,
@@ -303,6 +307,190 @@ defmodule MezzanineConfigRegistry do
     installation
     |> Installation.activate_installation(return_notifications?: true)
     |> action_result_with_notifications()
+  end
+
+  defp maybe_write_installation_graph(%Installation{} = installation, opts) do
+    installation
+    |> installation_graph_edges(opts)
+    |> write_installation_graph(installation, opts, access_graph_store(opts))
+  end
+
+  defp write_installation_graph(_edges, _installation, _opts, nil), do: :ok
+
+  defp write_installation_graph([], _installation, _opts, _store), do: :ok
+
+  defp write_installation_graph(edges, %Installation{} = installation, opts, store) do
+    case store.insert_edges(
+           installation.tenant_id,
+           edges,
+           access_graph_opts(installation, opts, "installation_activation")
+         ) do
+      {:ok, _result} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp maybe_advance_policy_epoch(%Installation{} = installation, opts) do
+    case access_graph_store(opts) do
+      nil ->
+        :ok
+
+      store ->
+        case store.advance_epoch(
+               installation.tenant_id,
+               access_graph_opts(installation, opts, "policy_compilation_change")
+             ) do
+          {:ok, _result} -> :ok
+          {:error, reason} -> {:error, reason}
+        end
+    end
+  end
+
+  defp access_graph_store(opts) do
+    Keyword.get(opts, :access_graph_store) ||
+      Application.get_env(:mezzanine_config_registry, :access_graph_store)
+  end
+
+  defp installation_graph_edges(%Installation{} = installation, opts) do
+    graph = graph_config(installation.binding_config)
+
+    user_refs = string_list(graph, :user_refs)
+    scope_refs = string_list(graph, :scope_refs)
+    resource_refs = string_list(graph, :resource_refs)
+    policy_refs = string_list(graph, :policy_refs)
+
+    authority_ref =
+      graph_value(graph, :granting_authority_ref) || Keyword.get(opts, :granting_authority_ref)
+
+    evidence_refs = list_value(graph, :evidence_refs)
+
+    metadata = %{
+      "installation_ref" => installation.id,
+      "compiled_pack_revision" => installation.compiled_pack_revision
+    }
+
+    us_edges =
+      for user_ref <- user_refs,
+          scope_ref <- scope_refs,
+          do:
+            graph_edge(
+              :us,
+              user_ref,
+              scope_ref,
+              authority_ref,
+              evidence_refs,
+              policy_refs,
+              metadata
+            )
+
+    sr_edges =
+      for scope_ref <- scope_refs,
+          resource_ref <- resource_refs,
+          do:
+            graph_edge(
+              :sr,
+              scope_ref,
+              resource_ref,
+              authority_ref,
+              evidence_refs,
+              policy_refs,
+              metadata
+            )
+
+    up_edges =
+      for user_ref <- user_refs,
+          policy_ref <- policy_refs,
+          do:
+            graph_edge(
+              :up,
+              user_ref,
+              policy_ref,
+              authority_ref,
+              evidence_refs,
+              policy_refs,
+              metadata
+            )
+
+    us_edges ++ sr_edges ++ up_edges
+  end
+
+  defp graph_edge(
+         edge_type,
+         head_ref,
+         tail_ref,
+         authority_ref,
+         evidence_refs,
+         policy_refs,
+         metadata
+       ) do
+    %{
+      edge_type: edge_type,
+      head_ref: head_ref,
+      tail_ref: tail_ref,
+      granting_authority_ref: authority_ref,
+      evidence_refs: evidence_refs,
+      policy_refs: policy_refs,
+      metadata: metadata
+    }
+  end
+
+  defp access_graph_opts(%Installation{} = installation, opts, cause) do
+    graph = graph_config(installation.binding_config)
+
+    [
+      cause: cause,
+      trace_id:
+        Keyword.get(opts, :trace_id) ||
+          graph_value(graph, :trace_id) ||
+          "#{cause}:#{installation.id}:#{installation.compiled_pack_revision}",
+      source_node_ref:
+        Keyword.get(opts, :source_node_ref) || graph_value(graph, :source_node_ref),
+      commit_hlc: Keyword.get(opts, :commit_hlc),
+      metadata: %{
+        "installation_ref" => installation.id,
+        "compiled_pack_revision" => installation.compiled_pack_revision
+      }
+    ]
+    |> maybe_put_test_pid(opts)
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+  end
+
+  defp maybe_put_test_pid(graph_opts, opts) do
+    case Keyword.get(opts, :access_graph_test_pid) do
+      nil -> graph_opts
+      pid -> Keyword.put(graph_opts, :access_graph_test_pid, pid)
+    end
+  end
+
+  defp graph_config(config) when is_map(config) do
+    case Map.get(config, "access_graph") || Map.get(config, :access_graph) do
+      graph when is_map(graph) -> graph
+      _other -> %{}
+    end
+  end
+
+  defp graph_config(_config), do: %{}
+
+  defp string_list(map, key) do
+    map
+    |> graph_value(key)
+    |> list_value()
+    |> Enum.flat_map(fn
+      value when is_binary(value) and value != "" -> [value]
+      value when is_atom(value) -> [Atom.to_string(value)]
+      _other -> []
+    end)
+    |> Enum.uniq()
+  end
+
+  defp list_value(map, key), do: map |> graph_value(key) |> list_value()
+
+  defp list_value(nil), do: []
+  defp list_value(values) when is_list(values), do: values
+  defp list_value(value), do: [value]
+
+  defp graph_value(map, key) when is_map(map) do
+    Map.get(map, key) || Map.get(map, Atom.to_string(key))
   end
 
   defp action_result_with_notifications({:ok, record, notifications}),

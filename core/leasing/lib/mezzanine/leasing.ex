@@ -339,8 +339,10 @@ defmodule Mezzanine.Leasing do
            insert_or_rollback_invalidations(repo, filters, trace_id, reason, timestamp)
          end) do
       {:ok, rows} ->
-        Enum.each(rows, &emit_lease_invalidated/1)
-        {:ok, rows}
+        with :ok <- maybe_revoke_access_graph_edges(rows, opts) do
+          Enum.each(rows, &emit_lease_invalidated/1)
+          {:ok, rows}
+        end
 
       {:error, reason} ->
         {:error, reason}
@@ -453,6 +455,97 @@ defmodule Mezzanine.Leasing do
       {:stream_lease_id, lease_id}, query ->
         where(query, [lease], lease.lease_id == ^lease_id)
     end)
+  end
+
+  defp maybe_revoke_access_graph_edges([], _opts), do: :ok
+
+  defp maybe_revoke_access_graph_edges(rows, opts) do
+    rows
+    |> access_graph_revocation_groups()
+    |> revoke_access_graph_groups(rows, opts, access_graph_store(opts))
+  end
+
+  defp revoke_access_graph_groups(_groups, _rows, _opts, nil), do: :ok
+  defp revoke_access_graph_groups([], _rows, _opts, _store), do: :ok
+
+  defp revoke_access_graph_groups(groups, rows, opts, store) do
+    revoking_authority_ref =
+      Keyword.get(opts, :revoking_authority_ref) || default_revoking_authority_ref(rows)
+
+    Enum.reduce_while(groups, :ok, fn {{tenant_id, subject_id}, grouped_rows}, :ok ->
+      case store.revoke_subject_edges(
+             tenant_id,
+             subject_id,
+             revoking_authority_ref,
+             access_graph_revoke_opts(grouped_rows, opts)
+           ) do
+        {:ok, _result} -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp access_graph_revocation_groups(rows) do
+    rows
+    |> Enum.reject(&is_nil(&1.subject_id))
+    |> Enum.group_by(&{&1.tenant_id, &1.subject_id})
+    |> Map.to_list()
+  end
+
+  defp access_graph_store(opts) do
+    Keyword.get(opts, :access_graph_store) ||
+      Application.get_env(:mezzanine_leasing, :access_graph_store)
+  end
+
+  defp access_graph_revoke_opts(rows, opts) do
+    first = List.first(rows)
+
+    [
+      cause: "lease_revoked",
+      trace_id: Keyword.get(opts, :trace_id) || first.trace_id,
+      source_node_ref: Keyword.get(opts, :source_node_ref),
+      commit_hlc: Keyword.get(opts, :commit_hlc),
+      metadata: %{
+        "lease_revocations" =>
+          rows
+          |> Enum.sort_by(& &1.sequence_number)
+          |> Enum.map(&lease_revocation_metadata/1)
+      }
+    ]
+    |> maybe_put_test_pid(opts)
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+  end
+
+  defp maybe_put_test_pid(graph_opts, opts) do
+    case Keyword.get(opts, :access_graph_test_pid) do
+      nil -> graph_opts
+      pid -> Keyword.put(graph_opts, :access_graph_test_pid, pid)
+    end
+  end
+
+  defp lease_revocation_metadata(%LeaseInvalidation{} = invalidation) do
+    %{
+      "lease_kind" => invalidation.lease_kind,
+      "reason" => invalidation.reason,
+      "revocation_ref" => invalidation.revocation_ref
+    }
+  end
+
+  defp default_revoking_authority_ref([%LeaseInvalidation{} = invalidation | _rows]) do
+    %{
+      kind: :policy_decision,
+      id: invalidation.revocation_ref,
+      subject: %{
+        kind: :install,
+        id: invalidation.installation_id,
+        metadata: %{tenant_id: invalidation.tenant_id}
+      },
+      evidence: [],
+      metadata: %{
+        reason: invalidation.reason,
+        trace_id: invalidation.trace_id
+      }
+    }
   end
 
   defp fetch_invalidations_after(target, cursor, opts) do
