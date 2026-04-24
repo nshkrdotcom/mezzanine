@@ -63,6 +63,29 @@ defmodule Mezzanine.Audit.MemoryProofTokenTest do
     assert :ok = MemoryProofToken.verify_hash(token)
   end
 
+  test "recall proofs accept snapshot_epoch as the bound epoch and reject mismatches" do
+    assert {:ok, token} =
+             valid_attrs(%{
+               proof_id: "proof-recall-snapshot-alias",
+               kind: :recall,
+               proof_hash_version: "m7a.v1"
+             })
+             |> Map.delete(:epoch_used)
+             |> Map.put(:snapshot_epoch, 42)
+             |> MemoryProofToken.new()
+
+    assert token.epoch_used == 42
+
+    assert {:error, {:snapshot_epoch_mismatch, %{epoch_used: 42, snapshot_epoch: 43}}} =
+             valid_attrs(%{
+               proof_id: "proof-recall-snapshot-mismatch",
+               kind: :recall,
+               proof_hash_version: "m7a.v1",
+               snapshot_epoch: 43
+             })
+             |> MemoryProofToken.new()
+  end
+
   test "uses AITrace process context when trace_id is omitted" do
     Process.put(:aitrace_context, %{trace_id: "trace-from-aitrace"})
     on_exit(fn -> Process.delete(:aitrace_context) end)

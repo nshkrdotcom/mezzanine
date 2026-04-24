@@ -142,6 +142,7 @@ defmodule Mezzanine.Audit.MemoryProofToken do
           | {:error, {:invalid_proof_token_kind, term()}}
           | {:error, {:missing_proof_token_fields, [atom()]}}
           | {:error, {:proof_hash_mismatch, map()}}
+          | {:error, {:snapshot_epoch_mismatch, map()}}
           | {:error, {:version_field_mismatch, String.t(), [atom()]}}
   def new(attrs) when is_map(attrs) do
     with {:ok, normalized_attrs} <- normalize(attrs),
@@ -171,6 +172,9 @@ defmodule Mezzanine.Audit.MemoryProofToken do
 
       {:error, {:proof_hash_mismatch, details}} ->
         raise ArgumentError, "proof token proof_hash mismatch: #{inspect(details)}"
+
+      {:error, {:snapshot_epoch_mismatch, details}} ->
+        raise ArgumentError, "proof token snapshot_epoch mismatch: #{inspect(details)}"
 
       {:error, {:version_field_mismatch, version, fields}} ->
         raise ArgumentError,
@@ -222,7 +226,8 @@ defmodule Mezzanine.Audit.MemoryProofToken do
       end
 
     with {:ok, kind} <- normalize_kind(fetch(source, :kind)),
-         {:ok, proof_hash_version} <- normalize_hash_version(fetch(source, :proof_hash_version)) do
+         {:ok, proof_hash_version} <- normalize_hash_version(fetch(source, :proof_hash_version)),
+         {:ok, epoch_used} <- normalize_epoch_used(source) do
       {:ok,
        %{
          proof_hash_version: proof_hash_version,
@@ -235,7 +240,7 @@ defmodule Mezzanine.Audit.MemoryProofToken do
          user_ref: normalize_string(fetch(source, :user_ref)),
          agent_ref: normalize_string(fetch(source, :agent_ref)),
          t_event: normalize_datetime(fetch(source, :t_event)),
-         epoch_used: normalize_integer(fetch(source, :epoch_used)),
+         epoch_used: epoch_used,
          policy_refs: normalize_policy_refs(fetch(source, :policy_refs)),
          fragment_ids: normalize_string_list(fetch(source, :fragment_ids)),
          transform_hashes: normalize_string_list(fetch(source, :transform_hashes)),
@@ -408,6 +413,29 @@ defmodule Mezzanine.Audit.MemoryProofToken do
   end
 
   defp normalize_integer(_value), do: nil
+
+  defp normalize_epoch_used(source) do
+    epoch_used = source |> fetch(:epoch_used) |> normalize_integer()
+    snapshot_epoch = source |> fetch(:snapshot_epoch) |> normalize_integer()
+
+    case {epoch_used, snapshot_epoch} do
+      {nil, nil} ->
+        {:ok, nil}
+
+      {nil, snapshot_epoch} ->
+        {:ok, snapshot_epoch}
+
+      {epoch_used, nil} ->
+        {:ok, epoch_used}
+
+      {same_epoch, same_epoch} ->
+        {:ok, same_epoch}
+
+      {epoch_used, snapshot_epoch} ->
+        {:error,
+         {:snapshot_epoch_mismatch, %{epoch_used: epoch_used, snapshot_epoch: snapshot_epoch}}}
+    end
+  end
 
   defp normalize_string(value) when is_binary(value) do
     value

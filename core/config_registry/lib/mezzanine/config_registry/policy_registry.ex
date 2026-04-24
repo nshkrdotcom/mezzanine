@@ -44,6 +44,19 @@ defmodule Mezzanine.ConfigRegistry.PolicyRegistry do
     end
   end
 
+  @spec resolve_for_snapshot(atom() | String.t(), map(), term(), keyword()) ::
+          {:ok, Policy.t()}
+          | {:error,
+             :not_found | {:invalid_snapshot_epoch, term()} | {:snapshot_epoch_mismatch, map()}}
+  def resolve_for_snapshot(kind, context, snapshot_epoch, opts \\ [])
+      when is_map(context) and is_list(opts) do
+    with {:ok, snapshot_epoch} <- normalize_snapshot_epoch(snapshot_epoch),
+         {:ok, context} <- bind_snapshot_context(context, snapshot_epoch),
+         {:ok, opts} <- bind_snapshot_opts(opts, snapshot_epoch) do
+      resolve(kind, context, opts)
+    end
+  end
+
   defp policy_attrs(policy_contract, opts) do
     %{
       policy_id: policy_contract.policy_id,
@@ -242,6 +255,38 @@ defmodule Mezzanine.ConfigRegistry.PolicyRegistry do
 
   defp normalize_policy(%Policy{} = policy) do
     %{policy | spec: PolicyContracts.normalize_spec(policy.spec)}
+  end
+
+  defp normalize_snapshot_epoch(value) when is_integer(value) and value > 0, do: {:ok, value}
+
+  defp normalize_snapshot_epoch(value) do
+    {:error, {:invalid_snapshot_epoch, value}}
+  end
+
+  defp bind_snapshot_context(context, snapshot_epoch) do
+    case fetch_context(context, :snapshot_epoch) do
+      nil ->
+        {:ok, Map.put(context, :snapshot_epoch, snapshot_epoch)}
+
+      ^snapshot_epoch ->
+        {:ok, Map.put(context, :snapshot_epoch, snapshot_epoch)}
+
+      context_epoch ->
+        {:error, {:snapshot_epoch_mismatch, %{bound: snapshot_epoch, context: context_epoch}}}
+    end
+  end
+
+  defp bind_snapshot_opts(opts, snapshot_epoch) do
+    case Keyword.fetch(opts, :snapshot_epoch) do
+      {:ok, ^snapshot_epoch} ->
+        {:ok, opts}
+
+      {:ok, other_epoch} ->
+        {:error, {:snapshot_epoch_mismatch, %{bound: snapshot_epoch, opts: other_epoch}}}
+
+      :error ->
+        {:ok, Keyword.put(opts, :snapshot_epoch, snapshot_epoch)}
+    end
   end
 
   defp normalize_kind!(kind) do

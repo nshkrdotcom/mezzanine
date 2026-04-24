@@ -78,6 +78,32 @@ defmodule Mezzanine.ConfigRegistry.PolicyRegistryTest do
              )
   end
 
+  test "snapshot-bound resolution carries one recall epoch through policy lookup" do
+    assert {:ok, %Policy{}} =
+             read_policy("read-snapshot-bound", :tenant)
+             |> register_policy(tenant_ref: "tenant-a")
+
+    snapshot_context = %{tenant_ref: "tenant-a", snapshot_epoch: 42}
+
+    assert {:ok, %Policy{} = resolved} =
+             PolicyRegistry.resolve_for_snapshot(:read, snapshot_context, 42,
+               at: ~U[2026-04-23 12:00:00Z]
+             )
+
+    assert resolved.policy_id == "read-snapshot-bound"
+
+    assert {:error, {:snapshot_epoch_mismatch, %{bound: 42, context: 41}}} =
+             PolicyRegistry.resolve_for_snapshot(
+               :read,
+               %{tenant_ref: "tenant-a", snapshot_epoch: 41},
+               42,
+               at: ~U[2026-04-23 12:00:00Z]
+             )
+
+    assert {:error, {:invalid_snapshot_epoch, 0}} =
+             PolicyRegistry.resolve_for_snapshot(:read, %{tenant_ref: "tenant-a"}, 0)
+  end
+
   test "rejects conflicting active policy versions at the same scope" do
     assert {:ok, %Policy{}} =
              read_policy("read-conflict", :tenant)

@@ -72,6 +72,15 @@ defmodule MezzanineConfigRegistry do
     PolicyRegistry.resolve(kind, context, opts)
   end
 
+  @spec resolve_policy_for_snapshot(atom() | String.t(), map(), term(), keyword()) ::
+          {:ok, Policy.t()}
+          | {:error,
+             :not_found | {:invalid_snapshot_epoch, term()} | {:snapshot_epoch_mismatch, map()}}
+  def resolve_policy_for_snapshot(kind, context, snapshot_epoch, opts \\ [])
+      when is_map(context) do
+    PolicyRegistry.resolve_for_snapshot(kind, context, snapshot_epoch, opts)
+  end
+
   @spec create_installation(map()) :: {:ok, Installation.t()} | {:error, term()}
   def create_installation(attrs) when is_map(attrs) do
     with {:ok, %PackRegistration{} = registration} <-
