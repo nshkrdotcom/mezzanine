@@ -1,12 +1,20 @@
 defmodule Mezzanine.ConfigRegistry.PolicyRegistryTest do
   use Mezzanine.ConfigRegistry.DataCase, async: false
 
-  alias Mezzanine.ConfigRegistry.{Policy, PolicyRegistry, ReadPolicy, TransformPolicy}
+  alias Mezzanine.ConfigRegistry.{
+    ClusterInvalidation,
+    Policy,
+    PolicyRegistry,
+    ReadPolicy,
+    TransformPolicy
+  }
 
   @effective_from ~U[2026-04-23 00:00:00Z]
   @effective_until ~U[2026-04-24 00:00:00Z]
 
   test "registers versioned policies and resolves by granularity precedence" do
+    telemetry_id = attach_invalidation_telemetry()
+
     assert {:ok, %Policy{} = global} =
              read_policy("read-global", :global)
              |> register_policy()
@@ -34,6 +42,25 @@ defmodule Mezzanine.ConfigRegistry.PolicyRegistryTest do
 
     assert resolved.policy_id == installation.policy_id
     assert resolved.granularity_scope == :installation
+
+    assert_receive {:cluster_invalidation, %{message: message}}
+    assert message.topic =~ "memory.policy."
+    assert message.source_node_ref == "node://mez_1@127.0.0.1/node-a"
+    assert is_binary(message.commit_lsn)
+    assert message.commit_hlc == commit_hlc()
+
+    expected_topic =
+      ClusterInvalidation.policy_topic!(
+        tenant_ref: "tenant-a",
+        installation_ref: "installation-a",
+        kind: :read,
+        policy_id: "read-installation",
+        version: 1
+      )
+
+    assert_receive {:cluster_invalidation, %{message: %{topic: ^expected_topic}}}
+
+    :telemetry.detach(telemetry_id)
   end
 
   test "expired policies do not resolve" do
@@ -64,6 +91,55 @@ defmodule Mezzanine.ConfigRegistry.PolicyRegistryTest do
     assert details.granularity_scope == :tenant
   end
 
+  test "rejects policy registration without invalidation evidence before write" do
+    assert {:error, %ArgumentError{} = error} =
+             read_policy("read-no-evidence", :tenant)
+             |> PolicyRegistry.register(
+               tenant_ref: "tenant-a",
+               effective_from: @effective_from,
+               effective_until: @effective_until
+             )
+
+    assert error.message =~ "cluster_invalidation.source_node_ref"
+
+    assert {:error, :not_found} =
+             PolicyRegistry.resolve(:read, %{tenant_ref: "tenant-a"},
+               at: ~U[2026-04-23 12:00:00Z]
+             )
+  end
+
+  test "rolls back policy registration when invalidation publish fails" do
+    previous_publisher =
+      Application.get_env(:mezzanine_config_registry, :cluster_invalidation_publisher)
+
+    Application.put_env(
+      :mezzanine_config_registry,
+      :cluster_invalidation_publisher,
+      {__MODULE__, :reject_invalidation}
+    )
+
+    on_exit(fn ->
+      if is_nil(previous_publisher) do
+        Application.delete_env(:mezzanine_config_registry, :cluster_invalidation_publisher)
+      else
+        Application.put_env(
+          :mezzanine_config_registry,
+          :cluster_invalidation_publisher,
+          previous_publisher
+        )
+      end
+    end)
+
+    assert {:error, :publish_failed} =
+             read_policy("read-publish-fails", :tenant)
+             |> register_policy(tenant_ref: "tenant-a")
+
+    assert {:error, :not_found} =
+             PolicyRegistry.resolve(:read, %{tenant_ref: "tenant-a"},
+               at: ~U[2026-04-23 12:00:00Z]
+             )
+  end
+
   test "stores transform specs with deterministic and stochastic provenance" do
     assert {:ok, %TransformPolicy{} = deterministic} =
              TransformPolicy.new(%{
@@ -81,7 +157,9 @@ defmodule Mezzanine.ConfigRegistry.PolicyRegistryTest do
              PolicyRegistry.register(deterministic,
                tenant_ref: "tenant-a",
                effective_from: @effective_from,
-               effective_until: @effective_until
+               effective_until: @effective_until,
+               source_node_ref: "node://mez_1@127.0.0.1/node-a",
+               commit_hlc: commit_hlc()
              )
 
     assert record.kind == :transform
@@ -111,9 +189,38 @@ defmodule Mezzanine.ConfigRegistry.PolicyRegistryTest do
   defp register_policy(policy, opts \\ []) do
     defaults = [
       effective_from: @effective_from,
-      effective_until: @effective_until
+      effective_until: @effective_until,
+      source_node_ref: "node://mez_1@127.0.0.1/node-a",
+      commit_hlc: commit_hlc()
     ]
 
     PolicyRegistry.register(policy, Keyword.merge(defaults, opts))
   end
+
+  defp attach_invalidation_telemetry do
+    handler_id = {__MODULE__, self(), make_ref()}
+
+    :telemetry.attach(
+      handler_id,
+      [:mezzanine, :cluster_invalidation, :publish],
+      fn _event, _measurements, metadata, _config ->
+        send(self(), {:cluster_invalidation, metadata})
+      end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    handler_id
+  end
+
+  defp commit_hlc do
+    %{
+      "w" => 1_776_947_200_000_000_000,
+      "l" => 0,
+      "n" => "node://mez_1@127.0.0.1/node-a"
+    }
+  end
+
+  def reject_invalidation(_message), do: {:error, :publish_failed}
 end

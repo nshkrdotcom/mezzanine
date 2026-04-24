@@ -4,7 +4,7 @@ defmodule Mezzanine.ConfigRegistry.PolicyRegistry do
   """
 
   alias Mezzanine.ConfigRegistry
-  alias Mezzanine.ConfigRegistry.{Policy, PolicyContracts}
+  alias Mezzanine.ConfigRegistry.{ClusterInvalidation, Policy, PolicyContracts, Repo}
 
   @type register_opt ::
           {:tenant_ref, String.t()}
@@ -13,14 +13,18 @@ defmodule Mezzanine.ConfigRegistry.PolicyRegistry do
           | {:effective_until, DateTime.t() | nil}
           | {:authoring_bundle_ref, map()}
           | {:trusted_registry_ref, map()}
+          | {:source_node_ref, String.t()}
+          | {:commit_hlc, map()}
 
   @spec register(struct(), [register_opt()]) :: {:ok, Policy.t()} | {:error, term()}
   def register(policy_contract, opts \\ []) when is_struct(policy_contract) and is_list(opts) do
     attrs = policy_attrs(policy_contract, opts)
 
-    with :ok <- reject_conflict(attrs),
-         {:ok, %Policy{} = policy} <- Policy.register(attrs) do
-      {:ok, normalize_policy(policy)}
+    with :ok <- validate_invalidation_evidence(opts),
+         :ok <- reject_conflict(attrs),
+         {:ok, {policy, notifications}} <- register_with_invalidation(attrs, opts) do
+      :ok = notify_policy_register(notifications)
+      {:ok, policy}
     end
   end
 
@@ -55,6 +59,88 @@ defmodule Mezzanine.ConfigRegistry.PolicyRegistry do
       authoring_bundle_ref: opts[:authoring_bundle_ref] || %{},
       trusted_registry_ref: opts[:trusted_registry_ref] || %{}
     }
+  end
+
+  defp validate_invalidation_evidence(opts) do
+    preflight_attrs = %{
+      invalidation_id: "policy-invalidation://preflight",
+      tenant_ref: "tenant://preflight",
+      topic: "memory.policy.preflight",
+      source_node_ref: Keyword.get(opts, :source_node_ref),
+      commit_lsn: Keyword.get(opts, :commit_lsn, "preflight"),
+      commit_hlc: Keyword.get(opts, :commit_hlc),
+      published_at: DateTime.utc_now() |> DateTime.truncate(:microsecond),
+      metadata: %{}
+    }
+
+    case ClusterInvalidation.new(preflight_attrs) do
+      {:ok, _message} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp register_with_invalidation(attrs, opts) do
+    Repo.transaction(fn ->
+      with {:ok, %Policy{} = policy, notifications} <-
+             Policy.register(attrs, return_notifications?: true),
+           :ok <- publish_policy_invalidation(policy, opts) do
+        {normalize_policy(policy), notifications}
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+  end
+
+  defp notify_policy_register(notifications) do
+    notifications
+    |> List.wrap()
+    |> case do
+      [] ->
+        :ok
+
+      notifications ->
+        Ash.Notifier.notify(notifications)
+        :ok
+    end
+  end
+
+  defp publish_policy_invalidation(%Policy{} = policy, opts) do
+    source_node_ref = Keyword.get(opts, :source_node_ref)
+    commit_hlc = Keyword.get(opts, :commit_hlc)
+
+    message_attrs = %{
+      invalidation_id: "policy-invalidation://#{policy.id}/#{policy.version}",
+      tenant_ref: policy.tenant_ref || "tenant://global",
+      topic:
+        ClusterInvalidation.policy_topic!(
+          tenant_ref: policy.tenant_ref,
+          installation_ref: policy.installation_ref,
+          kind: policy.kind,
+          policy_id: policy.policy_id,
+          version: policy.version
+        ),
+      source_node_ref: source_node_ref,
+      commit_lsn: Keyword.get(opts, :commit_lsn) || current_wal_lsn!(),
+      commit_hlc: commit_hlc,
+      published_at: DateTime.utc_now() |> DateTime.truncate(:microsecond),
+      metadata: %{
+        "policy_id" => policy.policy_id,
+        "kind" => Atom.to_string(policy.kind),
+        "version" => policy.version,
+        "granularity_scope" => Atom.to_string(policy.granularity_scope),
+        "installation_ref" => policy.installation_ref
+      }
+    }
+
+    case ClusterInvalidation.new(message_attrs) do
+      {:ok, message} -> ClusterInvalidation.publish(message)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp current_wal_lsn! do
+    %{rows: [[commit_lsn]]} = Repo.query!("SELECT pg_current_wal_lsn()::text", [])
+    commit_lsn
   end
 
   defp reject_conflict(attrs) do
