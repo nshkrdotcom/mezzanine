@@ -27,6 +27,8 @@ defmodule MezzanineAuditEngine do
       Mezzanine.Audit.ExecutionLineageStore,
       Mezzanine.Audit.MemoryProofTokenRecord,
       Mezzanine.Audit.MemoryProofTokenStore,
+      Mezzanine.Audit.TemporalQueueReverseLookupRecord,
+      Mezzanine.Audit.TemporalQueueRouting,
       Mezzanine.Audit.WorkAudit
     ]
   end
