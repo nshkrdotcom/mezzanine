@@ -70,7 +70,8 @@ defmodule MezzanineConfigRegistry.MixProject do
       {:ecto_sql, "~> 3.13"},
       {:postgrex, ">= 0.0.0"},
       {:jason, "~> 1.4"},
-      {:telemetry, "~> 1.4"},
+      {:phoenix_pubsub, "~> 2.2"},
+      {:telemetry, "~> 1.3"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.40.1", only: :dev, runtime: false}

@@ -1,5 +1,5 @@
 defmodule Mezzanine.ConfigRegistry.ClusterInvalidationTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Mezzanine.ConfigRegistry.ClusterInvalidation
 
@@ -101,5 +101,54 @@ defmodule Mezzanine.ConfigRegistry.ClusterInvalidationTest do
 
     assert published.topic == message.topic
     assert published.invalidation_id == "invalidation://policy/read-default"
+  end
+
+  test "configured Phoenix PubSub publisher broadcasts the normalized invalidation message" do
+    pubsub = Module.concat(__MODULE__, PubSub)
+    start_supervised!({Phoenix.PubSub, name: pubsub})
+
+    previous_publisher =
+      Application.get_env(:mezzanine_config_registry, :cluster_invalidation_publisher)
+
+    Application.put_env(
+      :mezzanine_config_registry,
+      :cluster_invalidation_publisher,
+      {:phoenix_pubsub, pubsub}
+    )
+
+    on_exit(fn ->
+      if is_nil(previous_publisher) do
+        Application.delete_env(:mezzanine_config_registry, :cluster_invalidation_publisher)
+      else
+        Application.put_env(
+          :mezzanine_config_registry,
+          :cluster_invalidation_publisher,
+          previous_publisher
+        )
+      end
+    end)
+
+    message =
+      ClusterInvalidation.new!(%{
+        invalidation_id: "invalidation://policy/read-default",
+        tenant_ref: "tenant://alpha",
+        topic:
+          ClusterInvalidation.policy_topic!(
+            tenant_ref: "tenant://alpha",
+            installation_ref: "installation://app-a",
+            kind: :read,
+            policy_id: "policy://read/default",
+            version: 1
+          ),
+        source_node_ref: @node_ref,
+        commit_lsn: "16/B374D848",
+        commit_hlc: @commit_hlc,
+        published_at: ~U[2026-04-23 12:00:00Z]
+      })
+
+    :ok = Phoenix.PubSub.subscribe(pubsub, message.topic)
+    assert :ok = ClusterInvalidation.publish(message)
+
+    assert_receive {:cluster_invalidation, ^message}
   end
 end

@@ -138,6 +138,9 @@ defmodule Mezzanine.ConfigRegistry.ClusterInvalidation do
       nil ->
         telemetry_publish(message)
 
+      {:phoenix_pubsub, pubsub_name} ->
+        phoenix_pubsub_publish(pubsub_name, message)
+
       {module, function} when is_atom(module) and is_atom(function) ->
         apply(module, function, [message])
 
@@ -147,6 +150,17 @@ defmodule Mezzanine.ConfigRegistry.ClusterInvalidation do
 
       module when is_atom(module) ->
         module.publish(message)
+    end
+  end
+
+  defp phoenix_pubsub_publish(pubsub_name, %__MODULE__{} = message) do
+    with :ok <-
+           Phoenix.PubSub.broadcast(
+             pubsub_name,
+             message.topic,
+             {:cluster_invalidation, message}
+           ) do
+      telemetry_publish(message)
     end
   end
 
