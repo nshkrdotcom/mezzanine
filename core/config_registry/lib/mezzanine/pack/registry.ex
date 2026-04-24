@@ -5,10 +5,12 @@ defmodule Mezzanine.Pack.Registry do
 
   use GenServer
 
-  alias Mezzanine.ConfigRegistry.Installation
+  alias Mezzanine.ConfigRegistry.{ClusterInvalidation, Installation}
   alias Mezzanine.Pack.Serializer
 
   @table :mezzanine_pack_registry
+  @cluster_invalidation_publish_event [:mezzanine, :cluster_invalidation, :publish]
+  @cluster_invalidation_handler_id {__MODULE__, :cluster_invalidation_publish}
 
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
@@ -60,12 +62,16 @@ defmodule Mezzanine.Pack.Registry do
 
   @impl true
   def init(_opts) do
+    Process.flag(:trap_exit, true)
+
     table =
       case :ets.whereis(@table) do
         :undefined -> :ets.new(@table, [:named_table, :protected, :set, read_concurrency: true])
         table -> table
       end
 
+    :ok = attach_cluster_invalidation_handler()
+    :ok = maybe_subscribe_cache_fanout()
     :ok = load_all_active_installations(table)
     {:ok, %{table: table}}
   end
@@ -78,6 +84,106 @@ defmodule Mezzanine.Pack.Registry do
   def handle_call({:forget_installation, installation_id}, _from, state) do
     :ets.delete(state.table, {:installation, installation_id})
     {:reply, :ok, state}
+  end
+
+  def handle_call({:cluster_invalidation, %ClusterInvalidation{} = message}, _from, state) do
+    evict_cache_for_invalidation(message, state.table)
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_info({:cluster_invalidation, %ClusterInvalidation{} = message}, state) do
+    evict_cache_for_invalidation(message, state.table)
+    {:noreply, state}
+  end
+
+  @impl true
+  def terminate(_reason, _state) do
+    detach_cluster_invalidation_handler()
+  end
+
+  @doc false
+  def handle_cluster_invalidation_publish(
+        _event,
+        _measurements,
+        %{message: %ClusterInvalidation{} = message},
+        registry
+      )
+      when is_pid(registry) do
+    evict_cache_from_publisher(registry, message)
+    :ok
+  end
+
+  def handle_cluster_invalidation_publish(_event, _measurements, _metadata, _registry), do: :ok
+
+  defp evict_cache_from_publisher(registry, %ClusterInvalidation{} = message) do
+    cond do
+      registry == self() ->
+        send(registry, {:cluster_invalidation, message})
+        :ok
+
+      Process.alive?(registry) ->
+        try do
+          GenServer.call(registry, {:cluster_invalidation, message})
+        catch
+          :exit, _reason -> :ok
+        end
+
+      true ->
+        :ok
+    end
+  end
+
+  defp attach_cluster_invalidation_handler do
+    :ok = detach_cluster_invalidation_handler()
+
+    :telemetry.attach(
+      @cluster_invalidation_handler_id,
+      @cluster_invalidation_publish_event,
+      &__MODULE__.handle_cluster_invalidation_publish/4,
+      self()
+    )
+  end
+
+  defp detach_cluster_invalidation_handler do
+    case :telemetry.detach(@cluster_invalidation_handler_id) do
+      :ok -> :ok
+      {:error, :not_found} -> :ok
+    end
+  end
+
+  defp maybe_subscribe_cache_fanout do
+    case Application.get_env(:mezzanine_config_registry, :cluster_invalidation_publisher) do
+      {:phoenix_pubsub, pubsub_name} ->
+        Phoenix.PubSub.subscribe(pubsub_name, ClusterInvalidation.cache_fanout_topic())
+
+      _other ->
+        :ok
+    end
+  end
+
+  defp evict_cache_for_invalidation(
+         %ClusterInvalidation{topic: "memory.policy." <> _rest, metadata: metadata},
+         table
+       ) do
+    case invalidated_installation_ref(metadata) do
+      {:installation, installation_ref} -> :ets.delete(table, {:installation, installation_ref})
+      :all -> :ets.delete_all_objects(table)
+    end
+
+    :ok
+  end
+
+  defp evict_cache_for_invalidation(%ClusterInvalidation{}, _table), do: :ok
+
+  defp invalidated_installation_ref(metadata) do
+    case Map.get(metadata, "installation_ref") || Map.get(metadata, :installation_ref) do
+      nil -> :all
+      "" -> :all
+      "installation://global" -> :all
+      installation_ref when is_binary(installation_ref) -> {:installation, installation_ref}
+      _other -> :all
+    end
   end
 
   defp load_all_active_installations(table) do

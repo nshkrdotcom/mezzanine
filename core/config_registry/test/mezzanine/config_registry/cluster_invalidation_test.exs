@@ -103,7 +103,7 @@ defmodule Mezzanine.ConfigRegistry.ClusterInvalidationTest do
     assert published.invalidation_id == "invalidation://policy/read-default"
   end
 
-  test "configured Phoenix PubSub publisher broadcasts the normalized invalidation message" do
+  test "configured Phoenix PubSub publisher broadcasts exact and cache fanout topics" do
     pubsub = Module.concat(__MODULE__, PubSub)
     start_supervised!({Phoenix.PubSub, name: pubsub})
 
@@ -147,8 +147,11 @@ defmodule Mezzanine.ConfigRegistry.ClusterInvalidationTest do
       })
 
     :ok = Phoenix.PubSub.subscribe(pubsub, message.topic)
+    :ok = Phoenix.PubSub.subscribe(pubsub, ClusterInvalidation.cache_fanout_topic())
+
     assert :ok = ClusterInvalidation.publish(message)
 
+    assert_receive {:cluster_invalidation, ^message}
     assert_receive {:cluster_invalidation, ^message}
   end
 end

@@ -7,6 +7,7 @@ defmodule Mezzanine.ConfigRegistry.ClusterInvalidation do
   @topic_regex ~r/\A[a-z0-9_-]+(\.[a-z0-9_-]+)*\z/
   @global_tenant_ref "tenant://global"
   @global_installation_ref "installation://global"
+  @cache_fanout_topic "memory.cache_invalidation"
   @telemetry_event [:mezzanine, :cluster_invalidation, :publish]
 
   @enforce_keys [
@@ -90,6 +91,9 @@ defmodule Mezzanine.ConfigRegistry.ClusterInvalidation do
     end
   end
 
+  @spec cache_fanout_topic() :: String.t()
+  def cache_fanout_topic, do: @cache_fanout_topic
+
   @spec hash_segment(String.t()) :: String.t()
   def hash_segment(ref) do
     ref
@@ -158,6 +162,12 @@ defmodule Mezzanine.ConfigRegistry.ClusterInvalidation do
            Phoenix.PubSub.broadcast(
              pubsub_name,
              message.topic,
+             {:cluster_invalidation, message}
+           ),
+         :ok <-
+           Phoenix.PubSub.broadcast(
+             pubsub_name,
+             @cache_fanout_topic,
              {:cluster_invalidation, message}
            ) do
       telemetry_publish(message)

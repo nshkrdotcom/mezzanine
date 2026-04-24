@@ -2,7 +2,7 @@ defmodule MezzanineConfigRegistryTest do
   use Mezzanine.ConfigRegistry.DataCase, async: false
 
   alias Ash.Error.Invalid
-  alias Mezzanine.ConfigRegistry.{Installation, PackRegistration}
+  alias Mezzanine.ConfigRegistry.{ClusterInvalidation, Installation, PackRegistration}
   alias Mezzanine.Execution.Repo, as: ExecutionRepo
   alias Mezzanine.LeaseInvalidation
   alias Mezzanine.Leasing
@@ -20,6 +20,9 @@ defmodule MezzanineConfigRegistryTest do
   }
 
   alias Mezzanine.Pack.Registry
+
+  @node_ref "node://mez_1@127.0.0.1/node-a"
+  @commit_hlc %{"w" => 1_776_947_200_000_000_000, "l" => 0, "n" => @node_ref}
 
   test "register_pack persists compiled payload and canonical subject kinds" do
     compiled = fixture_pack()
@@ -92,6 +95,67 @@ defmodule MezzanineConfigRegistryTest do
                       )
 
              assert cached_compiled.pack_slug == compiled.pack_slug
+           end) == 0
+  end
+
+  test "runtime registry evicts installation cache on policy invalidation fanout" do
+    registration = register_fixture_pack!()
+
+    {:ok, installation} =
+      MezzanineConfigRegistry.create_installation(%{
+        tenant_id: "tenant-cache",
+        environment: "prod",
+        pack_registration_id: registration.id
+      })
+
+    {:ok, installation} = MezzanineConfigRegistry.activate_installation(installation)
+
+    assert {:ok, compiled} =
+             Registry.get_compiled_pack(installation.id, installation.compiled_pack_revision)
+
+    assert query_count(fn ->
+             assert {:ok, _cached_compiled} =
+                      Registry.get_compiled_pack(
+                        installation.id,
+                        installation.compiled_pack_revision
+                      )
+           end) == 0
+
+    invalidation =
+      ClusterInvalidation.new!(%{
+        invalidation_id: "policy-invalidation://cache/read-default/1",
+        tenant_ref: installation.tenant_id,
+        topic:
+          ClusterInvalidation.policy_topic!(
+            tenant_ref: installation.tenant_id,
+            installation_ref: installation.id,
+            kind: :read,
+            policy_id: "policy://read/default",
+            version: 1
+          ),
+        source_node_ref: @node_ref,
+        commit_lsn: "16/B374D848",
+        commit_hlc: @commit_hlc,
+        published_at: ~U[2026-04-24 12:00:00Z],
+        metadata: %{"installation_ref" => installation.id}
+      })
+
+    assert :ok = ClusterInvalidation.publish(invalidation)
+
+    refute :ets.member(:mezzanine_pack_registry, {:installation, installation.id})
+
+    assert {:ok, reloaded_compiled} =
+             Registry.get_compiled_pack(installation.id, installation.compiled_pack_revision)
+
+    assert reloaded_compiled.pack_slug == compiled.pack_slug
+    assert :ets.member(:mezzanine_pack_registry, {:installation, installation.id})
+
+    assert query_count(fn ->
+             assert {:ok, _cached_compiled} =
+                      Registry.get_compiled_pack(
+                        installation.id,
+                        installation.compiled_pack_revision
+                      )
            end) == 0
   end
 
