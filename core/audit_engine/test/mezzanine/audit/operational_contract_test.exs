@@ -28,6 +28,7 @@ defmodule Mezzanine.Audit.OperationalContractTest do
       ExecutionLineage.new!(%{
         trace_id: "trace-1",
         causation_id: "cause-1",
+        tenant_id: "tenant-1",
         installation_id: "inst-1",
         subject_id: "subject-1",
         execution_id: "exec-1",

@@ -69,6 +69,31 @@ defmodule Mezzanine.Execution.PersistenceTest do
     assert audit_fact.execution_id == execution.id
   end
 
+  test "dispatch rejects oversized workflow-visible maps before durable persistence" do
+    assert {:ok, subject} = ingest_subject("linear:ticket:oversized-dispatch")
+
+    assert {:error, error} =
+             ExecutionRecord.dispatch(%{
+               tenant_id: "tenant-1",
+               installation_id: "inst-1",
+               subject_id: subject.id,
+               recipe_ref: "triage_ticket",
+               compiled_pack_revision: 7,
+               binding_snapshot: %{},
+               dispatch_envelope: %{
+                 "capability" => "sandbox.exec",
+                 "provider_result" => String.duplicate("x", 70_000)
+               },
+               intent_snapshot: %{},
+               submission_dedupe_key: "inst-1:exec:oversized-dispatch",
+               trace_id: "trace-oversized-dispatch",
+               causation_id: "cause-oversized-dispatch",
+               actor_ref: %{kind: :scheduler}
+             })
+
+    assert Exception.message(error) =~ "artifact payload boundary rejected dispatch_envelope"
+  end
+
   test "accepted dispatch stores lower receipt and enriches execution lineage" do
     assert {:ok, subject} = ingest_subject("linear:ticket:accepted")
     assert {:ok, execution} = dispatch_execution(subject, "trace-accepted-bootstrap", "accepted")
@@ -178,7 +203,36 @@ defmodule Mezzanine.Execution.PersistenceTest do
     assert {:ok, audit_facts} = AuditFact.list_trace("inst-1", "trace-semantic-bootstrap")
 
     assert Enum.any?(audit_facts, &(&1.fact_kind == :execution_dispatched))
-    assert Enum.any?(audit_facts, &(&1.fact_kind == :execution_failed))
+    failed_fact = Enum.find(audit_facts, &(&1.fact_kind == :execution_failed))
+    assert failed_fact
+
+    guard = failed_fact.payload["audit_amplification_guard"]
+    assert guard["window_ms"] == 60_000
+    assert guard["max_events_per_key_per_window"] == 1
+    assert guard["suppressed_count"] == 0
+    assert guard["overflow_counter_ref"] == "mezzanine.audit_overflow.count"
+    assert guard["unavailable_guard_safe_action"] == "reject_audit_append"
+    assert guard["admission_key"]["event_name"] == "execution_failed"
+    assert guard["admission_key"]["error_class"] == "semantic_failure"
+  end
+
+  test "semantic failure rejects raw lower bodies in execution map columns" do
+    assert {:ok, subject} = ingest_subject("linear:ticket:semantic-raw-body")
+    assert {:ok, execution} = dispatch_execution(subject, "trace-semantic-raw-bootstrap", "raw")
+
+    assert {:error, error} =
+             ExecutionRecord.record_semantic_failure(execution, %{
+               lower_receipt: %{
+                 "state" => "failed",
+                 "raw_provider_body" => %{"text" => "provider-native response"}
+               },
+               last_dispatch_error_payload: %{"error" => "semantic_failure"},
+               trace_id: "trace-semantic-raw",
+               causation_id: "cause-semantic-raw",
+               actor_ref: %{kind: :reconciler}
+             })
+
+    assert Exception.message(error) =~ "artifact payload boundary rejected lower_receipt"
   end
 
   defp ingest_subject(source_ref) do

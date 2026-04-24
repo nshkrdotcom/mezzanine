@@ -10,7 +10,7 @@ defmodule Mezzanine.LifecycleEvaluator do
 
   alias Ecto.{Adapters.SQL, Multi}
   alias Mezzanine.Audit.AuditAppend
-  alias Mezzanine.Execution.DispatchState
+  alias Mezzanine.Execution.{DispatchState, PayloadBoundary}
   alias Mezzanine.Execution.Repo
   alias Mezzanine.Lifecycle.Evaluator, as: PackEvaluator
   alias Mezzanine.Lifecycle.SubjectSnapshot
@@ -155,6 +155,7 @@ defmodule Mezzanine.LifecycleEvaluator do
     id,
     trace_id,
     causation_id,
+    tenant_id,
     installation_id,
     subject_id,
     execution_id,
@@ -174,18 +175,20 @@ defmodule Mezzanine.LifecycleEvaluator do
     $3,
     $4,
     $5,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
     $6,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
     $7,
-    $7
+    $8,
+    $8
   )
   ON CONFLICT (execution_id) DO UPDATE
   SET trace_id = EXCLUDED.trace_id,
       causation_id = EXCLUDED.causation_id,
+      tenant_id = EXCLUDED.tenant_id,
       installation_id = EXCLUDED.installation_id,
       subject_id = EXCLUDED.subject_id,
       artifact_refs = EXCLUDED.artifact_refs,
@@ -544,6 +547,7 @@ defmodule Mezzanine.LifecycleEvaluator do
           repo,
           trace_id,
           causation_id,
+          installation.tenant_id,
           installation.id,
           subject.id,
           execution_id,
@@ -899,35 +903,50 @@ defmodule Mezzanine.LifecycleEvaluator do
          execution_attrs,
          now
        ) do
-    execution_id = Ecto.UUID.generate()
+    with :ok <- validate_execution_payloads(execution_attrs) do
+      execution_id = Ecto.UUID.generate()
 
-    params = [
-      dump_uuid!(execution_id),
-      installation.tenant_id,
-      installation.id,
-      dump_uuid!(subject.id),
-      dump_uuid(Map.get(execution_attrs, :barrier_id)),
-      execution_attrs.recipe_ref,
-      installation.compiled_pack_revision,
-      execution_attrs.binding_snapshot,
-      execution_attrs.dispatch_envelope,
-      execution_attrs.intent_snapshot,
-      execution_attrs.submission_dedupe_key,
-      execution_attrs.trace_id,
-      execution_attrs.causation_id,
-      now,
-      %{},
-      %{},
-      %{},
-      dump_uuid(execution_attrs.supersedes_execution_id),
-      execution_attrs.supersession_reason,
-      execution_attrs.supersession_depth || 0
-    ]
+      params = [
+        dump_uuid!(execution_id),
+        installation.tenant_id,
+        installation.id,
+        dump_uuid!(subject.id),
+        dump_uuid(Map.get(execution_attrs, :barrier_id)),
+        execution_attrs.recipe_ref,
+        installation.compiled_pack_revision,
+        execution_attrs.binding_snapshot,
+        execution_attrs.dispatch_envelope,
+        execution_attrs.intent_snapshot,
+        execution_attrs.submission_dedupe_key,
+        execution_attrs.trace_id,
+        execution_attrs.causation_id,
+        now,
+        %{},
+        %{},
+        %{},
+        dump_uuid(execution_attrs.supersedes_execution_id),
+        execution_attrs.supersession_reason,
+        execution_attrs.supersession_depth || 0
+      ]
 
-    case SQL.query(repo, @insert_execution_sql, params) do
-      {:ok, %{rows: [[inserted_execution_id]]}} -> {:ok, load_uuid!(inserted_execution_id)}
-      {:error, error} -> {:error, error}
+      case SQL.query(repo, @insert_execution_sql, params) do
+        {:ok, %{rows: [[inserted_execution_id]]}} -> {:ok, load_uuid!(inserted_execution_id)}
+        {:error, error} -> {:error, error}
+      end
     end
+  end
+
+  defp validate_execution_payloads(execution_attrs) do
+    Enum.reduce_while(
+      [:binding_snapshot, :dispatch_envelope, :intent_snapshot],
+      :ok,
+      fn field, :ok ->
+        case PayloadBoundary.validate_execution_column(field, Map.fetch!(execution_attrs, field)) do
+          :ok -> {:cont, :ok}
+          {:error, reason} -> {:halt, {:error, reason}}
+        end
+      end
+    )
   end
 
   defp workflow_handoff(execution_id, now) do
@@ -957,6 +976,7 @@ defmodule Mezzanine.LifecycleEvaluator do
          repo,
          trace_id,
          causation_id,
+         tenant_id,
          installation_id,
          subject_id,
          execution_id,
@@ -965,6 +985,7 @@ defmodule Mezzanine.LifecycleEvaluator do
     case SQL.query(repo, @upsert_lineage_sql, [
            trace_id,
            causation_id,
+           tenant_id,
            installation_id,
            subject_id,
            execution_id,

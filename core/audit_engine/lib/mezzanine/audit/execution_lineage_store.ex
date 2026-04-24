@@ -11,7 +11,7 @@ defmodule Mezzanine.Audit.ExecutionLineageStore do
     |> Map.from_struct()
     |> ExecutionLineageRecord.store()
     |> case do
-      {:ok, %ExecutionLineageRecord{} = record} -> {:ok, to_contract(record)}
+      {:ok, %ExecutionLineageRecord{} = record} -> to_contract(record)
       {:error, error} -> {:error, error}
     end
   end
@@ -20,7 +20,7 @@ defmodule Mezzanine.Audit.ExecutionLineageStore do
   def fetch(execution_id) when is_binary(execution_id) do
     case ExecutionLineageRecord.by_execution_id(execution_id) do
       {:ok, %ExecutionLineageRecord{} = record} ->
-        {:ok, to_contract(record)}
+        to_contract(record)
 
       {:error, error} ->
         {:error, error}
@@ -31,7 +31,16 @@ defmodule Mezzanine.Audit.ExecutionLineageStore do
   def list_trace(installation_id, trace_id)
       when is_binary(installation_id) and is_binary(trace_id) do
     with {:ok, records} <- ExecutionLineageRecord.list_trace(installation_id, trace_id) do
-      {:ok, Enum.map(records, &to_contract/1)}
+      to_contracts(records, [])
+    end
+  end
+
+  defp to_contracts([], lineages), do: {:ok, Enum.reverse(lineages)}
+
+  defp to_contracts([record | records], lineages) do
+    case to_contract(record) do
+      {:ok, lineage} -> to_contracts(records, [lineage | lineages])
+      {:error, error} -> {:error, error}
     end
   end
 
@@ -40,6 +49,7 @@ defmodule Mezzanine.Audit.ExecutionLineageStore do
     |> Map.take([
       :trace_id,
       :causation_id,
+      :tenant_id,
       :installation_id,
       :subject_id,
       :execution_id,
@@ -50,6 +60,6 @@ defmodule Mezzanine.Audit.ExecutionLineageStore do
       :lower_attempt_id,
       :artifact_refs
     ])
-    |> ExecutionLineage.new!()
+    |> ExecutionLineage.new()
   end
 end

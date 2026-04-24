@@ -1,6 +1,7 @@
 defmodule Mezzanine.WorkflowRuntime.WorkflowStarterOutboxTest do
   use ExUnit.Case, async: false
 
+  alias Mezzanine.Idempotency
   alias Mezzanine.WorkflowRuntime.WorkflowStarterOutbox
   alias Mezzanine.WorkflowRuntime.WorkflowStarterOutboxWorker
 
@@ -191,6 +192,82 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowStarterOutboxTest do
     assert outcome_row.workflow_run_id == "run-001"
   end
 
+  test "dispatch request carries idempotency correlation evidence for canonical starts" do
+    canonical_key = canonical_root_key()
+
+    assert {:ok, row} =
+             row_attrs()
+             |> Map.merge(%{
+               canonical_idempotency_key: canonical_key,
+               idempotency_key: canonical_key,
+               causation_id: "cause-091",
+               client_retry_key: "client-retry-091",
+               platform_envelope_idempotency_key: canonical_key
+             })
+             |> WorkflowStarterOutbox.new_row()
+
+    assert {:ok, request} = WorkflowStarterOutbox.start_request(row)
+
+    assert request.idempotency_correlation["contract_name"] ==
+             "Mezzanine.IdempotencyCorrelationEvidence.v1"
+
+    assert request.idempotency_correlation["canonical_idempotency_key"] == canonical_key
+    assert request.idempotency_correlation["client_retry_key"] == "client-retry-091"
+    assert request.idempotency_correlation["platform_envelope_idempotency_key"] == canonical_key
+    assert request.idempotency_correlation["temporal_workflow_id"] == row.workflow_id
+    assert request.idempotency_correlation["temporal_start_idempotency_key"] == canonical_key
+    assert request.idempotency_correlation["trace_id"] == row.trace_id
+    assert request.idempotency_correlation["causation_id"] == "cause-091"
+    assert request.idempotency_correlation["tenant_id"] == row.tenant_ref
+    assert request.idempotency_correlation["release_manifest_ref"] == row.release_manifest_ref
+
+    dispatch_job_args = WorkflowStarterOutbox.dispatch_job_args(row)
+    assert dispatch_job_args["canonical_idempotency_key"] == canonical_key
+    assert dispatch_job_args["client_retry_key"] == "client-retry-091"
+
+    assert {:ok, receipt} =
+             Mezzanine.WorkflowStartReceipt.new(%{
+               workflow_ref: "workflow-ref://#{row.workflow_id}",
+               workflow_id: row.workflow_id,
+               workflow_run_id: "run-091",
+               workflow_type: row.workflow_type,
+               workflow_version: row.workflow_version,
+               tenant_ref: row.tenant_ref,
+               resource_ref: row.resource_ref,
+               command_id: row.command_id,
+               idempotency_key: row.idempotency_key,
+               trace_id: row.trace_id,
+               start_state: "started"
+             })
+
+    assert {:ok, started} = WorkflowStarterOutbox.classify_start_result(row, {:ok, receipt})
+    assert started.idempotency_correlation["temporal_workflow_run_id"] == "run-091"
+  end
+
+  test "canonical workflow starts reject missing causation instead of minting it" do
+    canonical_key = canonical_root_key()
+
+    assert {:ok, row} =
+             row_attrs()
+             |> Map.merge(%{
+               canonical_idempotency_key: canonical_key,
+               idempotency_key: canonical_key,
+               client_retry_key: "client-retry-091",
+               platform_envelope_idempotency_key: canonical_key
+             })
+             |> WorkflowStarterOutbox.new_row()
+
+    assert {:error, {:missing_idempotency_correlation_fields, [:causation_id]}} =
+             WorkflowStarterOutbox.start_request(row)
+
+    assert {:error, {:missing_idempotency_correlation_fields, [:causation_id]}} =
+             WorkflowStarterOutboxWorker.perform(%Oban.Job{
+               args: WorkflowStarterOutbox.dispatch_job_args(row)
+             })
+
+    refute_received {:record_start_outcome, _original_row, _outcome_row}
+  end
+
   test "retained starter worker does not ack when outcome persistence fails" do
     Application.put_env(:mezzanine_workflow_runtime, :outbox_persistence,
       store: FailingOutboxStore
@@ -299,5 +376,19 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowStarterOutboxTest do
       payload_hash: String.duplicate("d", 64),
       payload_ref: "claim://workflow-payload/091"
     }
+  end
+
+  defp canonical_root_key do
+    Idempotency.canonical_key!(%{
+      tenant_id: "tenant-acme",
+      installation_id: "installation-main",
+      operation_family: "workflow.start",
+      operation_ref: "cmd-091",
+      causation_id: "cause-091",
+      authority_decision_ref: "decision-091",
+      subject_ref: "resource-work-1",
+      payload_hash: String.duplicate("d", 64),
+      source_event_position: "command-envelope-091"
+    })
   end
 end

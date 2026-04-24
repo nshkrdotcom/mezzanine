@@ -4,7 +4,15 @@ defmodule MezzanineConfigRegistry do
   """
 
   alias Mezzanine.Authoring.Bundle
-  alias Mezzanine.ConfigRegistry.{Installation, LifecycleHintContract, PackRegistration}
+
+  alias Mezzanine.ConfigRegistry.{
+    Installation,
+    LifecycleHintContract,
+    PackRegistration,
+    Policy,
+    PolicyRegistry
+  }
+
   alias Mezzanine.ConfigRegistry.Repo, as: ConfigRegistryRepo
   alias Mezzanine.Execution.Repo, as: ExecutionRepo
   alias Mezzanine.Leasing
@@ -16,6 +24,7 @@ defmodule MezzanineConfigRegistry do
       Mezzanine.ConfigRegistry,
       Mezzanine.ConfigRegistry.PackRegistration,
       Mezzanine.ConfigRegistry.Installation,
+      Mezzanine.ConfigRegistry.Policy,
       Mezzanine.Authoring.Bundle,
       Mezzanine.Pack.Registry,
       Mezzanine.Pack.Serializer
@@ -50,6 +59,17 @@ defmodule MezzanineConfigRegistry do
       {:ok, registration} -> registration
       {:error, error} -> raise "failed to register pack: #{inspect(error)}"
     end
+  end
+
+  @spec register_policy(struct(), keyword()) :: {:ok, Policy.t()} | {:error, term()}
+  def register_policy(policy_contract, opts \\ []) when is_struct(policy_contract) do
+    PolicyRegistry.register(policy_contract, opts)
+  end
+
+  @spec resolve_policy(atom() | String.t(), map(), keyword()) ::
+          {:ok, Policy.t()} | {:error, :not_found}
+  def resolve_policy(kind, context, opts \\ []) when is_map(context) do
+    PolicyRegistry.resolve(kind, context, opts)
   end
 
   @spec create_installation(map()) :: {:ok, Installation.t()} | {:error, term()}

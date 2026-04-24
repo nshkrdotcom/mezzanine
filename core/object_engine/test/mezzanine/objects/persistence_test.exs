@@ -92,6 +92,29 @@ defmodule Mezzanine.Objects.PersistenceTest do
     assert invoice_subject.payload == %{"amount_cents" => 42_000, "invoice_number" => "INV-42"}
   end
 
+  test "ingest rejects oversized inline subject payloads before persistence" do
+    assert {:error, oversized_error} =
+             SubjectRecord.ingest(%{
+               installation_id: "inst-1",
+               source_ref: "linear:ticket:oversized-payload",
+               subject_kind: "linear_coding_ticket",
+               lifecycle_state: "queued",
+               schema_ref: SubjectPayloadSchema.default_schema_ref!("linear_coding_ticket"),
+               schema_version:
+                 SubjectPayloadSchema.default_schema_version!("linear_coding_ticket"),
+               payload: %{
+                 identifier: "linear:ticket:oversized-payload",
+                 source_kind: "linear",
+                 title: String.duplicate("x", 70_000)
+               },
+               trace_id: "trace-oversized-subject-payload",
+               causation_id: "cause-oversized-subject-payload",
+               actor_ref: %{kind: :intake}
+             })
+
+    assert Exception.message(oversized_error) =~ "subject_payload_ref_required"
+  end
+
   test "ingest rejects missing, unknown, stale, or incompatible subject payload schemas" do
     assert {:error, missing_schema_error} =
              SubjectRecord.ingest(%{

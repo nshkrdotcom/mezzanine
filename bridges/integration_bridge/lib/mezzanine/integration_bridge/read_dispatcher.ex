@@ -122,7 +122,8 @@ defmodule Mezzanine.IntegrationBridge.ReadDispatcher do
   end
 
   defp authorize_lineage(%ExecutionLineage{} = lineage, authorization) do
-    if lineage.installation_id == authorization.installation_id do
+    if lineage.tenant_id == authorization.tenant_id and
+         lineage.installation_id == authorization.installation_id do
       :ok
     else
       {:error, :unauthorized_lower_read}

@@ -25,6 +25,13 @@ against another tenant, installation, installation revision, activation epoch,
 lease epoch, subject, execution, or trace. Mismatches fail closed before token
 digest, expiry, or invalidation checks can grant access.
 
+`Mezzanine.Leasing.AuthorityTenantPropagation` is the Phase 6 M8 owner evidence
+surface for `AuthorityTenantPropagation.v1`. It builds a real
+`AuthorizationScope` from upstream owner facts and requires authority decision,
+tenant, no-spend budget, no-bypass scope, lineage, causation, idempotency, and
+lower-facts propagation refs. Missing authority, missing budget, cross-tenant
+scope, lower-facts tenant mismatch, and direct lower shortcuts fail closed.
+
 ## Revision And Revocation Evidence
 
 Read and stream leases persist `installation_revision`, `activation_epoch`, and

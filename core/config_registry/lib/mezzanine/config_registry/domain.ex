@@ -5,5 +5,6 @@ defmodule Mezzanine.ConfigRegistry do
   resources do
     resource(Mezzanine.ConfigRegistry.PackRegistration)
     resource(Mezzanine.ConfigRegistry.Installation)
+    resource(Mezzanine.ConfigRegistry.Policy)
   end
 end

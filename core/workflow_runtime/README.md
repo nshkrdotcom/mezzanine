@@ -79,6 +79,24 @@ dev-logs`, `just temporal-ui`, and `just dev-down` from the Mezzanine root.
 Do not run raw `temporal server start-dev`, and do not run
 `just temporal-reset-confirm` without explicit approval.
 
+## Phase 6 Temporal Dispatch Contract
+
+`Mezzanine.WorkflowRuntime.TemporalDispatchContract` owns
+`TemporalDispatchContract.v1` evidence for service-mode claims. It joins
+Mezzanine-owned Temporal worker specs, the `ExecutionAttempt` workflow on
+`mezzanine.hazmat`, compact describe/query refs, restart/replay refs, and
+workflow-start outbox outcome persistence. It fails closed when the
+`ExecutionAttempt` worker is missing, when a retained start would dispatch to the
+wrong task queue, or when a Temporal outcome cannot be persisted locally.
+
+The contract records only refs and DTO summaries. It does not export raw
+workflow history, raw payloads, Temporal SDK structs, task tokens, protobufs, or
+NIF resources. The ExecutionAttempt workflow also supports an opt-in
+`hold_for_receipt?` input for live restart/replay proof: it sets
+`accepted_active` state, waits for a `lower_receipt` signal, and resumes with
+compact signal state after a worker restart without changing the default
+immediate-completion path.
+
 ## Activity Side-Effect Idempotency
 
 `Mezzanine.WorkflowRuntime.ActivitySideEffectIdempotency` defines the M29

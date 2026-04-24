@@ -54,6 +54,11 @@ defmodule Mezzanine.Objects.SubjectPayloadSchema do
   @current_schema_by_subject_ref Map.new(@schemas, fn schema ->
                                    {{schema.subject_kind, schema.schema_ref}, schema}
                                  end)
+  @small_inline_max_bytes 64 * 1024
+  @reject_or_stream_min_bytes 5 * 1024 * 1024
+
+  @spec small_inline_max_bytes() :: pos_integer()
+  def small_inline_max_bytes, do: @small_inline_max_bytes
 
   @spec default_schema_ref!(String.t()) :: String.t()
   def default_schema_ref!(subject_kind) when is_binary(subject_kind) do
@@ -94,7 +99,8 @@ defmodule Mezzanine.Objects.SubjectPayloadSchema do
          {:ok, schema_version} <- fetch_required_version(attrs, :schema_version),
          {:ok, schema} <- fetch(subject_kind, schema_ref, schema_version),
          {:ok, payload} <- normalize_payload(value(attrs, :payload) || %{}),
-         :ok <- validate_payload(schema.payload_schema, payload) do
+         :ok <- validate_payload(schema.payload_schema, payload),
+         :ok <- validate_inline_size(payload) do
       {:ok, %{payload: payload, schema: schema, schema_hash: schema_hash(schema)}}
     end
   end
@@ -253,6 +259,35 @@ defmodule Mezzanine.Objects.SubjectPayloadSchema do
         {:halt, {:error, {:invalid_subject_payload_field, field, expected_type}}}
       end
     end)
+  end
+
+  defp validate_inline_size(payload) do
+    byte_size = :erlang.external_size(payload)
+
+    cond do
+      byte_size < @small_inline_max_bytes ->
+        :ok
+
+      byte_size <= @reject_or_stream_min_bytes ->
+        {:error,
+         {:subject_payload_ref_required,
+          %{
+            byte_size: byte_size,
+            max_inline_bytes: @small_inline_max_bytes,
+            schema_hash_required: true,
+            safe_action: :reject_before_durable_write
+          }}}
+
+      true ->
+        {:error,
+         {:subject_payload_reject_or_stream_required,
+          %{
+            byte_size: byte_size,
+            max_ref_required_bytes: @reject_or_stream_min_bytes,
+            schema_hash_required: true,
+            safe_action: :reject_before_durable_write
+          }}}
+    end
   end
 
   defp valid_type?(value, :string), do: is_binary(value)

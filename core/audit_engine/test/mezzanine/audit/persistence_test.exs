@@ -69,7 +69,129 @@ defmodule Mezzanine.Audit.PersistenceTest do
     assert reloaded.payload["result_summary"]["status"] == "ok"
     assert reloaded.idempotency_key == "audit-append:test:exec-append"
 
+    assert reloaded.payload["audit_observability_counts"] ==
+             expected_observability_counts(%{
+               "admitted_count" => 2,
+               "deduped_count" => 1
+             })
+
     assert has_index?("audit_facts", ["installation_id", "idempotency_key"])
+  end
+
+  test "failure audit append requires amplification guard evidence" do
+    attrs = failure_audit_attrs()
+
+    assert {:error, {:missing_audit_amplification_guard, required_fields}} =
+             AuditAppend.append_fact(attrs)
+
+    assert "admission_key" in required_fields
+    assert "suppressed_count" in required_fields
+    assert "overflow_counter_ref" in required_fields
+    assert "unavailable_guard_safe_action" in required_fields
+  end
+
+  test "audit amplification guard declares admission window and aggregate counters" do
+    attrs = failure_audit_attrs()
+    idempotency_key = AuditAppend.idempotency_key(attrs)
+
+    guarded_attrs =
+      attrs
+      |> Map.put(:idempotency_key, idempotency_key)
+      |> AuditAppend.put_amplification_guard()
+
+    guard = guarded_attrs.payload["audit_amplification_guard"]
+
+    assert guard["window_ms"] == 60_000
+    assert guard["window_started_at"] == "2026-04-20T19:45:00.000Z"
+    assert guard["max_events_per_key_per_window"] == 1
+    assert guard["aggregate_counter_ref"] == "mezzanine.audit_repeat_aggregation.v1"
+    assert guard["suppressed_count"] == 0
+    assert guard["overflow_counter_ref"] == "mezzanine.audit_overflow.count"
+    assert guard["unavailable_guard_safe_action"] == "reject_audit_append"
+
+    assert guard["admission_key"] == %{
+             "tenant_or_partition" => "inst-failure",
+             "owner_package" => "core/audit_engine",
+             "source_boundary" => "Mezzanine.Audit.AuditAppend",
+             "event_name" => "execution_failed",
+             "error_class" => "semantic_failure",
+             "safe_action" => "aggregate_repeated_audit_fact",
+             "canonical_idempotency_key_or_payload_hash" => idempotency_key
+           }
+
+    assert {:ok, result} = AuditAppend.append_fact(guarded_attrs)
+    assert String.starts_with?(result.idempotency_key, "audit-aggregate:")
+    refute result.idempotency_key == idempotency_key
+
+    assert {:ok, [reloaded]} = AuditFact.list_trace("inst-failure", "trace-failure")
+    assert reloaded.payload["audit_amplification_guard"] == guard
+    assert reloaded.idempotency_key == result.idempotency_key
+
+    assert reloaded.payload["audit_observability_counts"] ==
+             expected_observability_counts(%{
+               "admitted_count" => 1,
+               "hashed_count" => 1
+             })
+  end
+
+  test "repeated same-key failure audit appends aggregate inside declared window" do
+    attrs = failure_audit_attrs()
+    idempotency_key = AuditAppend.idempotency_key(attrs)
+
+    first_attrs =
+      attrs
+      |> Map.put(:idempotency_key, idempotency_key)
+      |> AuditAppend.put_amplification_guard()
+
+    repeated_attrs =
+      attrs
+      |> Map.put(:occurred_at, DateTime.add(attrs.occurred_at, 30, :second))
+      |> Map.put(:idempotency_key, idempotency_key)
+      |> AuditAppend.put_amplification_guard()
+
+    next_window_attrs =
+      attrs
+      |> Map.put(:occurred_at, DateTime.add(attrs.occurred_at, 61, :second))
+      |> Map.put(:idempotency_key, idempotency_key)
+      |> AuditAppend.put_amplification_guard()
+
+    assert {:ok, first} = AuditAppend.append_fact(first_attrs)
+    assert {:ok, repeated} = AuditAppend.append_fact(repeated_attrs)
+
+    assert repeated.audit_fact_id == first.audit_fact_id
+    assert repeated.idempotency_key == first.idempotency_key
+
+    assert {:ok, [aggregated]} = AuditFact.list_trace("inst-failure", "trace-failure")
+    guard = aggregated.payload["audit_amplification_guard"]
+
+    assert guard["first_seen_at"] ==
+             first_attrs.payload["audit_amplification_guard"]["first_seen_at"]
+
+    assert guard["last_seen_at"] ==
+             repeated_attrs.payload["audit_amplification_guard"]["last_seen_at"]
+
+    assert guard["suppressed_count"] == 1
+
+    assert aggregated.payload["audit_aggregation"]["aggregate_counter_ref"] ==
+             "mezzanine.audit_repeat_aggregation.v1"
+
+    assert aggregated.payload["audit_aggregation"]["suppressed_count"] == 1
+
+    assert aggregated.payload["audit_aggregation"]["safe_action"] ==
+             "aggregate_repeated_audit_fact"
+
+    assert aggregated.payload["audit_observability_counts"] ==
+             expected_observability_counts(%{
+               "admitted_count" => 2,
+               "aggregated_count" => 1,
+               "hashed_count" => 2
+             })
+
+    assert {:ok, next_window} = AuditAppend.append_fact(next_window_attrs)
+    refute next_window.audit_fact_id == first.audit_fact_id
+
+    assert {:ok, facts} = AuditFact.list_trace("inst-failure", "trace-failure")
+    assert length(facts) == 2
   end
 
   test "audit-owned query returns decision terminal attempt facts" do
@@ -224,6 +346,7 @@ defmodule Mezzanine.Audit.PersistenceTest do
       ExecutionLineage.new!(%{
         trace_id: "trace-1",
         causation_id: "cause-1",
+        tenant_id: "tenant-1",
         installation_id: "inst-1",
         subject_id: "subject-1",
         execution_id: "exec-1",
@@ -238,6 +361,7 @@ defmodule Mezzanine.Audit.PersistenceTest do
       ExecutionLineage.new!(%{
         trace_id: "trace-1",
         causation_id: "cause-1",
+        tenant_id: "tenant-1",
         installation_id: "inst-1",
         subject_id: "subject-1",
         execution_id: "exec-1",
@@ -275,6 +399,29 @@ defmodule Mezzanine.Audit.PersistenceTest do
     assert has_index?("execution_lineage_records", ["installation_id", "trace_id"])
   end
 
+  test "execution lineage store fails closed when durable lineage is missing tenant evidence" do
+    Repo.query!(
+      """
+      INSERT INTO execution_lineage_records (
+        id,
+        tenant_id,
+        trace_id,
+        installation_id,
+        subject_id,
+        execution_id,
+        artifact_refs,
+        inserted_at,
+        updated_at
+      )
+      VALUES (gen_random_uuid(), '', $1, $2, $3, $4, '{}', now(), now())
+      """,
+      ["trace-missing-tenant", "inst-1", "subject-1", "exec-missing-tenant"]
+    )
+
+    assert {:error, {:missing_execution_lineage_fields, [:tenant_id]}} =
+             ExecutionLineageStore.fetch("exec-missing-tenant")
+  end
+
   defp has_index?(table_name, columns) when is_binary(table_name) and is_list(columns) do
     columns_sql = Enum.join(columns, ", ")
 
@@ -306,6 +453,37 @@ defmodule Mezzanine.Audit.PersistenceTest do
       checkpoint_ref: "audit-checkpoint:inst-fields:11",
       algorithm: AuditInclusionProof.default_algorithm(),
       release_manifest_ref: "phase5-v7-hardening"
+    }
+  end
+
+  defp expected_observability_counts(overrides) do
+    %{
+      "count_ref" => "mezzanine.audit_append.observability_counts.v1",
+      "admitted_count" => 0,
+      "deduped_count" => 0,
+      "aggregated_count" => 0,
+      "dropped_count" => 0,
+      "truncated_count" => 0,
+      "hashed_count" => 0,
+      "spilled_count" => 0,
+      "sampled_count" => 0,
+      "rejected_count" => 0,
+      "overflow_count" => 0
+    }
+    |> Map.merge(overrides)
+  end
+
+  defp failure_audit_attrs do
+    %{
+      installation_id: "inst-failure",
+      subject_id: "subject-failure",
+      execution_id: "exec-failure",
+      fact_kind: :execution_failed,
+      actor_ref: %{kind: :system},
+      payload: %{classification: "semantic_failure", failure_kind: "semantic_failure"},
+      trace_id: "trace-failure",
+      causation_id: "cause-failure",
+      occurred_at: ~U[2026-04-20 19:45:00.000000Z]
     }
   end
 end

@@ -15,6 +15,7 @@ defmodule Mezzanine.Audit.ExecutionLineageRecord do
     repo(Mezzanine.Audit.Repo)
 
     custom_indexes do
+      index([:tenant_id, :installation_id, :trace_id])
       index([:installation_id, :trace_id])
       index([:execution_id], unique: true)
     end
@@ -33,6 +34,7 @@ defmodule Mezzanine.Audit.ExecutionLineageRecord do
       accept([
         :trace_id,
         :causation_id,
+        :tenant_id,
         :installation_id,
         :subject_id,
         :execution_id,
@@ -50,6 +52,7 @@ defmodule Mezzanine.Audit.ExecutionLineageRecord do
       upsert_fields([
         :trace_id,
         :causation_id,
+        :tenant_id,
         :installation_id,
         :subject_id,
         :citadel_request_id,
@@ -84,6 +87,11 @@ defmodule Mezzanine.Audit.ExecutionLineageRecord do
     end
 
     attribute :causation_id, :string do
+      public?(true)
+    end
+
+    attribute :tenant_id, :string do
+      allow_nil?(false)
       public?(true)
     end
 

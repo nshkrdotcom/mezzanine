@@ -101,6 +101,29 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     assert get_workflow_state().workflow_state == "accepted_active"
   end
 
+  test "execution attempt can stay active until lower receipt for restart replay proof" do
+    assert {:ok, result} =
+             run_workflow(ExecutionAttempt, Map.put(lifecycle_attrs(), :hold_for_receipt?, true),
+               activities: %{
+                 Mezzanine.Activities.RequestDecision =>
+                   &ExecutionLifecycleWorkflow.compile_citadel_authority_activity/1,
+                 Mezzanine.Activities.StartLowerExecution =>
+                   &ExecutionLifecycleWorkflow.submit_jido_lower_run_activity/1
+               },
+               signals: [
+                 {"lower_receipt",
+                  %{lower_receipt_ref: "lower-receipt-096", signal_id: "signal-096"}}
+               ]
+             )
+
+    assert result.workflow_state == "completed"
+    assert result.signal_state == "accepted"
+    assert result.last_receipt_ref == "lower-receipt-096"
+    assert result.replay_resume_mode == "temporal_signal_resume"
+    refute Map.has_key?(result, :raw_temporalex_result)
+    refute Map.has_key?(result, :raw_history_event)
+  end
+
   test "activities compile authority, submit lower work idempotently, and persist terminal receipts" do
     attrs = lifecycle_attrs()
 

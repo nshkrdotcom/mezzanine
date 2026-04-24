@@ -50,12 +50,12 @@ defmodule Mezzanine.Workspace.MixProject do
   defp deps do
     [
       {:blitz, "~> 0.2.0", runtime: false},
-      {:weld, "~> 0.7.1", runtime: false},
+      {:weld, "~> 0.7.2", runtime: false},
       {:temporalex, path: "../temporalex"},
       {:opentelemetry, "~> 1.5"},
       {:opentelemetry_api, "~> 1.4"},
       {:opentelemetry_exporter, "~> 1.8"},
-      {:opentelemetry_semantic_conventions, "~> 0.2"},
+      {:opentelemetry_semantic_conventions, "~> 1.27"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.40.1", only: :dev, runtime: false}
