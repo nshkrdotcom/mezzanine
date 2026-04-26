@@ -13,7 +13,7 @@ defmodule Mezzanine.Pack.Compiler.Helpers do
     :fatal_error
   ]
 
-  @decision_values [:accept, :reject, :waive, :expired]
+  @decision_values [:accept, :reject, :waive, :expired, :escalate]
   @context_usage_phases [:preprocess, :retrieval, :repair]
   @context_merge_strategies [:append, :ranked_append, :replace_slot]
   @source_publish_operations [
@@ -224,7 +224,14 @@ defmodule Mezzanine.Pack.Compiler.Helpers do
   end
 
   def canonicalize_effect(effect)
-      when effect in [:block_subject, :unblock_subject, :cancel_active_execution],
+      when effect in [
+             :block_subject,
+             :unblock_subject,
+             :pause_execution,
+             :resume_execution,
+             :retry_execution,
+             :cancel_active_execution
+           ],
       do: {:ok, effect}
 
   def canonicalize_effect(other),
@@ -1658,7 +1665,7 @@ defmodule Mezzanine.Pack.Validator do
       [
         ValidationError.error(
           path,
-          "decision value must be :accept, :reject, :waive, or :expired"
+          "decision value must be :accept, :reject, :waive, :expired, or :escalate"
         )
       ]
     end

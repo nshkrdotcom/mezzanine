@@ -319,7 +319,7 @@ defmodule Mezzanine.Pack.Serializer do
       allowed_decisions:
         Enum.map(
           payload["allowed_decisions"] || [],
-          &deserialize_atom(&1, [:accept, :reject, :waive, :expired])
+          &deserialize_atom(&1, [:accept, :reject, :waive, :expired, :escalate])
         ),
       required_within_hours: payload["required_within_hours"]
     }
@@ -504,7 +504,7 @@ defmodule Mezzanine.Pack.Serializer do
          "decision_value" => decision_value
        }) do
     {:decision_made, decision_kind,
-     deserialize_atom(decision_value, [:accept, :reject, :waive, :expired])}
+     deserialize_atom(decision_value, [:accept, :reject, :waive, :expired, :escalate])}
   end
 
   defp deserialize_trigger(%{"kind" => "operator_action", "action_kind" => action_kind}) do
@@ -532,7 +532,7 @@ defmodule Mezzanine.Pack.Serializer do
          "decision_value" => decision_value
        }) do
     {:decision_made, decision_kind,
-     deserialize_atom(decision_value, [:accept, :reject, :waive, :expired])}
+     deserialize_atom(decision_value, [:accept, :reject, :waive, :expired, :escalate])}
   end
 
   defp deserialize_source_publish_trigger(%{
@@ -571,7 +571,7 @@ defmodule Mezzanine.Pack.Serializer do
          "decision_value" => decision_value
        }) do
     {:after_decision, decision_kind,
-     deserialize_atom(decision_value, [:accept, :reject, :waive, :expired])}
+     deserialize_atom(decision_value, [:accept, :reject, :waive, :expired, :escalate])}
   end
 
   defp deserialize_decision_trigger(%{"kind" => "on_subject_entered_state", "state" => state}) do
@@ -614,6 +614,9 @@ defmodule Mezzanine.Pack.Serializer do
 
   defp serialize_operator_effect(:block_subject), do: %{"kind" => "block_subject"}
   defp serialize_operator_effect(:unblock_subject), do: %{"kind" => "unblock_subject"}
+  defp serialize_operator_effect(:pause_execution), do: %{"kind" => "pause_execution"}
+  defp serialize_operator_effect(:resume_execution), do: %{"kind" => "resume_execution"}
+  defp serialize_operator_effect(:retry_execution), do: %{"kind" => "retry_execution"}
 
   defp serialize_operator_effect({:dispatch_effect, effect_kind}) do
     %{"kind" => "dispatch_effect", "effect_kind" => serialize_identifier(effect_kind)}
@@ -632,6 +635,9 @@ defmodule Mezzanine.Pack.Serializer do
 
   defp deserialize_operator_effect(%{"kind" => "block_subject"}), do: :block_subject
   defp deserialize_operator_effect(%{"kind" => "unblock_subject"}), do: :unblock_subject
+  defp deserialize_operator_effect(%{"kind" => "pause_execution"}), do: :pause_execution
+  defp deserialize_operator_effect(%{"kind" => "resume_execution"}), do: :resume_execution
+  defp deserialize_operator_effect(%{"kind" => "retry_execution"}), do: :retry_execution
 
   defp deserialize_operator_effect(%{"kind" => "dispatch_effect", "effect_kind" => effect_kind}) do
     {:dispatch_effect, effect_kind}

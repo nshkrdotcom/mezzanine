@@ -322,7 +322,7 @@ defmodule Mezzanine.Pack.DecisionSpec do
           | {:after_decision, prior_kind :: pack_identifier(), decision_value :: atom()}
           | {:on_subject_entered_state, state :: pack_identifier()}
 
-  @type decision_value :: :accept | :reject | :waive | :expired
+  @type decision_value :: :accept | :reject | :waive | :expired | :escalate
 
   @type t :: %__MODULE__{
           decision_kind: pack_identifier(),
@@ -389,6 +389,9 @@ defmodule Mezzanine.Pack.OperatorActionSpec do
           | :block_subject
           | :unblock_subject
           | {:dispatch_effect, effect_kind :: pack_identifier()}
+          | :pause_execution
+          | :resume_execution
+          | :retry_execution
           | :cancel_active_execution
           | {:collect_evidence, evidence_kind :: pack_identifier()}
 

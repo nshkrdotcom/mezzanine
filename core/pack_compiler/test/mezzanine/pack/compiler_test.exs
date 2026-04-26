@@ -181,6 +181,126 @@ defmodule Mezzanine.Pack.CompilerTest do
     assert recipe.stall_timeout_ms == 300_000
   end
 
+  test "compiles coding-ops review evidence policy and operator actions" do
+    manifest = %Manifest{
+      coding_ops_manifest()
+      | lifecycle_specs: [
+          %LifecycleSpec{
+            subject_kind: :coding_task,
+            initial_state: :candidate,
+            terminal_states: [:completed, :cancelled],
+            transitions: [
+              %{from: :candidate, to: :submitted, trigger: :auto},
+              %{
+                from: :submitted,
+                to: :running,
+                trigger: {:execution_requested, :run_coding_agent}
+              },
+              %{
+                from: :running,
+                to: :awaiting_review,
+                trigger: {:execution_completed, :run_coding_agent}
+              },
+              %{
+                from: :awaiting_review,
+                to: :completed,
+                trigger: {:decision_made, :operator_review, :accept}
+              },
+              %{
+                from: :awaiting_review,
+                to: :running,
+                trigger: {:decision_made, :operator_review, :reject}
+              },
+              %{
+                from: :awaiting_review,
+                to: :awaiting_review,
+                trigger: {:decision_made, :operator_review, :escalate}
+              },
+              %{
+                from: :awaiting_review,
+                to: :cancelled,
+                trigger: {:decision_made, :operator_review, :expired}
+              },
+              %{from: :running, to: :cancelled, trigger: {:operator_action, :cancel_execution}}
+            ]
+          }
+        ],
+        decision_specs: [
+          %Mezzanine.Pack.DecisionSpec{
+            decision_kind: :operator_review,
+            trigger: {:after_execution_completed, :run_coding_agent},
+            required_evidence_kinds: [:github_pr, :codex_session],
+            authorized_actors: [:operator],
+            allowed_decisions: [:accept, :reject, :waive, :expired, :escalate],
+            required_within_hours: 72
+          }
+        ],
+        evidence_specs: [
+          %Mezzanine.Pack.EvidenceSpec{
+            evidence_kind: :github_pr,
+            collector_ref: :github_pr_ref,
+            collection_strategy: :automatic,
+            collected_on: {:execution_completed, :run_coding_agent},
+            schema: %{url: :string, number: :integer}
+          },
+          %Mezzanine.Pack.EvidenceSpec{
+            evidence_kind: :codex_session,
+            collector_ref: :codex_session_ref,
+            collection_strategy: :automatic,
+            collected_on: {:execution_completed, :run_coding_agent}
+          }
+        ],
+        operator_action_specs: [
+          %Mezzanine.Pack.OperatorActionSpec{
+            action_kind: :pause_execution,
+            applicable_states: [:running],
+            authorized_roles: [:operator],
+            effect: :pause_execution
+          },
+          %Mezzanine.Pack.OperatorActionSpec{
+            action_kind: :resume_execution,
+            applicable_states: [:running],
+            authorized_roles: [:operator],
+            effect: :resume_execution
+          },
+          %Mezzanine.Pack.OperatorActionSpec{
+            action_kind: :retry_execution,
+            applicable_states: [:cancelled],
+            authorized_roles: [:operator],
+            effect: :retry_execution
+          },
+          %Mezzanine.Pack.OperatorActionSpec{
+            action_kind: :cancel_execution,
+            applicable_states: [:running],
+            authorized_roles: [:operator],
+            effect: :cancel_active_execution
+          }
+        ]
+    }
+
+    assert {:ok, compiled} = Compiler.compile(manifest)
+
+    review = compiled.decision_specs_by_kind["operator_review"]
+    assert review.required_evidence_kinds == ["codex_session", "github_pr"]
+    assert review.allowed_decisions == [:accept, :escalate, :expired, :reject, :waive]
+
+    assert compiled.decision_triggers_by_event[{:execution_completed, "run_coding_agent"}] == [
+             review
+           ]
+
+    assert compiled.evidence_specs_by_kind["github_pr"].schema == %{
+             url: :string,
+             number: :integer
+           }
+
+    assert compiled.evidence_triggers_by_event[{:execution_completed, "run_coding_agent"}]
+           |> Enum.map(& &1.evidence_kind) == ["github_pr", "codex_session"]
+
+    assert compiled.operator_actions_by_kind["pause_execution"].effect == :pause_execution
+    assert compiled.operator_actions_by_kind["resume_execution"].effect == :resume_execution
+    assert compiled.operator_actions_by_kind["retry_execution"].effect == :retry_execution
+  end
+
   test "rejects invalid state mappings, missing connector bindings, and missing workspace roots" do
     manifest = %Manifest{
       coding_ops_manifest()

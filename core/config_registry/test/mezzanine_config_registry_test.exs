@@ -11,9 +11,12 @@ defmodule MezzanineConfigRegistryTest do
     CompiledPack,
     Compiler,
     ContextSourceSpec,
+    DecisionSpec,
+    EvidenceSpec,
     ExecutionRecipeSpec,
     LifecycleSpec,
     Manifest,
+    OperatorActionSpec,
     ProjectionSpec,
     Serializer,
     SourceBindingSpec,
@@ -378,6 +381,79 @@ defmodule MezzanineConfigRegistryTest do
 
     assert compiled.source_publishers_by_ref["expense_request_progress"].operation ==
              :update_comment
+  end
+
+  test "serializer round-trips review escalation and operator execution effects" do
+    manifest = %Manifest{
+      pack_slug: :operator_policy_pack,
+      version: "1.0.0",
+      subject_kind_specs: [%SubjectKindSpec{name: :coding_task}],
+      lifecycle_specs: [
+        %LifecycleSpec{
+          subject_kind: :coding_task,
+          initial_state: :running,
+          terminal_states: [:completed, :cancelled],
+          transitions: [
+            %{from: :running, to: :awaiting_review, trigger: {:execution_completed, :agent}},
+            %{
+              from: :awaiting_review,
+              to: :awaiting_review,
+              trigger: {:decision_made, :operator_review, :escalate}
+            },
+            %{
+              from: :awaiting_review,
+              to: :cancelled,
+              trigger: {:decision_made, :operator_review, :expired}
+            }
+          ]
+        }
+      ],
+      execution_recipe_specs: [
+        %ExecutionRecipeSpec{
+          recipe_ref: :agent,
+          runtime_class: :workflow,
+          placement_ref: :local,
+          workspace_policy: %{strategy: :per_subject, root_ref: :operator_workspaces},
+          sandbox_policy_ref: :standard_coding,
+          prompt_refs: [:coding_agent],
+          applicable_to: [:coding_task]
+        }
+      ],
+      decision_specs: [
+        %DecisionSpec{
+          decision_kind: :operator_review,
+          trigger: {:after_execution_completed, :agent},
+          required_evidence_kinds: [:github_pr],
+          allowed_decisions: [:accept, :reject, :waive, :expired, :escalate],
+          required_within_hours: 72
+        }
+      ],
+      evidence_specs: [
+        %EvidenceSpec{
+          evidence_kind: :github_pr,
+          collector_ref: :github_pr_ref,
+          collected_on: {:execution_completed, :agent}
+        }
+      ],
+      operator_action_specs: [
+        %OperatorActionSpec{action_kind: :pause, effect: :pause_execution},
+        %OperatorActionSpec{action_kind: :resume, effect: :resume_execution},
+        %OperatorActionSpec{action_kind: :retry, effect: :retry_execution}
+      ]
+    }
+
+    assert {:ok, compiled} = Compiler.compile(manifest)
+
+    payload = Serializer.serialize_compiled(compiled)
+
+    assert {:ok, %CompiledPack{} = reloaded} = Serializer.deserialize_compiled(payload)
+
+    assert reloaded.decision_specs_by_kind["operator_review"].allowed_decisions ==
+             [:accept, :escalate, :expired, :reject, :waive]
+
+    assert reloaded.operator_actions_by_kind["pause"].effect == :pause_execution
+    assert reloaded.operator_actions_by_kind["resume"].effect == :resume_execution
+    assert reloaded.operator_actions_by_kind["retry"].effect == :retry_execution
   end
 
   defp register_fixture_pack! do

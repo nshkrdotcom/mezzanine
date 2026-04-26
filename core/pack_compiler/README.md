@@ -10,5 +10,7 @@ This package now owns:
 - canonical identifier normalization
 - source binding, source publish, workspace root, sandbox policy, prompt, hook,
   max-turn, and stall-timeout validation
+- review decision, evidence policy, and operator action validation, including
+  escalation decisions and pause/resume/retry/cancel action effects
 - `CompiledPack` O(1) index construction
 - pure lifecycle transition evaluation against `SubjectSnapshot`

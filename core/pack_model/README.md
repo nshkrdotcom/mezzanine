@@ -9,6 +9,8 @@ This package owns:
 - source binding and source publish specs for provider-backed products
 - execution recipe fields for workspace roots, sandbox policy refs, prompt refs,
   dynamic tool manifests, hook stages, max turns, and stall timeouts
+- review/evidence/operator policy structs, including escalation decisions and
+  pause/resume/retry/cancel operator effects
 - `Mezzanine.Pack.CompiledPack`
 - validation issue types and pure lifecycle snapshot/context structs
 
