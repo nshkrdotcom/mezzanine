@@ -93,6 +93,12 @@ Current posture:
 - durable dispatch ownership now belongs to `Mezzanine.WorkflowRuntime`
   workflow handoff contracts plus lower-gateway activities; Oban remains only
   for the explicit WorkflowRuntime outbox and local GC queues
+- terminal lower receipts are reduced by `Mezzanine.Projections.ReceiptReducer`
+  into execution, subject, decision, evidence, projection, and audit ledgers;
+  `SourceReconciliation` handles terminal source drift, missing/reassigned
+  source objects, blockers, stale polls, and out-of-band updates; and
+  `ReviewGate` applies accept/reject/waive/expire/escalate decisions into
+  subject state plus review/rework/escalation projections
 - lower-facts reads are tenant-scoped at both lease authorization and
   Jido Integration substrate-read boundaries; `Mezzanine.Leasing` checks the
   caller-carried authorization scope before token validation, and

@@ -16,4 +16,13 @@ defmodule MezzanineProjectionEngine do
       Mezzanine.Projections.MaterializedProjection
     ]
   end
+
+  @spec service_modules() :: [module()]
+  def service_modules do
+    [
+      Mezzanine.Projections.ReceiptReducer,
+      Mezzanine.Projections.ReviewGate,
+      Mezzanine.Projections.SourceReconciliation
+    ]
+  end
 end
