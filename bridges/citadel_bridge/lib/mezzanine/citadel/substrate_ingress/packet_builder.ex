@@ -147,7 +147,11 @@ defmodule Mezzanine.Citadel.SubstrateIngress.PacketBuilder do
       "execution_intent_family" => execution_intent_family,
       "execution_intent" => execution_intent,
       "allowed_tools" =>
-        list_value(attrs, :allowed_tools, metadata_value(intent, :allowed_tools, [])),
+        list_value(
+          attrs,
+          :allowed_tools,
+          grant_profile_value(intent, :allowed_tools, metadata_value(intent, :allowed_tools, []))
+        ),
       "effect_classes" => list_value(attrs, :effect_classes, []),
       "workspace_mutability" => value(attrs, :workspace_mutability, "read_write"),
       "placement_intent" => value(attrs, :placement_intent, "remote_workspace"),
@@ -312,6 +316,10 @@ defmodule Mezzanine.Citadel.SubstrateIngress.PacketBuilder do
 
   defp metadata_value(%RunIntent{} = intent, key, default \\ nil) do
     value(intent.metadata, key, default)
+  end
+
+  defp grant_profile_value(%RunIntent{} = intent, key, default) do
+    value(intent.grant_profile, key, default)
   end
 
   defp placement_value(placement, key, default) do

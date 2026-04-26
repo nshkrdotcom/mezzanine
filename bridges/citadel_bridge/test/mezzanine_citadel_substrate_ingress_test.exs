@@ -42,6 +42,15 @@ defmodule Mezzanine.Citadel.SubstrateIngressTest do
     assert compiled.lower_intent.invocation_request.session_id == "substrate/execution-1"
   end
 
+  test "carries run intent grant-profile tools into Citadel execution governance" do
+    assert {:ok, compiled} =
+             SubstrateIngress.compile_run_intent(run_intent(), compile_attrs(), [policy_pack()])
+
+    assert compiled.lower_intent.invocation_request.execution_governance.sandbox[
+             "allowed_tools"
+           ] == ["linear.issue.update"]
+  end
+
   test "bridge lib contains no host-ingress or session-continuity dependencies" do
     bridge_lib =
       Path.expand("../lib", __DIR__)
