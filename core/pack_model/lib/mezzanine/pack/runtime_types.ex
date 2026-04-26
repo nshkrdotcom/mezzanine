@@ -114,7 +114,9 @@ defmodule Mezzanine.Pack.CompiledPack do
     Manifest,
     OperatorActionSpec,
     ProjectionSpec,
+    SourceBindingSpec,
     SourceKindSpec,
+    SourcePublishSpec,
     SubjectKindSpec
   }
 
@@ -137,6 +139,8 @@ defmodule Mezzanine.Pack.CompiledPack do
           manifest: Manifest.t(),
           subject_kinds: %{String.t() => SubjectKindSpec.t()},
           source_kinds: %{String.t() => SourceKindSpec.t()},
+          source_bindings_by_ref: %{String.t() => SourceBindingSpec.t()},
+          source_publishers_by_ref: %{String.t() => SourcePublishSpec.t()},
           context_sources_by_ref: %{String.t() => ContextSourceSpec.t()},
           lifecycle_by_kind: %{String.t() => LifecycleSpec.t()},
           transitions_by_state: %{state_key() => %{trigger_key() => LifecycleSpec.transition()}},
@@ -157,6 +161,8 @@ defmodule Mezzanine.Pack.CompiledPack do
     :manifest,
     subject_kinds: %{},
     source_kinds: %{},
+    source_bindings_by_ref: %{},
+    source_publishers_by_ref: %{},
     context_sources_by_ref: %{},
     lifecycle_by_kind: %{},
     transitions_by_state: %{},

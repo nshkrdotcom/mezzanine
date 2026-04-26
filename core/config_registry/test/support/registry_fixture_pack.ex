@@ -39,7 +39,10 @@ defmodule Mezzanine.TestPacks.RegistryFixturePack do
         %ExecutionRecipeSpec{
           recipe_ref: :expense_capture,
           runtime_class: :session,
-          placement_ref: :local_runner
+          placement_ref: :local_runner,
+          workspace_policy: %{strategy: :per_subject, root_ref: :registry_fixture_workspaces},
+          sandbox_policy_ref: :standard_registry_fixture,
+          prompt_refs: [:registry_fixture_prompt]
         }
       ],
       projection_specs: [

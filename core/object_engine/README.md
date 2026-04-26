@@ -6,6 +6,9 @@ This package now owns the Phase `2.4.3` durable subject-ledger slice:
 
 - durable `SubjectRecord` persistence
 - installation-scoped source refs and identity
+- provider source metadata for source event ID, source binding ID, provider
+  external ref, provider revision, source state, labels, priority, branch/ref
+  URL, source routing, blocker refs, and workpad/progress refs
 - source-owned payload schema binding before ingest accepts a payload map
 - deterministic rejection/quarantine refs for missing, unknown, stale, or
   future subject payload schema identity

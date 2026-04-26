@@ -5,8 +5,10 @@ defmodule Mezzanine.Pack.CompilerTest do
     CompiledPack,
     ContextSourceSpec,
     DecisionSpec,
+    ExecutionRecipeSpec,
     LifecycleSpec,
     Manifest,
+    SourceBindingSpec,
     SubjectKindSpec
   }
 
@@ -151,5 +153,141 @@ defmodule Mezzanine.Pack.CompilerTest do
     assert Enum.any?(messages, &String.contains?(&1, "required?"))
     assert Enum.any?(messages, &String.contains?(&1, "timeout_ms"))
     assert Enum.any?(messages, &String.contains?(&1, "merge_strategy"))
+  end
+
+  test "compiles coding-ops source bindings, publish rules, and runtime policy" do
+    assert {:ok, compiled} = Compiler.compile(coding_ops_manifest())
+
+    source_binding = compiled.source_bindings_by_ref["linear_primary"]
+
+    assert source_binding.source_kind == "linear_issue"
+    assert source_binding.connection_ref == "linear-prod"
+    assert source_binding.state_mapping["candidate"] == ["Todo"]
+
+    publish_rule = compiled.source_publishers_by_ref["linear_workpad"]
+
+    assert publish_rule.source_binding_ref == "linear_primary"
+    assert publish_rule.operation == :update_comment
+    assert publish_rule.trigger == {:subject_entered_state, "running"}
+
+    recipe = compiled.recipes_by_ref["run_coding_agent"]
+
+    assert recipe.workspace_policy.root_ref == "local_workspaces"
+    assert recipe.sandbox_policy_ref == "standard_coding"
+    assert recipe.prompt_refs == ["coding_agent_system"]
+    assert recipe.dynamic_tool_manifest.tools == ["linear.comment.update", "github.pr.create"]
+    assert recipe.hook_stages == [:prepare_workspace, :after_turn]
+    assert recipe.max_turns == 12
+    assert recipe.stall_timeout_ms == 300_000
+  end
+
+  test "rejects invalid state mappings, missing connector bindings, and missing workspace roots" do
+    manifest = %Manifest{
+      coding_ops_manifest()
+      | source_binding_specs: [
+          %SourceBindingSpec{
+            binding_ref: :linear_primary,
+            source_kind: :linear_issue,
+            subject_kind: :coding_task,
+            provider: :linear,
+            state_mapping: %{unknown_state: ["Todo"]}
+          }
+        ],
+        source_publish_specs: [],
+        execution_recipe_specs: [
+          %ExecutionRecipeSpec{
+            recipe_ref: :run_coding_agent,
+            runtime_class: :workflow,
+            placement_ref: :codex_local,
+            workspace_policy: %{strategy: :per_subject},
+            sandbox_policy_ref: nil,
+            prompt_refs: [],
+            applicable_to: [:coding_task]
+          }
+        ]
+    }
+
+    assert {:error, issues} = Compiler.compile(manifest)
+
+    messages = Enum.map(issues, & &1.message)
+
+    assert Enum.any?(messages, &String.contains?(&1, "connection_ref"))
+    assert Enum.any?(messages, &String.contains?(&1, "unknown lifecycle state"))
+    assert Enum.any?(messages, &String.contains?(&1, "workspace root"))
+    assert Enum.any?(messages, &String.contains?(&1, "sandbox_policy_ref"))
+    assert Enum.any?(messages, &String.contains?(&1, "prompt_refs"))
+  end
+
+  defp coding_ops_manifest do
+    %Manifest{
+      pack_slug: :coding_ops,
+      version: "1.0.0",
+      subject_kind_specs: [%SubjectKindSpec{name: :coding_task}],
+      source_kind_specs: [
+        %Mezzanine.Pack.SourceKindSpec{
+          name: :linear_issue,
+          subject_kind: :coding_task
+        }
+      ],
+      source_binding_specs: [
+        %SourceBindingSpec{
+          binding_ref: :linear_primary,
+          source_kind: :linear_issue,
+          subject_kind: :coding_task,
+          provider: :linear,
+          connection_ref: :"linear-prod",
+          state_mapping: %{
+            candidate: ["Todo"],
+            submitted: ["In Progress"],
+            running: ["In Progress"],
+            completed: ["Done"]
+          },
+          candidate_filters: %{team: "ENG"},
+          cursor_policy: %{poll_every_ms: 60_000}
+        }
+      ],
+      source_publish_specs: [
+        %Mezzanine.Pack.SourcePublishSpec{
+          publish_ref: :linear_workpad,
+          source_binding_ref: :linear_primary,
+          trigger: {:subject_entered_state, :running},
+          operation: :update_comment,
+          template_ref: :workpad_running,
+          idempotency_scope: :subject
+        }
+      ],
+      lifecycle_specs: [
+        %LifecycleSpec{
+          subject_kind: :coding_task,
+          initial_state: :candidate,
+          terminal_states: [:completed],
+          transitions: [
+            %{from: :candidate, to: :submitted, trigger: :auto},
+            %{from: :submitted, to: :running, trigger: {:execution_requested, :run_coding_agent}},
+            %{from: :running, to: :completed, trigger: {:execution_completed, :run_coding_agent}}
+          ]
+        }
+      ],
+      execution_recipe_specs: [
+        %ExecutionRecipeSpec{
+          recipe_ref: :run_coding_agent,
+          runtime_class: :workflow,
+          placement_ref: :codex_local,
+          workspace_policy: %{
+            strategy: :per_subject,
+            reuse: true,
+            cleanup: :on_terminal,
+            root_ref: :local_workspaces
+          },
+          sandbox_policy_ref: :standard_coding,
+          prompt_refs: [:coding_agent_system],
+          dynamic_tool_manifest: %{tools: ["linear.comment.update", "github.pr.create"]},
+          hook_stages: [:prepare_workspace, :after_turn],
+          max_turns: 12,
+          stall_timeout_ms: 300_000,
+          applicable_to: [:coding_task]
+        }
+      ]
+    }
   end
 end

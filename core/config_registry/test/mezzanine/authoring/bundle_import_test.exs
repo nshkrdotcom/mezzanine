@@ -267,7 +267,10 @@ defmodule Mezzanine.Authoring.BundleImportTest do
           recipe_ref: :phase3_capture,
           runtime_class: :session,
           placement_ref: :local_runner,
-          required_lifecycle_hints: required_lifecycle_hints
+          required_lifecycle_hints: required_lifecycle_hints,
+          workspace_policy: %{strategy: :per_subject, root_ref: :phase3_workspaces},
+          sandbox_policy_ref: :standard_phase3_policy,
+          prompt_refs: [:phase3_prompt]
         }
       ],
       projection_specs: [

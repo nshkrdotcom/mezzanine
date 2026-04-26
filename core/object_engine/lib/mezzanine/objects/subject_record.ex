@@ -16,8 +16,10 @@ defmodule Mezzanine.Objects.SubjectRecord do
 
     custom_indexes do
       index([:installation_id, :source_ref], unique: true)
+      index([:installation_id, :source_binding_id, :provider_external_ref])
       index([:installation_id, :lifecycle_state])
       index([:installation_id, :subject_kind])
+      index([:installation_id, :source_state])
       index([:installation_id, :status])
     end
   end
@@ -45,6 +47,23 @@ defmodule Mezzanine.Objects.SubjectRecord do
       accept([
         :installation_id,
         :source_ref,
+        :source_event_id,
+        :source_binding_id,
+        :provider,
+        :provider_external_ref,
+        :provider_revision,
+        :source_state,
+        :state_mapping,
+        :blocker_refs,
+        :labels,
+        :priority,
+        :branch_ref,
+        :source_url,
+        :workpad_ref,
+        :progress_ref,
+        :source_routing,
+        :lifecycle_version,
+        :payload_schema_revision,
         :subject_kind,
         :lifecycle_state,
         :status,
@@ -72,6 +91,14 @@ defmodule Mezzanine.Objects.SubjectRecord do
             lifecycle_state: subject.lifecycle_state,
             status: subject.status,
             source_ref: subject.source_ref,
+            source_event_id: subject.source_event_id,
+            source_binding_id: subject.source_binding_id,
+            provider: subject.provider,
+            provider_external_ref: subject.provider_external_ref,
+            provider_revision: subject.provider_revision,
+            source_state: subject.source_state,
+            workpad_ref: subject.workpad_ref,
+            progress_ref: subject.progress_ref,
             schema_ref: subject.schema_ref,
             schema_version: subject.schema_version,
             schema_hash:
@@ -237,6 +264,84 @@ defmodule Mezzanine.Objects.SubjectRecord do
     end
 
     attribute :source_ref, :string do
+      public?(true)
+    end
+
+    attribute :source_event_id, :string do
+      public?(true)
+    end
+
+    attribute :source_binding_id, :string do
+      public?(true)
+    end
+
+    attribute :provider, :string do
+      public?(true)
+    end
+
+    attribute :provider_external_ref, :string do
+      public?(true)
+    end
+
+    attribute :provider_revision, :string do
+      public?(true)
+    end
+
+    attribute :source_state, :string do
+      public?(true)
+    end
+
+    attribute :state_mapping, :map do
+      allow_nil?(false)
+      default(%{})
+      public?(true)
+    end
+
+    attribute :blocker_refs, {:array, :map} do
+      allow_nil?(false)
+      default([])
+      public?(true)
+    end
+
+    attribute :labels, {:array, :string} do
+      allow_nil?(false)
+      default([])
+      public?(true)
+    end
+
+    attribute :priority, :integer do
+      public?(true)
+    end
+
+    attribute :branch_ref, :string do
+      public?(true)
+    end
+
+    attribute :source_url, :string do
+      public?(true)
+    end
+
+    attribute :workpad_ref, :string do
+      public?(true)
+    end
+
+    attribute :progress_ref, :string do
+      public?(true)
+    end
+
+    attribute :source_routing, :map do
+      allow_nil?(false)
+      default(%{})
+      public?(true)
+    end
+
+    attribute :lifecycle_version, :integer do
+      allow_nil?(false)
+      default(1)
+      public?(true)
+    end
+
+    attribute :payload_schema_revision, :string do
       public?(true)
     end
 

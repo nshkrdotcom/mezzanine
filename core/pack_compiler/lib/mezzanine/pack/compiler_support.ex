@@ -16,12 +16,22 @@ defmodule Mezzanine.Pack.Compiler.Helpers do
   @decision_values [:accept, :reject, :waive, :expired]
   @context_usage_phases [:preprocess, :retrieval, :repair]
   @context_merge_strategies [:append, :ranked_append, :replace_slot]
+  @source_publish_operations [
+    :update_state,
+    :create_comment,
+    :update_comment,
+    :add_label,
+    :remove_label
+  ]
+  @source_publish_idempotency_scopes [:subject, :execution, :source_event]
 
   def runtime_class?(value), do: value in @runtime_classes
   def failure_kind?(value), do: value in @failure_kinds
   def decision_value?(value), do: value in @decision_values
   def context_usage_phase?(value), do: value in @context_usage_phases
   def context_merge_strategy?(value), do: value in @context_merge_strategies
+  def source_publish_operation?(value), do: value in @source_publish_operations
+  def source_publish_idempotency_scope?(value), do: value in @source_publish_idempotency_scopes
 
   def transition_field(transition, key) do
     Map.get(transition, key) || Map.get(transition, Atom.to_string(key))
@@ -161,6 +171,40 @@ defmodule Mezzanine.Pack.Compiler.Helpers do
     end
   end
 
+  def canonicalize_source_publish_trigger({:subject_entered_state, state}) do
+    with {:ok, state} <- canonicalize_identifier(state) do
+      {:ok, {:subject_entered_state, state}}
+    end
+  end
+
+  def canonicalize_source_publish_trigger({:execution_completed, recipe_ref}) do
+    with {:ok, recipe_ref} <- canonicalize_identifier(recipe_ref) do
+      {:ok, {:execution_completed, recipe_ref}}
+    end
+  end
+
+  def canonicalize_source_publish_trigger({:decision_made, decision_kind, decision_value}) do
+    with {:ok, decision_kind} <- canonicalize_identifier(decision_kind) do
+      {:ok, {:decision_made, decision_kind, decision_value}}
+    end
+  end
+
+  def canonicalize_source_publish_trigger({:operator_action, action_kind}) do
+    with {:ok, action_kind} <- canonicalize_identifier(action_kind) do
+      {:ok, {:operator_action, action_kind}}
+    end
+  end
+
+  def canonicalize_source_publish_trigger(other),
+    do: {:error, "has unsupported source publish trigger #{inspect(other)}"}
+
+  def canonicalize_source_publish_trigger!(trigger) do
+    case canonicalize_source_publish_trigger(trigger) do
+      {:ok, canonical} -> canonical
+      {:error, message} -> raise ArgumentError, message
+    end
+  end
+
   def canonicalize_effect({:advance_lifecycle, state}) do
     with {:ok, state} <- canonicalize_identifier(state) do
       {:ok, {:advance_lifecycle, state}}
@@ -236,6 +280,18 @@ defmodule Mezzanine.Pack.Compiler.Helpers do
   def evidence_event_key!({:subject_entered_state, state}),
     do: {:subject_entered_state, canonicalize_identifier!(state)}
 
+  def source_publish_event_key!({:subject_entered_state, state}),
+    do: {:subject_entered_state, canonicalize_identifier!(state)}
+
+  def source_publish_event_key!({:execution_completed, recipe_ref}),
+    do: {:execution_completed, canonicalize_identifier!(recipe_ref)}
+
+  def source_publish_event_key!({:decision_made, decision_kind, decision_value}),
+    do: {:decision_made, canonicalize_identifier!(decision_kind), decision_value}
+
+  def source_publish_event_key!({:operator_action, action_kind}),
+    do: {:operator_action, canonicalize_identifier!(action_kind)}
+
   def transition_sort_key(transition) do
     {
       canonicalize_identifier!(transition_field(transition, :from)),
@@ -257,7 +313,9 @@ defmodule Mezzanine.Pack.Validator do
     Manifest,
     OperatorActionSpec,
     ProjectionSpec,
+    SourceBindingSpec,
     SourceKindSpec,
+    SourcePublishSpec,
     SubjectKindSpec,
     ValidationError
   }
@@ -269,6 +327,8 @@ defmodule Mezzanine.Pack.Validator do
     validate_manifest(manifest) ++
       validate_subject_kind_specs(manifest.subject_kind_specs) ++
       validate_source_kind_specs(manifest.source_kind_specs) ++
+      validate_source_binding_specs(manifest.source_binding_specs) ++
+      validate_source_publish_specs(manifest.source_publish_specs) ++
       validate_context_source_specs(manifest.context_source_specs) ++
       validate_lifecycle_specs(manifest.lifecycle_specs) ++
       validate_recipe_specs(manifest.execution_recipe_specs) ++
@@ -326,6 +386,109 @@ defmodule Mezzanine.Pack.Validator do
              [:source_kind_specs, index, :adapter_mod],
              "adapter_mod"
            )
+         )
+       end))
+  end
+
+  defp validate_source_binding_specs(specs) do
+    duplicate_identifier_issues(specs, :binding_ref, [:source_binding_specs], "source binding") ++
+      (Enum.with_index(specs)
+       |> Enum.flat_map(fn {%SourceBindingSpec{} = spec, index} ->
+         []
+         |> append(
+           identifier_issue(
+             spec.binding_ref,
+             [:source_binding_specs, index, :binding_ref],
+             "source binding ref"
+           )
+         )
+         |> append(
+           identifier_issue(
+             spec.source_kind,
+             [:source_binding_specs, index, :source_kind],
+             "source binding source kind"
+           )
+         )
+         |> append(
+           identifier_issue(
+             spec.subject_kind,
+             [:source_binding_specs, index, :subject_kind],
+             "source binding subject kind"
+           )
+         )
+         |> append(
+           identifier_issue(spec.provider, [:source_binding_specs, index, :provider], "provider")
+         )
+         |> append(
+           identifier_issue(
+             spec.connection_ref,
+             [:source_binding_specs, index, :connection_ref],
+             "connection_ref"
+           )
+         )
+         |> append(
+           source_state_mapping_issue(spec.state_mapping, [
+             :source_binding_specs,
+             index,
+             :state_mapping
+           ])
+         )
+         |> append(
+           map_issue(spec.candidate_filters, [:source_binding_specs, index, :candidate_filters])
+         )
+         |> append(map_issue(spec.cursor_policy, [:source_binding_specs, index, :cursor_policy]))
+         |> append(
+           map_issue(spec.source_write_policy, [
+             :source_binding_specs,
+             index,
+             :source_write_policy
+           ])
+         )
+       end))
+  end
+
+  defp validate_source_publish_specs(specs) do
+    duplicate_identifier_issues(specs, :publish_ref, [:source_publish_specs], "source publish") ++
+      (Enum.with_index(specs)
+       |> Enum.flat_map(fn {%SourcePublishSpec{} = spec, index} ->
+         []
+         |> append(
+           identifier_issue(
+             spec.publish_ref,
+             [:source_publish_specs, index, :publish_ref],
+             "source publish ref"
+           )
+         )
+         |> append(
+           identifier_issue(
+             spec.source_binding_ref,
+             [:source_publish_specs, index, :source_binding_ref],
+             "source publish binding ref"
+           )
+         )
+         |> append(
+           source_publish_trigger_issue(spec.trigger, [:source_publish_specs, index, :trigger])
+         )
+         |> append(
+           source_publish_operation_issue(spec.operation, [
+             :source_publish_specs,
+             index,
+             :operation
+           ])
+         )
+         |> append(
+           optional_identifier_issue(
+             spec.template_ref,
+             [:source_publish_specs, index, :template_ref],
+             "template_ref"
+           )
+         )
+         |> append(
+           source_publish_idempotency_scope_issue(spec.idempotency_scope, [
+             :source_publish_specs,
+             index,
+             :idempotency_scope
+           ])
          )
        end))
   end
@@ -539,6 +702,44 @@ defmodule Mezzanine.Pack.Validator do
              :workspace_policy
            ])
          )
+         |> append(
+           identifier_issue(
+             spec.sandbox_policy_ref,
+             [:execution_recipe_specs, index, :sandbox_policy_ref],
+             "sandbox_policy_ref"
+           )
+         )
+         |> append(
+           non_empty_identifier_list_issues(
+             spec.prompt_refs,
+             [:execution_recipe_specs, index, :prompt_refs],
+             "prompt_refs"
+           )
+         )
+         |> append(
+           map_issue(spec.dynamic_tool_manifest, [
+             :execution_recipe_specs,
+             index,
+             :dynamic_tool_manifest
+           ])
+         )
+         |> append(
+           atom_list_issue(spec.hook_stages, [:execution_recipe_specs, index, :hook_stages])
+         )
+         |> append(
+           optional_positive_integer_issue(
+             spec.max_turns,
+             [:execution_recipe_specs, index, :max_turns],
+             "max_turns"
+           )
+         )
+         |> append(
+           optional_positive_integer_issue(
+             spec.stall_timeout_ms,
+             [:execution_recipe_specs, index, :stall_timeout_ms],
+             "stall_timeout_ms"
+           )
+         )
        end))
   end
 
@@ -668,15 +869,26 @@ defmodule Mezzanine.Pack.Validator do
 
   defp validate_cross_references(%Manifest{} = manifest) do
     subject_kinds = identifier_set(Enum.map(manifest.subject_kind_specs, & &1.name))
+    source_kind_refs = identifier_set(Enum.map(manifest.source_kind_specs, & &1.name))
+
+    source_binding_refs =
+      identifier_set(Enum.map(manifest.source_binding_specs, & &1.binding_ref))
+
     recipe_refs = identifier_set(Enum.map(manifest.execution_recipe_specs, & &1.recipe_ref))
     decision_kinds = identifier_set(Enum.map(manifest.decision_specs, & &1.decision_kind))
     evidence_kinds = identifier_set(Enum.map(manifest.evidence_specs, & &1.evidence_kind))
     action_kinds = identifier_set(Enum.map(manifest.operator_action_specs, & &1.action_kind))
+    source_kind_subjects = source_kind_subjects(manifest.source_kind_specs)
 
     all_states =
       manifest.lifecycle_specs
       |> Enum.flat_map(&MapSet.to_list(H.lifecycle_states(&1)))
       |> MapSet.new()
+
+    states_by_subject_kind =
+      Map.new(manifest.lifecycle_specs, fn %LifecycleSpec{} = spec ->
+        {H.canonicalize_identifier!(spec.subject_kind), H.lifecycle_states(spec)}
+      end)
 
     expired_decision_kinds = expired_decision_kinds(manifest.lifecycle_specs)
 
@@ -689,6 +901,75 @@ defmodule Mezzanine.Pack.Validator do
           subject_kinds,
           [:source_kind_specs, index, :subject_kind],
           "source subject kind"
+        )
+      end)
+
+    source_binding_issues =
+      manifest.source_binding_specs
+      |> Enum.with_index()
+      |> Enum.flat_map(fn {%SourceBindingSpec{} = spec, index} ->
+        subject_kind = canonical_identifier_or_nil(spec.subject_kind)
+
+        source_kind_subject =
+          Map.get(source_kind_subjects, canonical_identifier_or_nil(spec.source_kind))
+
+        lifecycle_states = Map.get(states_by_subject_kind, subject_kind, MapSet.new())
+
+        []
+        |> append(
+          reference_issue(
+            spec.source_kind,
+            source_kind_refs,
+            [:source_binding_specs, index, :source_kind],
+            "source binding source kind"
+          )
+        )
+        |> append(
+          reference_issue(
+            spec.subject_kind,
+            subject_kinds,
+            [:source_binding_specs, index, :subject_kind],
+            "source binding subject kind"
+          )
+        )
+        |> append(
+          source_kind_subject_match_issue(
+            subject_kind,
+            source_kind_subject,
+            [:source_binding_specs, index, :subject_kind]
+          )
+        )
+        |> append(
+          source_state_mapping_reference_issues(
+            spec.state_mapping,
+            lifecycle_states,
+            [:source_binding_specs, index, :state_mapping]
+          )
+        )
+      end)
+
+    source_publish_issues =
+      manifest.source_publish_specs
+      |> Enum.with_index()
+      |> Enum.flat_map(fn {%SourcePublishSpec{} = spec, index} ->
+        []
+        |> append(
+          reference_issue(
+            spec.source_binding_ref,
+            source_binding_refs,
+            [:source_publish_specs, index, :source_binding_ref],
+            "source publish binding"
+          )
+        )
+        |> append(
+          source_publish_trigger_reference_issue(
+            spec.trigger,
+            all_states,
+            recipe_refs,
+            decision_kinds,
+            action_kinds,
+            [:source_publish_specs, index, :trigger]
+          )
         )
       end)
 
@@ -825,6 +1106,8 @@ defmodule Mezzanine.Pack.Validator do
       end)
 
     source_issues ++
+      source_binding_issues ++
+      source_publish_issues ++
       lifecycle_issues ++
       recipe_issues ++
       decision_issues ++ evidence_issues ++ operator_action_issues ++ projection_issues
@@ -907,6 +1190,91 @@ defmodule Mezzanine.Pack.Validator do
     end
   end
 
+  defp source_publish_trigger_reference_issue(
+         trigger,
+         all_states,
+         recipe_refs,
+         decision_kinds,
+         action_kinds,
+         path
+       ) do
+    case H.canonicalize_source_publish_trigger(trigger) do
+      {:ok, {:subject_entered_state, state}} ->
+        if MapSet.member?(all_states, state) do
+          []
+        else
+          [ValidationError.error(path, "references unknown lifecycle state #{inspect(state)}")]
+        end
+
+      {:ok, {:execution_completed, recipe_ref}} ->
+        reference_issue(recipe_ref, recipe_refs, path, "source publish recipe")
+
+      {:ok, {:decision_made, decision_kind, decision_value}} ->
+        reference_issue(decision_kind, decision_kinds, path, "source publish decision") ++
+          decision_value_issue(decision_value, path)
+
+      {:ok, {:operator_action, action_kind}} ->
+        reference_issue(action_kind, action_kinds, path, "source publish operator action")
+
+      {:error, message} ->
+        [ValidationError.error(path, message)]
+    end
+  end
+
+  defp source_kind_subjects(source_kind_specs) do
+    Map.new(source_kind_specs, fn %SourceKindSpec{} = spec ->
+      {H.canonicalize_identifier!(spec.name), H.canonicalize_identifier!(spec.subject_kind)}
+    end)
+  end
+
+  defp source_kind_subject_match_issue(nil, _source_kind_subject, _path), do: []
+  defp source_kind_subject_match_issue(_subject_kind, nil, _path), do: []
+
+  defp source_kind_subject_match_issue(subject_kind, source_kind_subject, path) do
+    if subject_kind == source_kind_subject do
+      []
+    else
+      [
+        ValidationError.error(
+          path,
+          "source binding subject kind must match its source kind subject kind"
+        )
+      ]
+    end
+  end
+
+  defp source_state_mapping_reference_issues(mapping, lifecycle_states, path)
+       when is_map(mapping) do
+    mapping
+    |> Map.keys()
+    |> Enum.flat_map(&source_state_mapping_reference_issue(&1, lifecycle_states, path))
+  end
+
+  defp source_state_mapping_reference_issues(_mapping, _lifecycle_states, _path), do: []
+
+  defp source_state_mapping_reference_issue(state, lifecycle_states, path) do
+    case H.canonicalize_identifier(state) do
+      {:ok, lifecycle_state} ->
+        unknown_lifecycle_state_issue(lifecycle_state, lifecycle_states, path)
+
+      {:error, message} ->
+        [ValidationError.error(path, message)]
+    end
+  end
+
+  defp unknown_lifecycle_state_issue(lifecycle_state, lifecycle_states, path) do
+    if MapSet.member?(lifecycle_states, lifecycle_state) do
+      []
+    else
+      [
+        ValidationError.error(
+          path,
+          "state_mapping references unknown lifecycle state #{inspect(lifecycle_state)}"
+        )
+      ]
+    end
+  end
+
   defp expired_decision_kinds(lifecycle_specs) do
     lifecycle_specs
     |> Enum.flat_map(&expired_decisions_for_lifecycle/1)
@@ -951,6 +1319,16 @@ defmodule Mezzanine.Pack.Validator do
     |> Enum.with_index()
     |> Enum.flat_map(fn {value, index} -> identifier_issue(value, path ++ [index], label) end)
   end
+
+  defp non_empty_identifier_list_issues([], path, label),
+    do: [ValidationError.error(path, "#{label} must not be empty")]
+
+  defp non_empty_identifier_list_issues(values, path, label) when is_list(values) do
+    identifier_list_issues(values, path, label)
+  end
+
+  defp non_empty_identifier_list_issues(_values, path, label),
+    do: [ValidationError.error(path, "#{label} must be a list")]
 
   defp duplicate_identifier_list_issues(values, path_root, label) do
     values
@@ -1000,6 +1378,29 @@ defmodule Mezzanine.Pack.Validator do
 
   defp positive_integer_issue(_value, path, label),
     do: [ValidationError.error(path, "#{label} must be a positive integer")]
+
+  defp optional_positive_integer_issue(nil, _path, _label), do: []
+
+  defp optional_positive_integer_issue(value, _path, _label) when is_integer(value) and value > 0,
+    do: []
+
+  defp optional_positive_integer_issue(_value, path, label),
+    do: [ValidationError.error(path, "#{label} must be a positive integer when present")]
+
+  defp map_issue(value, _path) when is_map(value), do: []
+  defp map_issue(_value, path), do: [ValidationError.error(path, "must be a map")]
+
+  defp atom_list_issue(values, path) when is_list(values) do
+    values
+    |> Enum.with_index()
+    |> Enum.flat_map(fn
+      {value, _index} when is_atom(value) -> []
+      {_value, index} -> [ValidationError.error(path ++ [index], "hook stage must be an atom")]
+    end)
+  end
+
+  defp atom_list_issue(_values, path),
+    do: [ValidationError.error(path, "hook_stages must be a list")]
 
   defp trigger_issue(trigger, path) do
     case H.canonicalize_trigger(trigger) do
@@ -1110,22 +1511,123 @@ defmodule Mezzanine.Pack.Validator do
   defp rekey_on_issue(values, path), do: retry_on_issue(values, path)
 
   defp workspace_policy_issue(policy, path) when is_map(policy) do
-    strategy = policy[:strategy]
+    strategy = policy[:strategy] || policy["strategy"]
+    root_ref = policy[:root_ref] || policy["root_ref"]
 
-    if strategy in [:per_subject, :per_execution, :shared, :none] do
+    strategy_issues =
+      if strategy in [:per_subject, :per_execution, :shared, :none] do
+        []
+      else
+        [
+          ValidationError.error(
+            path ++ [:strategy],
+            "workspace strategy must be :per_subject, :per_execution, :shared, or :none"
+          )
+        ]
+      end
+
+    root_issues =
+      if strategy == :none do
+        []
+      else
+        case H.canonicalize_identifier(root_ref) do
+          {:ok, _root_ref} ->
+            []
+
+          {:error, _message} ->
+            [
+              ValidationError.error(
+                path ++ [:root_ref],
+                "workspace root must be declared as root_ref when workspace strategy is not :none"
+              )
+            ]
+        end
+      end
+
+    strategy_issues ++ root_issues
+  end
+
+  defp workspace_policy_issue(_policy, path),
+    do: [ValidationError.error(path, "workspace_policy must be a map")]
+
+  defp source_state_mapping_issue(mapping, path) when is_map(mapping) do
+    base_issues =
+      if map_size(mapping) == 0 do
+        [ValidationError.error(path, "state_mapping must not be empty")]
+      else
+        []
+      end
+
+    mapping_issues =
+      mapping
+      |> Enum.flat_map(fn {state, provider_states} ->
+        identifier_issue(state, path ++ [:state], "state_mapping lifecycle state") ++
+          provider_state_list_issue(provider_states, path ++ [state])
+      end)
+
+    base_issues ++ mapping_issues
+  end
+
+  defp source_state_mapping_issue(_mapping, path),
+    do: [ValidationError.error(path, "state_mapping must be a map")]
+
+  defp provider_state_list_issue(values, path) when is_list(values) and values != [] do
+    values
+    |> Enum.with_index()
+    |> Enum.flat_map(fn
+      {value, _index} when is_binary(value) and value != "" ->
+        []
+
+      {_value, index} ->
+        ValidationError.error(
+          path ++ [index],
+          "provider state must be a non-empty string"
+        )
+        |> List.wrap()
+    end)
+  end
+
+  defp provider_state_list_issue(_values, path),
+    do: [ValidationError.error(path, "provider state list must not be empty")]
+
+  defp source_publish_trigger_issue(trigger, path) do
+    case H.canonicalize_source_publish_trigger(trigger) do
+      {:ok, {:decision_made, _decision_kind, decision_value}} ->
+        decision_value_issue(decision_value, path)
+
+      {:ok, _trigger} ->
+        []
+
+      {:error, message} ->
+        [ValidationError.error(path, message)]
+    end
+  end
+
+  defp source_publish_operation_issue(value, path) do
+    if H.source_publish_operation?(value) do
       []
     else
       [
         ValidationError.error(
-          path ++ [:strategy],
-          "workspace strategy must be :per_subject, :per_execution, :shared, or :none"
+          path,
+          "source publish operation must be :update_state, :create_comment, :update_comment, :add_label, or :remove_label"
         )
       ]
     end
   end
 
-  defp workspace_policy_issue(_policy, path),
-    do: [ValidationError.error(path, "workspace_policy must be a map")]
+  defp source_publish_idempotency_scope_issue(value, path) do
+    if H.source_publish_idempotency_scope?(value) do
+      []
+    else
+      [
+        ValidationError.error(
+          path,
+          "idempotency_scope must be :subject, :execution, or :source_event"
+        )
+      ]
+    end
+  end
 
   defp decision_trigger_issue(trigger, path) do
     case H.canonicalize_decision_trigger(trigger) do
@@ -1510,7 +2012,9 @@ defmodule Mezzanine.Pack.Normalizer do
     Manifest,
     OperatorActionSpec,
     ProjectionSpec,
+    SourceBindingSpec,
     SourceKindSpec,
+    SourcePublishSpec,
     SubjectKindSpec
   }
 
@@ -1532,6 +2036,14 @@ defmodule Mezzanine.Pack.Normalizer do
         manifest.source_kind_specs
         |> Enum.map(&normalize_source_kind/1)
         |> Enum.sort_by(& &1.name),
+      source_binding_specs:
+        manifest.source_binding_specs
+        |> Enum.map(&normalize_source_binding/1)
+        |> Enum.sort_by(& &1.binding_ref),
+      source_publish_specs:
+        manifest.source_publish_specs
+        |> Enum.map(&normalize_source_publish/1)
+        |> Enum.sort_by(& &1.publish_ref),
       context_source_specs:
         manifest.context_source_specs
         |> Enum.map(&normalize_context_source/1)
@@ -1572,6 +2084,30 @@ defmodule Mezzanine.Pack.Normalizer do
       spec
       | name: H.canonicalize_identifier!(spec.name),
         subject_kind: H.canonicalize_identifier!(spec.subject_kind)
+    }
+  end
+
+  @spec normalize_source_binding(SourceBindingSpec.t()) :: SourceBindingSpec.t()
+  defp normalize_source_binding(%SourceBindingSpec{} = spec) do
+    %SourceBindingSpec{
+      spec
+      | binding_ref: H.canonicalize_identifier!(spec.binding_ref),
+        source_kind: H.canonicalize_identifier!(spec.source_kind),
+        subject_kind: H.canonicalize_identifier!(spec.subject_kind),
+        provider: H.canonicalize_identifier!(spec.provider),
+        connection_ref: H.canonicalize_identifier!(spec.connection_ref),
+        state_mapping: normalize_state_mapping(spec.state_mapping)
+    }
+  end
+
+  @spec normalize_source_publish(SourcePublishSpec.t()) :: SourcePublishSpec.t()
+  defp normalize_source_publish(%SourcePublishSpec{} = spec) do
+    %SourcePublishSpec{
+      spec
+      | publish_ref: H.canonicalize_identifier!(spec.publish_ref),
+        source_binding_ref: H.canonicalize_identifier!(spec.source_binding_ref),
+        trigger: H.canonicalize_source_publish_trigger!(spec.trigger),
+        template_ref: normalize_optional_identifier(spec.template_ref)
     }
   end
 
@@ -1638,7 +2174,15 @@ defmodule Mezzanine.Pack.Normalizer do
         retry_config:
           spec.retry_config
           |> Map.put(:retry_on, Enum.uniq(retry_on))
-          |> Map.put(:rekey_on, Enum.uniq(rekey_on))
+          |> Map.put(:rekey_on, Enum.uniq(rekey_on)),
+        workspace_policy: normalize_workspace_policy(spec.workspace_policy),
+        sandbox_policy_ref: H.canonicalize_identifier!(spec.sandbox_policy_ref),
+        prompt_refs:
+          spec.prompt_refs
+          |> Enum.map(&H.canonicalize_identifier!/1)
+          |> Enum.uniq()
+          |> Enum.sort(),
+        hook_stages: Enum.uniq(spec.hook_stages)
     }
   end
 
@@ -1704,6 +2248,28 @@ defmodule Mezzanine.Pack.Normalizer do
         sort: Enum.sort_by(spec.sort, fn {field, direction} -> {field, direction} end)
     }
   end
+
+  defp normalize_state_mapping(mapping) when is_map(mapping) do
+    Map.new(mapping, fn {state, provider_states} ->
+      {H.canonicalize_identifier!(state),
+       Enum.map(provider_states, &H.canonicalize_identifier!/1)}
+    end)
+  end
+
+  defp normalize_workspace_policy(policy) when is_map(policy) do
+    case Map.get(policy, :root_ref) || Map.get(policy, "root_ref") do
+      nil ->
+        policy
+
+      root_ref ->
+        policy
+        |> Map.drop(["root_ref"])
+        |> Map.put(:root_ref, H.canonicalize_identifier!(root_ref))
+    end
+  end
+
+  defp normalize_optional_identifier(nil), do: nil
+  defp normalize_optional_identifier(value), do: H.canonicalize_identifier!(value)
 end
 
 defmodule Mezzanine.Pack.Builder do
@@ -1731,6 +2297,8 @@ defmodule Mezzanine.Pack.Builder do
       manifest: manifest,
       subject_kinds: subject_kinds,
       source_kinds: Map.new(manifest.source_kind_specs, &{&1.name, &1}),
+      source_bindings_by_ref: Map.new(manifest.source_binding_specs, &{&1.binding_ref, &1}),
+      source_publishers_by_ref: Map.new(manifest.source_publish_specs, &{&1.publish_ref, &1}),
       context_sources_by_ref:
         Map.new(manifest.context_source_specs, fn %ContextSourceSpec{} = spec ->
           {spec.source_ref, spec}

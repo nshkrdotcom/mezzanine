@@ -18,7 +18,9 @@ defmodule Mezzanine.Pack.Serializer do
     Manifest,
     OperatorActionSpec,
     ProjectionSpec,
+    SourceBindingSpec,
     SourceKindSpec,
+    SourcePublishSpec,
     SubjectKindSpec
   }
 
@@ -56,6 +58,10 @@ defmodule Mezzanine.Pack.Serializer do
       "max_supersession_depth" => manifest.max_supersession_depth,
       "subject_kind_specs" => Enum.map(manifest.subject_kind_specs, &serialize_subject_kind/1),
       "source_kind_specs" => Enum.map(manifest.source_kind_specs, &serialize_source_kind/1),
+      "source_binding_specs" =>
+        Enum.map(manifest.source_binding_specs, &serialize_source_binding/1),
+      "source_publish_specs" =>
+        Enum.map(manifest.source_publish_specs, &serialize_source_publish/1),
       "context_source_specs" =>
         Enum.map(manifest.context_source_specs, &serialize_context_source/1),
       "lifecycle_specs" => Enum.map(manifest.lifecycle_specs, &serialize_lifecycle/1),
@@ -110,6 +116,64 @@ defmodule Mezzanine.Pack.Serializer do
       subject_kind: payload["subject_kind"],
       description: payload["description"],
       adapter_mod: deserialize_module(payload["adapter_mod"])
+    }
+  end
+
+  defp serialize_source_binding(%SourceBindingSpec{} = spec) do
+    %{
+      "binding_ref" => serialize_identifier(spec.binding_ref),
+      "source_kind" => serialize_identifier(spec.source_kind),
+      "subject_kind" => serialize_identifier(spec.subject_kind),
+      "provider" => serialize_identifier(spec.provider),
+      "connection_ref" => serialize_identifier(spec.connection_ref),
+      "state_mapping" => serialize_state_mapping(spec.state_mapping),
+      "candidate_filters" => serialize_map(spec.candidate_filters),
+      "cursor_policy" => serialize_map(spec.cursor_policy),
+      "source_write_policy" => serialize_map(spec.source_write_policy)
+    }
+  end
+
+  defp deserialize_source_binding(payload) do
+    %SourceBindingSpec{
+      binding_ref: payload["binding_ref"],
+      source_kind: payload["source_kind"],
+      subject_kind: payload["subject_kind"],
+      provider: payload["provider"],
+      connection_ref: payload["connection_ref"],
+      state_mapping: deserialize_state_mapping(payload["state_mapping"] || %{}),
+      candidate_filters: deserialize_map(payload["candidate_filters"] || %{}),
+      cursor_policy: deserialize_map(payload["cursor_policy"] || %{}),
+      source_write_policy: deserialize_map(payload["source_write_policy"] || %{})
+    }
+  end
+
+  defp serialize_source_publish(%SourcePublishSpec{} = spec) do
+    %{
+      "publish_ref" => serialize_identifier(spec.publish_ref),
+      "source_binding_ref" => serialize_identifier(spec.source_binding_ref),
+      "trigger" => serialize_source_publish_trigger(spec.trigger),
+      "operation" => Atom.to_string(spec.operation),
+      "template_ref" => serialize_nullable_identifier(spec.template_ref),
+      "idempotency_scope" => Atom.to_string(spec.idempotency_scope)
+    }
+  end
+
+  defp deserialize_source_publish(payload) do
+    %SourcePublishSpec{
+      publish_ref: payload["publish_ref"],
+      source_binding_ref: payload["source_binding_ref"],
+      trigger: deserialize_source_publish_trigger(payload["trigger"]),
+      operation:
+        deserialize_atom(payload["operation"], [
+          :update_state,
+          :create_comment,
+          :update_comment,
+          :add_label,
+          :remove_label
+        ]),
+      template_ref: payload["template_ref"],
+      idempotency_scope:
+        deserialize_atom(payload["idempotency_scope"], [:subject, :execution, :source_event])
     }
   end
 
@@ -193,6 +257,12 @@ defmodule Mezzanine.Pack.Serializer do
       "grant_spec" => serialize_map(spec.grant_spec),
       "retry_config" => serialize_map(spec.retry_config),
       "workspace_policy" => serialize_map(spec.workspace_policy),
+      "sandbox_policy_ref" => serialize_identifier(spec.sandbox_policy_ref),
+      "prompt_refs" => Enum.map(spec.prompt_refs, &serialize_identifier/1),
+      "dynamic_tool_manifest" => serialize_map(spec.dynamic_tool_manifest),
+      "hook_stages" => Enum.map(spec.hook_stages, &Atom.to_string/1),
+      "max_turns" => spec.max_turns,
+      "stall_timeout_ms" => spec.stall_timeout_ms,
       "execution_params" => serialize_map(spec.execution_params),
       "applicable_to" => Enum.map(spec.applicable_to, &serialize_identifier/1)
     }
@@ -211,12 +281,18 @@ defmodule Mezzanine.Pack.Serializer do
           :inference
         ]),
       placement_ref: payload["placement_ref"],
-      required_lifecycle_hints: payload["required_lifecycle_hints"] || [],
-      grant_spec: deserialize_map(payload["grant_spec"] || %{}),
-      retry_config: deserialize_retry_config(payload["retry_config"] || %{}),
-      workspace_policy: deserialize_workspace_policy(payload["workspace_policy"] || %{}),
-      execution_params: deserialize_map(payload["execution_params"] || %{}),
-      applicable_to: payload["applicable_to"] || []
+      required_lifecycle_hints: payload_list(payload, "required_lifecycle_hints"),
+      grant_spec: deserialize_map(payload_map(payload, "grant_spec")),
+      retry_config: deserialize_retry_config(payload_map(payload, "retry_config")),
+      workspace_policy: deserialize_workspace_policy(payload_map(payload, "workspace_policy")),
+      sandbox_policy_ref: payload["sandbox_policy_ref"],
+      prompt_refs: payload_list(payload, "prompt_refs"),
+      dynamic_tool_manifest: deserialize_map(payload_map(payload, "dynamic_tool_manifest")),
+      hook_stages: payload |> payload_list("hook_stages") |> deserialize_existing_atom_list(),
+      max_turns: payload["max_turns"],
+      stall_timeout_ms: payload["stall_timeout_ms"],
+      execution_params: deserialize_map(payload_map(payload, "execution_params")),
+      applicable_to: payload_list(payload, "applicable_to")
     }
   end
 
@@ -378,6 +454,26 @@ defmodule Mezzanine.Pack.Serializer do
     %{"kind" => "subject_entered_state", "state" => serialize_identifier(state)}
   end
 
+  defp serialize_source_publish_trigger({:subject_entered_state, state}) do
+    %{"kind" => "subject_entered_state", "state" => serialize_identifier(state)}
+  end
+
+  defp serialize_source_publish_trigger({:execution_completed, recipe_ref}) do
+    %{"kind" => "execution_completed", "recipe_ref" => serialize_identifier(recipe_ref)}
+  end
+
+  defp serialize_source_publish_trigger({:decision_made, decision_kind, decision_value}) do
+    %{
+      "kind" => "decision_made",
+      "decision_kind" => serialize_identifier(decision_kind),
+      "decision_value" => Atom.to_string(decision_value)
+    }
+  end
+
+  defp serialize_source_publish_trigger({:operator_action, action_kind}) do
+    %{"kind" => "operator_action", "action_kind" => serialize_identifier(action_kind)}
+  end
+
   defp deserialize_trigger(%{"kind" => "auto"}), do: :auto
 
   defp deserialize_trigger(%{"kind" => "execution_requested", "recipe_ref" => recipe_ref}),
@@ -417,6 +513,33 @@ defmodule Mezzanine.Pack.Serializer do
 
   defp deserialize_trigger(%{"kind" => "subject_entered_state", "state" => state}) do
     {:subject_entered_state, state}
+  end
+
+  defp deserialize_source_publish_trigger(%{"kind" => "subject_entered_state", "state" => state}) do
+    {:subject_entered_state, state}
+  end
+
+  defp deserialize_source_publish_trigger(%{
+         "kind" => "execution_completed",
+         "recipe_ref" => recipe_ref
+       }) do
+    {:execution_completed, recipe_ref}
+  end
+
+  defp deserialize_source_publish_trigger(%{
+         "kind" => "decision_made",
+         "decision_kind" => decision_kind,
+         "decision_value" => decision_value
+       }) do
+    {:decision_made, decision_kind,
+     deserialize_atom(decision_value, [:accept, :reject, :waive, :expired])}
+  end
+
+  defp deserialize_source_publish_trigger(%{
+         "kind" => "operator_action",
+         "action_kind" => action_kind
+       }) do
+    {:operator_action, action_kind}
   end
 
   defp serialize_decision_trigger({:after_execution_completed, recipe_ref}) do
@@ -527,6 +650,9 @@ defmodule Mezzanine.Pack.Serializer do
   defp serialize_identifier(value) when is_atom(value), do: Atom.to_string(value)
   defp serialize_identifier(value) when is_binary(value), do: value
 
+  defp serialize_nullable_identifier(nil), do: nil
+  defp serialize_nullable_identifier(value), do: serialize_identifier(value)
+
   defp serialize_module(nil), do: nil
   defp serialize_module(module) when is_atom(module), do: Atom.to_string(module)
 
@@ -536,6 +662,20 @@ defmodule Mezzanine.Pack.Serializer do
     String.to_existing_atom(module_name)
   rescue
     ArgumentError -> nil
+  end
+
+  defp payload_map(payload, key) do
+    case Map.get(payload, key) do
+      nil -> %{}
+      value -> value
+    end
+  end
+
+  defp payload_list(payload, key) do
+    case Map.get(payload, key) do
+      nil -> []
+      value -> value
+    end
   end
 
   defp serialize_map(map) when is_map(map) do
@@ -555,6 +695,18 @@ defmodule Mezzanine.Pack.Serializer do
 
   defp deserialize_nullable_map(nil), do: nil
   defp deserialize_nullable_map(map), do: deserialize_map(map)
+
+  defp serialize_state_mapping(mapping) when is_map(mapping) do
+    Map.new(mapping, fn {state, provider_states} ->
+      {serialize_identifier(state), Enum.map(provider_states, &to_string/1)}
+    end)
+  end
+
+  defp deserialize_state_mapping(mapping) when is_map(mapping) do
+    Map.new(mapping, fn {state, provider_states} ->
+      {state, Enum.map(provider_states, &to_string/1)}
+    end)
+  end
 
   defp serialize_value(value) when is_map(value), do: serialize_map(value)
   defp serialize_value(value) when is_list(value), do: Enum.map(value, &serialize_value/1)
@@ -612,6 +764,13 @@ defmodule Mezzanine.Pack.Serializer do
     ])
   end
 
+  defp deserialize_existing_atom_list(values) when is_list(values) do
+    Enum.map(values, fn
+      value when is_atom(value) -> value
+      value when is_binary(value) -> String.to_existing_atom(value)
+    end)
+  end
+
   defp deserialize_retry_config(payload) do
     payload
     |> deserialize_map()
@@ -658,6 +817,18 @@ defmodule Mezzanine.Pack.Serializer do
         deserialize_manifest_entries(payload, "subject_kind_specs", &deserialize_subject_kind/1),
       source_kind_specs:
         deserialize_manifest_entries(payload, "source_kind_specs", &deserialize_source_kind/1),
+      source_binding_specs:
+        deserialize_manifest_entries(
+          payload,
+          "source_binding_specs",
+          &deserialize_source_binding/1
+        ),
+      source_publish_specs:
+        deserialize_manifest_entries(
+          payload,
+          "source_publish_specs",
+          &deserialize_source_publish/1
+        ),
       context_source_specs:
         deserialize_manifest_entries(
           payload,

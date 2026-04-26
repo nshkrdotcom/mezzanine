@@ -124,7 +124,14 @@ defmodule Mezzanine.TestPacks.ExpenseApprovalPack do
             backoff: :linear,
             retry_on: [:transient_failure, :timeout]
           },
-          workspace_policy: %{strategy: :per_subject, reuse: true, cleanup: :on_terminal},
+          workspace_policy: %{
+            strategy: :per_subject,
+            reuse: true,
+            cleanup: :on_terminal,
+            root_ref: :expense_workspaces
+          },
+          sandbox_policy_ref: :standard_expense_policy,
+          prompt_refs: [:expense_policy_prompt],
           execution_params: %{timeout_ms: 60_000},
           applicable_to: [:expense_request]
         }

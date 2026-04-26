@@ -11,7 +11,9 @@ defmodule Mezzanine.Pack.Manifest do
     LifecycleSpec,
     OperatorActionSpec,
     ProjectionSpec,
+    SourceBindingSpec,
     SourceKindSpec,
+    SourcePublishSpec,
     SubjectKindSpec
   }
 
@@ -26,6 +28,8 @@ defmodule Mezzanine.Pack.Manifest do
           max_supersession_depth: pos_integer(),
           subject_kind_specs: [SubjectKindSpec.t()],
           source_kind_specs: [SourceKindSpec.t()],
+          source_binding_specs: [SourceBindingSpec.t()],
+          source_publish_specs: [SourcePublishSpec.t()],
           context_source_specs: [ContextSourceSpec.t()],
           lifecycle_specs: [LifecycleSpec.t()],
           execution_recipe_specs: [ExecutionRecipeSpec.t()],
@@ -43,6 +47,8 @@ defmodule Mezzanine.Pack.Manifest do
     max_supersession_depth: 8,
     subject_kind_specs: [],
     source_kind_specs: [],
+    source_binding_specs: [],
+    source_publish_specs: [],
     context_source_specs: [],
     lifecycle_specs: [],
     execution_recipe_specs: [],
@@ -50,6 +56,73 @@ defmodule Mezzanine.Pack.Manifest do
     evidence_specs: [],
     operator_action_specs: [],
     projection_specs: []
+  ]
+end
+
+defmodule Mezzanine.Pack.SourceBindingSpec do
+  @moduledoc """
+  Installed source binding required by a pack.
+  """
+
+  @type pack_identifier :: atom() | String.t()
+
+  @type t :: %__MODULE__{
+          binding_ref: pack_identifier(),
+          source_kind: pack_identifier(),
+          subject_kind: pack_identifier(),
+          provider: pack_identifier(),
+          connection_ref: pack_identifier(),
+          state_mapping: %{optional(pack_identifier()) => [String.t()]},
+          candidate_filters: map(),
+          cursor_policy: map(),
+          source_write_policy: map()
+        }
+
+  defstruct [
+    :binding_ref,
+    :source_kind,
+    :subject_kind,
+    :provider,
+    :connection_ref,
+    state_mapping: %{},
+    candidate_filters: %{},
+    cursor_policy: %{},
+    source_write_policy: %{}
+  ]
+end
+
+defmodule Mezzanine.Pack.SourcePublishSpec do
+  @moduledoc """
+  Source-side publish rule emitted through lower connector effects.
+  """
+
+  @type pack_identifier :: atom() | String.t()
+  @type operation ::
+          :update_state | :create_comment | :update_comment | :add_label | :remove_label
+  @type idempotency_scope :: :subject | :execution | :source_event
+
+  @type trigger ::
+          {:subject_entered_state, pack_identifier()}
+          | {:execution_completed, pack_identifier()}
+          | {:decision_made, pack_identifier(), atom()}
+          | {:operator_action, pack_identifier()}
+
+  @type t :: %__MODULE__{
+          publish_ref: pack_identifier(),
+          source_binding_ref: pack_identifier(),
+          trigger: trigger(),
+          operation: operation(),
+          template_ref: pack_identifier() | nil,
+          idempotency_scope: idempotency_scope()
+        }
+
+  defstruct [
+    :publish_ref,
+    :source_binding_ref,
+    :trigger,
+    :operation,
+    :template_ref,
+    idempotency_scope: :subject
   ]
 end
 
@@ -186,6 +259,7 @@ defmodule Mezzanine.Pack.ExecutionRecipeSpec do
 
   @type workspace_policy :: %{
           required(:strategy) => :per_subject | :per_execution | :shared | :none,
+          optional(:root_ref) => pack_identifier(),
           optional(:reuse) => boolean(),
           optional(:cleanup) => :on_completion | :on_terminal | :never
         }
@@ -206,6 +280,12 @@ defmodule Mezzanine.Pack.ExecutionRecipeSpec do
           grant_spec: grant_spec(),
           retry_config: retry_config(),
           workspace_policy: workspace_policy(),
+          sandbox_policy_ref: pack_identifier() | nil,
+          prompt_refs: [pack_identifier()],
+          dynamic_tool_manifest: map(),
+          hook_stages: [atom()],
+          max_turns: pos_integer() | nil,
+          stall_timeout_ms: pos_integer() | nil,
           execution_params: map(),
           applicable_to: [pack_identifier()]
         }
@@ -219,6 +299,12 @@ defmodule Mezzanine.Pack.ExecutionRecipeSpec do
     grant_spec: %{},
     retry_config: %{max_attempts: 3, backoff: :exponential},
     workspace_policy: %{strategy: :per_subject},
+    sandbox_policy_ref: nil,
+    prompt_refs: [],
+    dynamic_tool_manifest: %{},
+    hook_stages: [],
+    max_turns: nil,
+    stall_timeout_ms: nil,
     execution_params: %{},
     applicable_to: []
   ]

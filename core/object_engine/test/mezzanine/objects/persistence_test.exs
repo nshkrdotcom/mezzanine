@@ -56,6 +56,87 @@ defmodule Mezzanine.Objects.PersistenceTest do
     assert audit_fact.payload["schema_hash"] =~ "sha256:"
   end
 
+  test "ingest persists provider source metadata and progress refs" do
+    assert {:ok, subject} =
+             SubjectRecord.ingest(%{
+               installation_id: "inst-source-metadata",
+               source_ref: "linear:issue:LIN-101",
+               source_event_id: "src_linear_101_rev_2",
+               source_binding_id: "linear-primary",
+               provider: "linear",
+               provider_external_ref: "LIN-101",
+               provider_revision: "rev-2",
+               source_state: "Todo",
+               state_mapping: %{
+                 provider_state: "Todo",
+                 lifecycle_state: "candidate",
+                 terminal?: false
+               },
+               blocker_refs: [
+                 %{
+                   provider: "linear",
+                   external_ref: "LIN-100",
+                   terminal?: false,
+                   relation: "blocked_by"
+                 }
+               ],
+               labels: ["backend", "needs-triage"],
+               priority: 2,
+               branch_ref: "feature/lin-101",
+               source_url: "https://linear.app/example/issue/LIN-101",
+               workpad_ref: "linear-comment:workpad-1",
+               progress_ref: "linear-comment:progress-1",
+               source_routing: %{team_id: "team-1", assignee_id: "user-1"},
+               lifecycle_version: 3,
+               payload_schema_revision: "linear.issue.v1@2",
+               subject_kind: "linear_coding_ticket",
+               lifecycle_state: "candidate",
+               schema_ref: SubjectPayloadSchema.default_schema_ref!("linear_coding_ticket"),
+               schema_version:
+                 SubjectPayloadSchema.default_schema_version!("linear_coding_ticket"),
+               payload: %{
+                 identifier: "linear:issue:LIN-101",
+                 source_kind: "linear",
+                 title: "Persist source metadata"
+               },
+               trace_id: "trace-source-metadata",
+               causation_id: "cause-source-metadata",
+               actor_ref: %{kind: :source_reducer}
+             })
+
+    assert subject.source_event_id == "src_linear_101_rev_2"
+    assert subject.source_binding_id == "linear-primary"
+    assert subject.provider == "linear"
+    assert subject.provider_external_ref == "LIN-101"
+    assert subject.provider_revision == "rev-2"
+    assert subject.source_state == "Todo"
+    assert subject.state_mapping["lifecycle_state"] == "candidate"
+    assert [%{"external_ref" => "LIN-100"}] = subject.blocker_refs
+    assert subject.labels == ["backend", "needs-triage"]
+    assert subject.priority == 2
+    assert subject.branch_ref == "feature/lin-101"
+    assert subject.source_url =~ "LIN-101"
+    assert subject.workpad_ref == "linear-comment:workpad-1"
+    assert subject.progress_ref == "linear-comment:progress-1"
+    assert subject.source_routing["team_id"] == "team-1"
+    assert subject.lifecycle_version == 3
+    assert subject.payload_schema_revision == "linear.issue.v1@2"
+
+    assert has_index?("subject_records", [
+             "installation_id",
+             "source_binding_id",
+             "provider_external_ref"
+           ])
+
+    assert {:ok, [audit_fact]} =
+             AuditFact.list_trace("inst-source-metadata", "trace-source-metadata")
+
+    assert audit_fact.payload["source_event_id"] == subject.source_event_id
+    assert audit_fact.payload["source_binding_id"] == subject.source_binding_id
+    assert audit_fact.payload["provider_external_ref"] == subject.provider_external_ref
+    assert audit_fact.payload["source_state"] == subject.source_state
+  end
+
   test "source-owned pack subject schemas are accepted for governed proofs" do
     assert {:ok, expense_subject} =
              SubjectRecord.ingest(%{

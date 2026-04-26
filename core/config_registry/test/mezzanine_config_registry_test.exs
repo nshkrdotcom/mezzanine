@@ -16,6 +16,9 @@ defmodule MezzanineConfigRegistryTest do
     Manifest,
     ProjectionSpec,
     Serializer,
+    SourceBindingSpec,
+    SourceKindSpec,
+    SourcePublishSpec,
     SubjectKindSpec
   }
 
@@ -364,7 +367,17 @@ defmodule MezzanineConfigRegistryTest do
     assert recipe.workspace_policy[:reuse] == true
     assert recipe.retry_config[:rekey_on] == [:semantic_failure]
     assert recipe.required_lifecycle_hints == []
+    assert recipe.sandbox_policy_ref == "standard_registry_fixture"
+    assert recipe.prompt_refs == ["registry_fixture_prompt"]
+    assert recipe.dynamic_tool_manifest == %{tools: ["linear.comment.update"]}
+    assert recipe.hook_stages == [:prepare_workspace]
+    assert recipe.max_turns == 8
+    assert recipe.stall_timeout_ms == 300_000
     assert compiled.context_sources_by_ref["workspace_memory"].binding_key == "shared_memory"
+    assert compiled.source_bindings_by_ref["expense_request_linear_primary"].provider == "linear"
+
+    assert compiled.source_publishers_by_ref["expense_request_progress"].operation ==
+             :update_comment
   end
 
   defp register_fixture_pack! do
@@ -421,6 +434,9 @@ defmodule MezzanineConfigRegistryTest do
     pack_slug = Keyword.get(opts, :pack_slug, :expense_approval)
     version = Keyword.get(opts, :version, "1.0.0")
     subject_kind = Keyword.get(opts, :subject_kind, :expense_request)
+    source_kind = Keyword.get(opts, :source_kind, :"#{subject_kind}_linear")
+    source_binding_ref = Keyword.get(opts, :source_binding_ref, :"#{subject_kind}_linear_primary")
+    source_publish_ref = Keyword.get(opts, :source_publish_ref, :"#{subject_kind}_progress")
     recipe_ref = Keyword.get(opts, :recipe_ref, :"#{subject_kind}_capture")
     terminal_state = Keyword.get(opts, :terminal_state, :"#{subject_kind}_done")
     projection_name = Keyword.get(opts, :projection_name, :"active_#{subject_kind}")
@@ -432,6 +448,40 @@ defmodule MezzanineConfigRegistryTest do
       max_supersession_depth: 12,
       subject_kind_specs: [
         %SubjectKindSpec{name: subject_kind}
+      ],
+      source_kind_specs: [
+        %SourceKindSpec{
+          name: source_kind,
+          subject_kind: subject_kind,
+          description: "Linear source fixture"
+        }
+      ],
+      source_binding_specs: [
+        %SourceBindingSpec{
+          binding_ref: source_binding_ref,
+          source_kind: source_kind,
+          subject_kind: subject_kind,
+          provider: :linear,
+          connection_ref: :linear_primary,
+          state_mapping: %{
+            :submitted => ["triage"],
+            :processing => ["in_progress"],
+            terminal_state => ["done"]
+          },
+          candidate_filters: %{team_key: "ops"},
+          cursor_policy: %{strategy: :incremental},
+          source_write_policy: %{operation_scopes: ["comments"]}
+        }
+      ],
+      source_publish_specs: [
+        %SourcePublishSpec{
+          publish_ref: source_publish_ref,
+          source_binding_ref: source_binding_ref,
+          trigger: {:subject_entered_state, :processing},
+          operation: :update_comment,
+          template_ref: :progress_comment,
+          idempotency_scope: :subject
+        }
       ],
       context_source_specs: [
         %ContextSourceSpec{
@@ -466,7 +516,18 @@ defmodule MezzanineConfigRegistryTest do
           runtime_class: :session,
           placement_ref: :local_runner,
           required_lifecycle_hints: required_lifecycle_hints,
-          workspace_policy: %{strategy: :per_subject, reuse: true, cleanup: :on_terminal},
+          workspace_policy: %{
+            strategy: :per_subject,
+            reuse: true,
+            cleanup: :on_terminal,
+            root_ref: :registry_fixture_workspaces
+          },
+          sandbox_policy_ref: :standard_registry_fixture,
+          prompt_refs: [:registry_fixture_prompt],
+          dynamic_tool_manifest: %{tools: ["linear.comment.update"]},
+          hook_stages: [:prepare_workspace],
+          max_turns: 8,
+          stall_timeout_ms: 300_000,
           retry_config: %{
             max_attempts: 3,
             backoff: :exponential,

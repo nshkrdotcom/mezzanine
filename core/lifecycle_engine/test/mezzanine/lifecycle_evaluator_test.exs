@@ -590,6 +590,9 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
           runtime_class: runtime_class,
           placement_ref: :local_runner,
           required_lifecycle_hints: required_lifecycle_hints,
+          workspace_policy: %{strategy: :per_subject, root_ref: :expense_workspaces},
+          sandbox_policy_ref: :standard_expense_policy,
+          prompt_refs: [:expense_capture_prompt],
           execution_params: %{timeout_ms: 300_000},
           retry_config: %{
             max_attempts: 3,

@@ -7,6 +7,7 @@ defmodule Mezzanine.Pack.Registry do
 
   alias Mezzanine.ConfigRegistry.{ClusterInvalidation, Installation}
   alias Mezzanine.Pack.Serializer
+  require Logger
 
   @table :mezzanine_pack_registry
   @cluster_invalidation_publish_event [:mezzanine, :cluster_invalidation, :publish]
@@ -190,8 +191,17 @@ defmodule Mezzanine.Pack.Registry do
     {:ok, installations} = Installation.active_installations()
 
     Enum.each(installations, fn installation ->
-      {:ok, _compiled_pack} =
-        load_installation(installation.id, installation.compiled_pack_revision, table)
+      case load_installation(installation.id, installation.compiled_pack_revision, table) do
+        {:ok, _compiled_pack} ->
+          :ok
+
+        {:error, reason} ->
+          :ets.delete(table, {:installation, installation.id})
+
+          Logger.warning(
+            "skipping invalid active pack installation #{installation.id}: #{inspect(reason)}"
+          )
+      end
     end)
 
     :ok
