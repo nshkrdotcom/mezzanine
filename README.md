@@ -63,7 +63,9 @@ The active buildout in this repo is the neutral core scaffold:
 - `core/pack_compiler`
 - `core/lifecycle_engine`
 - `core/config_registry`
+- `core/source_engine`
 - `core/object_engine`
+- `core/workspace_engine`
 - `core/execution_engine`
 - `core/runtime_scheduler`
 - `core/decision_engine`
@@ -80,6 +82,9 @@ into neutral packages with current naming.
 Current posture:
 
 - new reusable substrate work lands in the neutral package graph
+- source admission and workspace path-safety contracts are now neutral
+  packages (`core/source_engine` and `core/workspace_engine`); provider calls
+  remain below Mezzanine, and product source defaults remain above it
 - durable dispatch ownership now belongs to `Mezzanine.WorkflowRuntime`
   workflow handoff contracts plus lower-gateway activities; Oban remains only
   for the explicit WorkflowRuntime outbox and local GC queues

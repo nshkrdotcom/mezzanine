@@ -13,7 +13,9 @@ graph:
 - `pack_compiler`
 - `lifecycle_engine`
 - `config_registry`
+- `source_engine`
 - `object_engine`
+- `workspace_engine`
 - `execution_engine`
 - `runtime_scheduler`
 - `decision_engine`
@@ -25,4 +27,7 @@ graph:
 
 The `ops_*` packages still host live semantic domains. New reusable work lands
 in the neutral package graph while later phases migrate the remaining semantic
-hosts to current package names and boundaries.
+hosts to current package names and boundaries. Source admission and workspace
+path-safety contracts now have neutral homes in `source_engine` and
+`workspace_engine`; provider execution and product defaults stay outside those
+packages.
