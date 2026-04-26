@@ -105,6 +105,7 @@ defmodule Mezzanine.WorkflowRuntime.OperatorSignalControlTest do
     assert {"operator.resume", "operator-resume.v1"} in registered
     assert {"operator.retry", "operator-retry.v1"} in registered
     assert {"operator.replan", "operator-replan.v1"} in registered
+    assert {"operator.rework", "operator-rework.v1"} in registered
 
     assert OperatorSignalControl.registered_signal?("operator.cancel", "operator-cancel.v1")
     refute OperatorSignalControl.registered_signal?("operator.cancel", "bad-version")
@@ -250,6 +251,21 @@ defmodule Mezzanine.WorkflowRuntime.OperatorSignalControlTest do
 
     assert resumed.workflow_mode == "running"
     assert resumed.last_signal_sequence == 2
+
+    assert {:ok, rework} =
+             OperatorSignalControl.apply_ordered_signal(
+               resumed,
+               Map.merge(signal_attrs(), %{
+                 signal_id: "signal-098-rework",
+                 signal_name: "operator.rework",
+                 signal_version: "operator-rework.v1",
+                 signal_sequence: 3,
+                 idempotency_key: "idem-signal-098-rework"
+               })
+             )
+
+    assert rework.workflow_mode == "rework_requested"
+    assert rework.last_signal_sequence == 3
   end
 
   test "bounded wait reads projection state and stale Temporal delivery never renders complete" do

@@ -85,6 +85,11 @@ Current posture:
 - source admission and workspace path-safety contracts are now neutral
   packages (`core/source_engine` and `core/workspace_engine`); provider calls
   remain below Mezzanine, and product source defaults remain above it
+- accepted lifecycle transitions now persist the execution row, typed
+  workflow-start outbox row, and Oban dispatch job in the same database
+  transaction; the lifecycle engine carries only refs, hashes, deterministic
+  workflow identity, and idempotency keys, while Temporal client code remains
+  isolated in `Mezzanine.WorkflowRuntime`
 - durable dispatch ownership now belongs to `Mezzanine.WorkflowRuntime`
   workflow handoff contracts plus lower-gateway activities; Oban remains only
   for the explicit WorkflowRuntime outbox and local GC queues

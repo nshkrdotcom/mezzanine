@@ -59,6 +59,14 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     assert :compile_citadel_authority in contract.activity_sequence
     assert :submit_jido_lower_run in contract.activity_sequence
     assert :persist_terminal_receipt in contract.activity_sequence
+    assert :cleanup_workspace in contract.activity_sequence
+    assert :publish_source in contract.activity_sequence
+    assert :materialize_evidence in contract.activity_sequence
+    assert :create_review in contract.activity_sequence
+    assert contract.activity_owners.cleanup_workspace == :mezzanine
+    assert contract.activity_owners.publish_source == :jido_integration
+    assert contract.activity_owners.materialize_evidence == :mezzanine
+    assert contract.activity_owners.create_review == :mezzanine
 
     assert {:ok, input} = ExecutionLifecycleWorkflow.new_input(lifecycle_attrs())
     assert input.workflow_type == "execution_attempt"
@@ -108,7 +116,17 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
                  Mezzanine.Activities.RequestDecision =>
                    &ExecutionLifecycleWorkflow.compile_citadel_authority_activity/1,
                  Mezzanine.Activities.StartLowerExecution =>
-                   &ExecutionLifecycleWorkflow.submit_jido_lower_run_activity/1
+                   &ExecutionLifecycleWorkflow.submit_jido_lower_run_activity/1,
+                 Mezzanine.Activities.RecordEvidence =>
+                   &ExecutionLifecycleWorkflow.persist_terminal_receipt_activity/1,
+                 Mezzanine.Activities.CleanupWorkspace =>
+                   &ExecutionLifecycleWorkflow.cleanup_workspace_activity/1,
+                 Mezzanine.Activities.PublishSource =>
+                   &ExecutionLifecycleWorkflow.publish_source_activity/1,
+                 Mezzanine.Activities.MaterializeEvidence =>
+                   &ExecutionLifecycleWorkflow.materialize_evidence_activity/1,
+                 Mezzanine.Activities.CreateReview =>
+                   &ExecutionLifecycleWorkflow.create_review_activity/1
                },
                signals: [
                  {"lower_receipt",
@@ -120,6 +138,23 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     assert result.signal_state == "accepted"
     assert result.last_receipt_ref == "lower-receipt-096"
     assert result.replay_resume_mode == "temporal_signal_resume"
+
+    assert result.terminal_activity_refs == [
+             "activity://workflow-093/persist-terminal-receipt",
+             "activity://workflow-093/cleanup-workspace",
+             "activity://workflow-093/publish-source",
+             "activity://workflow-093/materialize-evidence",
+             "activity://workflow-093/create-review"
+           ]
+
+    assert result.terminal_refs.workspace_cleanup_ref ==
+             "workspace-cleanup://workflow-093/workspace-main"
+
+    assert result.terminal_refs.source_publish_ref ==
+             "source-publish://workflow-093/resource-work-1"
+
+    assert result.terminal_refs.evidence_ref == "evidence://workflow-093/lower-receipt-096"
+    assert result.terminal_refs.review_ref == "review://workflow-093/lower-receipt-096"
     refute Map.has_key?(result, :raw_temporalex_result)
     refute Map.has_key?(result, :raw_history_event)
   end
@@ -151,6 +186,32 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     assert persisted.owner_repo == :mezzanine
     assert persisted.terminal_state == "completed"
     assert persisted.lower_receipt_ref == "lower-receipt-095"
+
+    terminal_attrs =
+      Map.merge(attrs, %{
+        terminal_state: "completed",
+        terminal_event_ref: "workflow-event-terminal",
+        lower_receipt_ref: "lower-receipt-095"
+      })
+
+    assert {:ok, cleanup} = ExecutionLifecycleWorkflow.cleanup_workspace_activity(terminal_attrs)
+    assert cleanup.owner_repo == :mezzanine
+    assert cleanup.workspace_ref == "workspace-main"
+    assert cleanup.result_ref == "workspace-cleanup://workflow-093/workspace-main"
+
+    assert {:ok, publish} = ExecutionLifecycleWorkflow.publish_source_activity(terminal_attrs)
+    assert publish.owner_repo == :jido_integration
+    assert publish.source_publish_ref == "source-publish://workflow-093/resource-work-1"
+
+    assert {:ok, evidence} =
+             ExecutionLifecycleWorkflow.materialize_evidence_activity(terminal_attrs)
+
+    assert evidence.owner_repo == :mezzanine
+    assert evidence.evidence_ref == "evidence://workflow-093/lower-receipt-095"
+
+    assert {:ok, review} = ExecutionLifecycleWorkflow.create_review_activity(terminal_attrs)
+    assert review.owner_repo == :mezzanine
+    assert review.review_ref == "review://workflow-093/lower-receipt-095"
   end
 
   test "receipt signals are tenant-scoped, idempotent, and late receipts are policy classified" do
@@ -202,6 +263,42 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     assert recovery.task_queue == "mezzanine.hazmat"
     assert recovery.stranded? == false
     assert recovery.idempotency_key == "idem-093"
+  end
+
+  test "turn-loop policy covers max turns, stall timeout, non-interactive blocks, and continuation" do
+    assert policy =
+             ExecutionLifecycleWorkflow.execution_control_policy(
+               Map.merge(lifecycle_attrs(), %{max_turns: 2, stall_timeout_ms: 60_000})
+             )
+
+    assert policy.retry_policy == %{max_attempts: 3}
+    assert policy.max_turns == 2
+    assert policy.stall_timeout_ms == 60_000
+    assert "operator.rework" in policy.operator_signals
+
+    assert {:stop, %{reason: :max_turns_reached, safe_action: :finalize_or_review}} =
+             ExecutionLifecycleWorkflow.turn_loop_decision(%{turn_count: 2, max_turns: 2})
+
+    assert {:retry, %{reason: :stall_timeout, safe_action: :retry_or_cancel}} =
+             ExecutionLifecycleWorkflow.turn_loop_decision(%{
+               stalled?: true,
+               stall_timeout_ms: 60_000
+             })
+
+    assert {:blocked, %{reason: :input_required, safe_action: :operator_review}} =
+             ExecutionLifecycleWorkflow.turn_loop_decision(%{receipt_state: "input_required"})
+
+    assert {:failure, %{reason: :approval_required, safe_action: :operator_review}} =
+             ExecutionLifecycleWorkflow.turn_loop_decision(%{receipt_state: "approval_required"})
+
+    assert {:finalize, %{reason: :source_terminal, safe_action: :terminal_cleanup}} =
+             ExecutionLifecycleWorkflow.turn_loop_decision(%{source_state: "terminal"})
+
+    assert {:continue, %{reason: :active_state_continuation, safe_action: :next_turn}} =
+             ExecutionLifecycleWorkflow.turn_loop_decision(%{
+               source_state: "active",
+               turn_count: 1
+             })
   end
 
   defp lifecycle_attrs do

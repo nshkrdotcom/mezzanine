@@ -15,6 +15,7 @@ defmodule Mezzanine.LifecycleEvaluator do
   alias Mezzanine.Lifecycle.Evaluator, as: PackEvaluator
   alias Mezzanine.Lifecycle.SubjectSnapshot
   alias Mezzanine.Pack.{CompiledPack, ExecutionRecipeSpec, Serializer}
+  alias Mezzanine.WorkflowStartOutboxPayload
 
   @dialyzer [
     {:nowarn_function, advance_multi: 2},
@@ -27,6 +28,44 @@ defmodule Mezzanine.LifecycleEvaluator do
   @active_dispatch_states DispatchState.active_state_strings()
   @blocked_on_cycle_state "blocked_on_cycle"
   @default_max_supersession_depth 8
+  @workflow_start_outbox_worker "Mezzanine.WorkflowRuntime.WorkflowStarterOutboxWorker"
+  @workflow_start_outbox_queue :workflow_start_outbox
+  @workflow_start_release_manifest_ref "phase4-v6-milestone31-temporal-cutover"
+  @workflow_start_required_fields [
+    :outbox_id,
+    :tenant_ref,
+    :installation_ref,
+    :principal_ref,
+    :resource_ref,
+    :command_receipt_ref,
+    :command_id,
+    :workflow_type,
+    :workflow_id,
+    :workflow_version,
+    :workflow_input_version,
+    :workflow_input_ref,
+    :authority_packet_ref,
+    :permission_decision_ref,
+    :idempotency_key,
+    :dedupe_scope,
+    :trace_id,
+    :correlation_id,
+    :release_manifest_ref,
+    :payload_hash,
+    :dispatch_state
+  ]
+  @workflow_start_correlation_fields [
+    :canonical_idempotency_key,
+    :client_retry_key,
+    :platform_envelope_idempotency_key,
+    :causation_id,
+    :idempotency_correlation
+  ]
+  @workflow_start_unique [
+    keys: [:workflow_id, :idempotency_key],
+    states: [:available, :scheduled, :executing, :retryable],
+    period: :infinity
+  ]
   @supersession_reasons [
     :retry_transient,
     :retry_semantic,
@@ -148,6 +187,51 @@ defmodule Mezzanine.LifecycleEvaluator do
     $14
   )
   RETURNING id
+  """
+
+  @insert_workflow_start_outbox_sql """
+  INSERT INTO workflow_start_outbox (
+    outbox_id,
+    tenant_ref,
+    installation_ref,
+    workspace_ref,
+    project_ref,
+    environment_ref,
+    principal_ref,
+    system_actor_ref,
+    resource_ref,
+    command_envelope_ref,
+    command_receipt_ref,
+    command_id,
+    workflow_type,
+    workflow_id,
+    workflow_version,
+    workflow_input_version,
+    workflow_input_ref,
+    authority_packet_ref,
+    permission_decision_ref,
+    idempotency_key,
+    dedupe_scope,
+    trace_id,
+    correlation_id,
+    release_manifest_ref,
+    payload_hash,
+    payload_ref,
+    dispatch_state,
+    retry_count,
+    last_error_class,
+    available_at,
+    row_version,
+    inserted_at,
+    updated_at
+  )
+  VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+    $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+    $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
+    1, $31, $31
+  )
+  RETURNING outbox_id
   """
 
   @upsert_lineage_sql """
@@ -495,8 +579,16 @@ defmodule Mezzanine.LifecycleEvaluator do
           now
         )
       end)
-      |> Multi.run(:workflow_handoff, fn _repo, %{execution_id: execution_id} ->
-        workflow_handoff(execution_id, now)
+      |> Multi.run(:workflow_handoff, fn repo, changes ->
+        workflow_handoff(repo, dispatch_context, changes, now)
+      end)
+      |> then(fn multi ->
+        Oban.insert(
+          Mezzanine.Execution.Oban,
+          multi,
+          :workflow_start_dispatch_job,
+          &workflow_start_job_changeset/1
+        )
       end)
       |> Multi.run(:audit_lifecycle_advanced, fn repo, %{execution_id: execution_id} ->
         append_audit_fact(
@@ -949,17 +1041,206 @@ defmodule Mezzanine.LifecycleEvaluator do
     )
   end
 
-  defp workflow_handoff(execution_id, now) do
-    {:ok,
-     %{
-       provider: :temporal_workflow,
-       workflow_type: :execution_attempt,
-       workflow_module: "Mezzanine.Workflows.ExecutionAttempt",
-       workflow_runtime_boundary: "Mezzanine.WorkflowRuntime",
-       execution_id: execution_id,
-       scheduled_at: now,
-       release_manifest_ref: "phase4-v6-milestone31-temporal-cutover"
-     }}
+  defp workflow_handoff(repo, dispatch_context, changes, now) do
+    with {:ok, outbox_row} <- workflow_start_outbox_row(dispatch_context, changes, now),
+         :ok <- insert_workflow_start_outbox(repo, outbox_row, now) do
+      {:ok,
+       %{
+         provider: :temporal_workflow,
+         workflow_type: :execution_attempt,
+         workflow_module: "Mezzanine.Workflows.ExecutionAttempt",
+         workflow_runtime_boundary: "Mezzanine.WorkflowRuntime",
+         execution_id: changes.execution_id,
+         scheduled_at: now,
+         release_manifest_ref: outbox_row.release_manifest_ref,
+         outbox_id: outbox_row.outbox_id,
+         workflow_id: outbox_row.workflow_id,
+         idempotency_key: outbox_row.idempotency_key,
+         command_receipt_ref: outbox_row.command_receipt_ref,
+         workflow_input_ref: outbox_row.workflow_input_ref,
+         authority_packet_ref: outbox_row.authority_packet_ref,
+         permission_decision_ref: outbox_row.permission_decision_ref,
+         dispatch_job_args: workflow_start_dispatch_args(outbox_row)
+       }}
+    end
+  end
+
+  defp workflow_start_outbox_row(dispatch_context, changes, now) do
+    subject = dispatch_context.subject
+    installation = dispatch_context.installation
+    execution_id = changes.execution_id
+    submission_dedupe_key = changes.submission_dedupe_key
+    release_manifest_ref = @workflow_start_release_manifest_ref
+    workflow_type = "execution_attempt"
+    command_id = "execution:#{execution_id}"
+    resource_ref = "execution://#{execution_id}"
+
+    workflow_id =
+      deterministic_workflow_id(%{
+        tenant_ref: installation.tenant_id,
+        resource_ref: resource_ref,
+        workflow_type: workflow_type,
+        command_id: command_id,
+        release_manifest_ref: release_manifest_ref
+      })
+
+    attrs = %{
+      outbox_id: "workflow-start://#{execution_id}",
+      tenant_ref: installation.tenant_id,
+      installation_ref: "installation://#{installation.id}",
+      workspace_ref: workspace_ref(changes.binding_snapshot),
+      project_ref: subject_project_ref(subject),
+      environment_ref: "environment://default",
+      principal_ref: principal_ref(dispatch_context.actor_ref),
+      system_actor_ref: "system://mezzanine/lifecycle_evaluator",
+      resource_ref: resource_ref,
+      command_envelope_ref: "execution-command://#{execution_id}",
+      command_receipt_ref: "execution-record://#{execution_id}/queued",
+      command_id: command_id,
+      workflow_type: workflow_type,
+      workflow_id: workflow_id,
+      workflow_version: "execution_attempt.v1",
+      workflow_input_version: "Mezzanine.WorkflowExecutionLifecycleInput.v1",
+      workflow_input_ref: "workflow-input://#{execution_id}",
+      authority_packet_ref: "citadel-authority-request://#{execution_id}",
+      permission_decision_ref: "citadel-permission-decision://#{execution_id}",
+      canonical_idempotency_key: submission_dedupe_key,
+      causation_id: dispatch_context.causation_id,
+      idempotency_key: submission_dedupe_key,
+      dedupe_scope: "installation:#{installation.id}:execution:#{execution_id}",
+      trace_id: dispatch_context.trace_id,
+      correlation_id: dispatch_context.causation_id,
+      release_manifest_ref: release_manifest_ref,
+      payload_hash:
+        payload_hash(%{
+          execution_id: execution_id,
+          subject_id: subject.id,
+          recipe_ref: dispatch_context.recipe_ref,
+          submission_dedupe_key: submission_dedupe_key,
+          workflow_id: workflow_id
+        }),
+      payload_ref: "workflow-input://#{execution_id}",
+      dispatch_state: "queued",
+      retry_count: 0,
+      last_error_class: "none",
+      available_at: DateTime.to_iso8601(now)
+    }
+
+    new_workflow_start_outbox_row(attrs)
+  end
+
+  defp insert_workflow_start_outbox(repo, outbox_row, now) do
+    params = [
+      outbox_row.outbox_id,
+      outbox_row.tenant_ref,
+      outbox_row.installation_ref,
+      outbox_row.workspace_ref,
+      outbox_row.project_ref,
+      outbox_row.environment_ref,
+      outbox_row.principal_ref,
+      outbox_row.system_actor_ref,
+      outbox_row.resource_ref,
+      outbox_row.command_envelope_ref,
+      outbox_row.command_receipt_ref,
+      outbox_row.command_id,
+      outbox_row.workflow_type,
+      outbox_row.workflow_id,
+      outbox_row.workflow_version,
+      outbox_row.workflow_input_version,
+      outbox_row.workflow_input_ref,
+      outbox_row.authority_packet_ref,
+      outbox_row.permission_decision_ref,
+      outbox_row.idempotency_key,
+      outbox_row.dedupe_scope,
+      outbox_row.trace_id,
+      outbox_row.correlation_id,
+      outbox_row.release_manifest_ref,
+      outbox_row.payload_hash,
+      outbox_row.payload_ref,
+      outbox_row.dispatch_state,
+      outbox_row.retry_count,
+      outbox_row.last_error_class,
+      outbox_row.available_at,
+      now
+    ]
+
+    case SQL.query(repo, @insert_workflow_start_outbox_sql, params) do
+      {:ok, %{rows: [[_outbox_id]]}} -> :ok
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  defp workflow_start_job_changeset(%{workflow_handoff: workflow_handoff}) do
+    Oban.Job.new(workflow_handoff.dispatch_job_args,
+      queue: @workflow_start_outbox_queue,
+      worker: @workflow_start_outbox_worker,
+      max_attempts: 20,
+      unique: @workflow_start_unique
+    )
+  end
+
+  defp new_workflow_start_outbox_row(attrs) do
+    attrs
+    |> Map.put_new(:dispatch_state, "queued")
+    |> Map.put_new(:retry_count, 0)
+    |> Map.put_new(:release_manifest_ref, @workflow_start_release_manifest_ref)
+    |> WorkflowStartOutboxPayload.new()
+  end
+
+  defp deterministic_workflow_id(attrs) do
+    [
+      "tenant",
+      Map.fetch!(attrs, :tenant_ref),
+      "resource",
+      Map.fetch!(attrs, :resource_ref),
+      "workflow",
+      Map.fetch!(attrs, :workflow_type),
+      "command",
+      Map.fetch!(attrs, :command_id),
+      "release",
+      Map.fetch!(attrs, :release_manifest_ref)
+    ]
+    |> Enum.join(":")
+  end
+
+  defp workflow_start_dispatch_args(outbox_row) do
+    outbox_row
+    |> Map.from_struct()
+    |> Map.take(
+      @workflow_start_required_fields ++
+        @workflow_start_correlation_fields ++ [:payload_ref, :retry_count, :oban_job_ref]
+    )
+    |> stringify_keys()
+  end
+
+  defp workspace_ref(binding_snapshot) do
+    case Map.get(binding_snapshot, "placement_ref") do
+      value when is_binary(value) and value != "" -> "workspace-placement://#{value}"
+      _other -> nil
+    end
+  end
+
+  defp subject_project_ref(%{installation_id: installation_id}) do
+    "installation://#{installation_id}"
+  end
+
+  defp principal_ref(actor_ref) when is_map(actor_ref) do
+    case Map.get(actor_ref, :kind) || Map.get(actor_ref, "kind") do
+      value when is_atom(value) -> "actor://#{value}"
+      value when is_binary(value) and value != "" -> "actor://#{value}"
+      _other -> "actor://lifecycle_evaluator"
+    end
+  end
+
+  defp payload_hash(material) do
+    encoded = :erlang.term_to_binary(material)
+    "sha256:" <> Base.encode16(:crypto.hash(:sha256, encoded), case: :lower)
+  end
+
+  defp stringify_keys(map) do
+    map
+    |> Enum.map(fn {key, value} -> {to_string(key), value} end)
+    |> Map.new()
   end
 
   defp append_audit_fact(repo, audit_attrs, occurred_at) do

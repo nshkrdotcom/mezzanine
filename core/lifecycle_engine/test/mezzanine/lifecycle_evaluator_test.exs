@@ -40,6 +40,20 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
     assert result.workflow_handoff.workflow_module == "Mezzanine.Workflows.ExecutionAttempt"
     assert result.workflow_handoff.workflow_runtime_boundary == "Mezzanine.WorkflowRuntime"
     assert result.workflow_handoff.execution_id == result.execution_id
+    assert result.workflow_handoff.outbox_id == "workflow-start://#{result.execution_id}"
+
+    assert result.workflow_handoff.command_receipt_ref ==
+             "execution-record://#{result.execution_id}/queued"
+
+    assert result.workflow_handoff.workflow_input_ref == "workflow-input://#{result.execution_id}"
+
+    assert result.workflow_handoff.authority_packet_ref ==
+             "citadel-authority-request://#{result.execution_id}"
+
+    assert result.workflow_handoff.permission_decision_ref ==
+             "citadel-permission-decision://#{result.execution_id}"
+
+    assert result.workflow_handoff.idempotency_key == result.submission_dedupe_key
 
     assert result.workflow_handoff.release_manifest_ref ==
              "phase4-v6-milestone31-temporal-cutover"
@@ -106,7 +120,57 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
              "dispatch_envelope" => execution.dispatch_envelope
            }
 
-    assert Repo.aggregate(Oban.Job, :count, :id) == 0
+    assert %{
+             rows: [
+               [
+                 outbox_id,
+                 workflow_id,
+                 idempotency_key,
+                 command_receipt_ref,
+                 workflow_input_ref,
+                 dispatch_state
+               ]
+             ]
+           } =
+             Repo.query!(
+               """
+               SELECT outbox_id, workflow_id, idempotency_key, command_receipt_ref,
+                      workflow_input_ref, dispatch_state
+               FROM workflow_start_outbox
+               WHERE outbox_id = $1
+               """,
+               [result.workflow_handoff.outbox_id]
+             )
+
+    assert outbox_id == result.workflow_handoff.outbox_id
+    assert workflow_id == result.workflow_handoff.workflow_id
+    assert idempotency_key == result.submission_dedupe_key
+    assert command_receipt_ref == result.workflow_handoff.command_receipt_ref
+    assert workflow_input_ref == result.workflow_handoff.workflow_input_ref
+    assert dispatch_state == "queued"
+
+    assert Repo.aggregate(Oban.Job, :count, :id) == 1
+
+    assert %{
+             rows: [
+               [
+                 job_args,
+                 "workflow_start_outbox",
+                 "Mezzanine.WorkflowRuntime.WorkflowStarterOutboxWorker"
+               ]
+             ]
+           } =
+             Repo.query!(
+               """
+               SELECT args, queue, worker
+               FROM oban_jobs
+               WHERE args->>'outbox_id' = $1
+               """,
+               [result.workflow_handoff.outbox_id]
+             )
+
+    assert job_args["workflow_id"] == result.workflow_handoff.workflow_id
+    assert job_args["idempotency_key"] == result.submission_dedupe_key
 
     assert list_trace_fact_kinds(subject.id, result.trace_id) == [
              "subject_ingested",

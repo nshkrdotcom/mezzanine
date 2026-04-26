@@ -14,6 +14,9 @@ every engine.
 outbox contract used by the accepted command transaction. The same local
 Postgres transaction must persist the accepted command receipt, the
 `workflow_start_outbox` row, and the Oban `workflow_start_outbox` dispatch job.
+The lifecycle engine produces only scalar refs, hashes, deterministic workflow
+identity, and idempotency keys for this contract; it does not depend on
+Temporalex or call the Temporal client facade directly.
 
 `Mezzanine.WorkflowRuntime.WorkflowStarterOutboxWorker` is a bounded Oban
 dispatcher. It does not contain workflow business logic and never talks to
@@ -78,6 +81,22 @@ control remains repo-owned: use `just dev-up`, `just dev-status`, `just
 dev-logs`, `just temporal-ui`, and `just dev-down` from the Mezzanine root.
 Do not run raw `temporal server start-dev`, and do not run
 `just temporal-reset-confirm` without explicit approval.
+
+## Execution Lifecycle Workflow
+
+`Mezzanine.Workflows.ExecutionAttempt` is the durable execution-attempt
+workflow. It compiles Citadel authority, submits the governed Jido lower run,
+waits for lower receipt signals when configured, persists the terminal receipt,
+then performs terminal workspace cleanup, source publication, evidence
+materialization, and review creation through registered activities.
+
+The workflow control policy is deterministic and replay-safe: input-required
+lower receipts block for operator review, approval-required receipts fail
+closed, max-turn exhaustion stops the loop for finalization or review, stall
+timeouts retry or escalate, terminal source state finalizes with cleanup, and
+active state continues to the next turn. Operator control signals are
+`operator.cancel`, `operator.pause`, `operator.resume`, `operator.retry`,
+`operator.replan`, and `operator.rework`.
 
 ## Phase 6 Temporal Dispatch Contract
 

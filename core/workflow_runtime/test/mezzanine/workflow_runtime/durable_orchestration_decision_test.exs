@@ -57,6 +57,10 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecisionTest do
     assert Mezzanine.Activities.ExecutionSideEffectActivity in activity_modules
     assert Mezzanine.Activities.SemanticPayloadBoundaryActivity in activity_modules
     assert Mezzanine.Activities.CompensateCancelledRun in activity_modules
+    assert Mezzanine.Activities.CleanupWorkspace in activity_modules
+    assert Mezzanine.Activities.PublishSource in activity_modules
+    assert Mezzanine.Activities.MaterializeEvidence in activity_modules
+    assert Mezzanine.Activities.CreateReview in activity_modules
 
     for workflow <- workflow_modules do
       assert Code.ensure_loaded?(workflow)
@@ -94,7 +98,11 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecisionTest do
       Mezzanine.Activities.CompensateCancelledRun => "mezzanine.hazmat",
       Mezzanine.Activities.SubmitJidoLowerActivity => "mezzanine.hazmat",
       Mezzanine.Activities.ExecutionSideEffectActivity => "mezzanine.hazmat",
-      Mezzanine.Activities.SemanticPayloadBoundaryActivity => "mezzanine.semantic"
+      Mezzanine.Activities.SemanticPayloadBoundaryActivity => "mezzanine.semantic",
+      Mezzanine.Activities.CleanupWorkspace => "mezzanine.agentic",
+      Mezzanine.Activities.PublishSource => "mezzanine.agentic",
+      Mezzanine.Activities.MaterializeEvidence => "mezzanine.agentic",
+      Mezzanine.Activities.CreateReview => "mezzanine.review"
     }
 
     for {activity, task_queue} <- expected_activity_queues do
@@ -254,6 +262,11 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecisionTest do
     assert Enum.any?(
              registry,
              &match?(%{signal_name: "operator.replan", signal_version: "operator-replan.v1"}, &1)
+           )
+
+    assert Enum.any?(
+             registry,
+             &match?(%{signal_name: "operator.rework", signal_version: "operator-rework.v1"}, &1)
            )
 
     assert %{

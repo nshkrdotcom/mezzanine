@@ -53,6 +53,13 @@ defmodule Mezzanine.WorkflowRuntime.OperatorSignalControl do
       signal_effect: "replan_requested",
       handler: :handle_operator_replan,
       terminal?: false
+    },
+    %{
+      signal_name: "operator.rework",
+      signal_version: "operator-rework.v1",
+      signal_effect: "rework_requested",
+      handler: :handle_operator_rework,
+      terminal?: false
     }
   ]
 
@@ -277,7 +284,7 @@ defmodule Mezzanine.WorkflowRuntime.OperatorSignalControl do
     }
   end
 
-  @doc "Applies pause/resume/retry/replan/cancel signal ordering deterministically."
+  @doc "Applies pause/resume/retry/replan/rework/cancel signal ordering deterministically."
   @spec apply_ordered_signal(map(), map() | keyword()) :: {:ok, map()} | {:error, term()}
   def apply_ordered_signal(state, attrs) when is_map(state) do
     with {:ok, signal} <- attrs |> with_release_ref() |> build_signal(),
@@ -496,6 +503,9 @@ defmodule Mezzanine.WorkflowRuntime.OperatorSignalControl do
 
   defp workflow_mode_after(%OperatorWorkflowSignal{signal_name: "operator.replan"}),
     do: "replan_requested"
+
+  defp workflow_mode_after(%OperatorWorkflowSignal{signal_name: "operator.rework"}),
+    do: "rework_requested"
 
   defp operator_message(%{workflow_effect_state: "pending"}),
     do: "workflow effect pending; awaiting workflow acknowledgement projection"

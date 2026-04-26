@@ -126,6 +126,38 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
       task_queue: "mezzanine.hazmat",
       lease_broker?: true,
       version: "compensate-cancelled-run.v1"
+    },
+    %{
+      name: :cleanup_workspace,
+      module: Mezzanine.Activities.CleanupWorkspace,
+      owner_repo: :mezzanine,
+      task_queue: "mezzanine.agentic",
+      lease_broker?: false,
+      version: "cleanup-workspace.v1"
+    },
+    %{
+      name: :publish_source,
+      module: Mezzanine.Activities.PublishSource,
+      owner_repo: :jido_integration,
+      task_queue: "mezzanine.agentic",
+      lease_broker?: true,
+      version: "publish-source.v1"
+    },
+    %{
+      name: :materialize_evidence,
+      module: Mezzanine.Activities.MaterializeEvidence,
+      owner_repo: :mezzanine,
+      task_queue: "mezzanine.agentic",
+      lease_broker?: false,
+      version: "materialize-evidence.v1"
+    },
+    %{
+      name: :create_review,
+      module: Mezzanine.Activities.CreateReview,
+      owner_repo: :mezzanine,
+      task_queue: "mezzanine.review",
+      lease_broker?: false,
+      version: "create-review.v1"
     }
   ]
 
@@ -309,6 +341,11 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
       signal_name: "operator.replan",
       signal_version: "operator-replan.v1",
       handler: :handle_operator_replan
+    },
+    %{
+      signal_name: "operator.rework",
+      signal_version: "operator-rework.v1",
+      handler: :handle_operator_rework
     }
   ]
 
@@ -498,7 +535,7 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
       integration_mode() == :direct_temporalex_beam_workers,
       length(workflow_types()) == 5,
       length(activity_registrations()) >= 6,
-      length(operator_signal_registry()) == 5,
+      length(operator_signal_registry()) == 6,
       decision_timer_policy().timer_semantics == :temporal_workflow_timer,
       runtime_adapter() == Mezzanine.WorkflowRuntime.TemporalexAdapter,
       temporal_supervision().supervisor == Mezzanine.WorkflowRuntime.TemporalSupervisor,
@@ -663,7 +700,7 @@ defmodule Mezzanine.Workflows.ExecutionAttempt do
       set_state(result)
 
       if hold_for_receipt?(input) do
-        await_lower_receipt(result)
+        await_lower_receipt(result, input)
       else
         {:ok, result}
       end
@@ -675,25 +712,85 @@ defmodule Mezzanine.Workflows.ExecutionAttempt do
 
   def handle_query("execution_state.v1", _args, state), do: {:reply, state || %{}}
 
-  defp await_lower_receipt(result) do
+  defp await_lower_receipt(result, input) do
     with {:ok, signal_payload} <- wait_for_signal("lower_receipt") do
       signal_payload = Support.normalize_payload(signal_payload)
+      terminal_attrs = terminal_attrs(input, result, signal_payload)
 
-      resumed =
-        result
-        |> Map.merge(%{
-          workflow_state: "completed",
-          signal_state: "accepted",
-          last_receipt_ref:
-            Map.get(signal_payload, :lower_receipt_ref, "lower-receipt://unknown"),
-          last_signal_ref: Map.get(signal_payload, :signal_id),
-          replay_resume_mode: "temporal_signal_resume"
-        })
-        |> Support.safe_state()
+      with {:ok, persisted} <-
+             execute_activity(Mezzanine.Activities.RecordEvidence, terminal_attrs,
+               task_queue: "mezzanine.agentic",
+               start_to_close_timeout: :timer.seconds(10)
+             ),
+           {:ok, cleanup} <-
+             execute_activity(Mezzanine.Activities.CleanupWorkspace, terminal_attrs,
+               task_queue: "mezzanine.agentic",
+               start_to_close_timeout: :timer.seconds(30)
+             ),
+           {:ok, source_publish} <-
+             execute_activity(Mezzanine.Activities.PublishSource, terminal_attrs,
+               task_queue: "mezzanine.agentic",
+               start_to_close_timeout: :timer.seconds(30)
+             ),
+           {:ok, evidence} <-
+             execute_activity(Mezzanine.Activities.MaterializeEvidence, terminal_attrs,
+               task_queue: "mezzanine.agentic",
+               start_to_close_timeout: :timer.seconds(10)
+             ),
+           {:ok, review} <-
+             execute_activity(Mezzanine.Activities.CreateReview, terminal_attrs,
+               task_queue: "mezzanine.review",
+               start_to_close_timeout: :timer.seconds(10)
+             ) do
+        terminal_refs = %{
+          terminal_receipt_ref: persisted.result_ref,
+          workspace_cleanup_ref: cleanup.result_ref,
+          source_publish_ref: source_publish.result_ref,
+          evidence_ref: evidence.result_ref,
+          review_ref: review.result_ref
+        }
 
-      set_state(resumed)
-      {:ok, resumed}
+        resumed =
+          result
+          |> Map.merge(%{
+            workflow_state: terminal_attrs.terminal_state,
+            signal_state: "accepted",
+            last_receipt_ref: terminal_attrs.lower_receipt_ref,
+            last_signal_ref: Map.get(signal_payload, :signal_id),
+            replay_resume_mode: "temporal_signal_resume",
+            terminal_activity_refs: [
+              persisted.activity_call_ref,
+              cleanup.activity_call_ref,
+              source_publish.activity_call_ref,
+              evidence.activity_call_ref,
+              review.activity_call_ref
+            ],
+            terminal_refs: terminal_refs
+          })
+          |> Support.safe_state()
+
+        set_state(resumed)
+        {:ok, resumed}
+      end
     end
+  end
+
+  defp terminal_attrs(input, result, signal_payload) do
+    input
+    |> Support.normalize_payload()
+    |> Map.merge(signal_payload)
+    |> Map.put_new(:workflow_id, Map.fetch!(result, :workflow_id))
+    |> Map.put_new(:workspace_ref, Map.get(result, :workspace_ref))
+    |> Map.put_new(:resource_ref, Map.fetch!(result, :resource_ref))
+    |> Map.put_new(:trace_id, Map.fetch!(result, :trace_id))
+    |> Map.put_new(:routing_facts, Map.get(result, :routing_facts, %{}))
+    |> Map.put_new(:release_manifest_ref, Map.get(result, :release_manifest_ref))
+    |> Map.put_new(:terminal_state, Map.get(signal_payload, :receipt_state, "completed"))
+    |> Map.put_new(
+      :terminal_event_ref,
+      "workflow-event://#{Map.fetch!(result, :workflow_id)}/terminal"
+    )
+    |> Map.put_new(:lower_receipt_ref, "lower-receipt://unknown")
   end
 
   defp hold_for_receipt?(input) when is_map(input) do
@@ -942,6 +1039,62 @@ defmodule Mezzanine.Activities.CompensateCancelledRun do
 
   @impl Temporalex.Activity
   def perform(input), do: Support.compact_result(:compensate_cancelled_run, input)
+end
+
+defmodule Mezzanine.Activities.CleanupWorkspace do
+  @moduledoc "Temporal activity for terminal workspace cleanup."
+
+  use Temporalex.Activity,
+    task_queue: "mezzanine.agentic",
+    start_to_close_timeout: 30_000,
+    retry_policy: [max_attempts: 3]
+
+  alias Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow
+
+  @impl Temporalex.Activity
+  def perform(input), do: ExecutionLifecycleWorkflow.cleanup_workspace_activity(input)
+end
+
+defmodule Mezzanine.Activities.PublishSource do
+  @moduledoc "Temporal activity for idempotent terminal source publication."
+
+  use Temporalex.Activity,
+    task_queue: "mezzanine.agentic",
+    start_to_close_timeout: 30_000,
+    retry_policy: [max_attempts: 3]
+
+  alias Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow
+
+  @impl Temporalex.Activity
+  def perform(input), do: ExecutionLifecycleWorkflow.publish_source_activity(input)
+end
+
+defmodule Mezzanine.Activities.MaterializeEvidence do
+  @moduledoc "Temporal activity for terminal evidence materialization."
+
+  use Temporalex.Activity,
+    task_queue: "mezzanine.agentic",
+    start_to_close_timeout: 10_000,
+    retry_policy: [max_attempts: 3]
+
+  alias Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow
+
+  @impl Temporalex.Activity
+  def perform(input), do: ExecutionLifecycleWorkflow.materialize_evidence_activity(input)
+end
+
+defmodule Mezzanine.Activities.CreateReview do
+  @moduledoc "Temporal activity for terminal review creation."
+
+  use Temporalex.Activity,
+    task_queue: "mezzanine.review",
+    start_to_close_timeout: 10_000,
+    retry_policy: [max_attempts: 3]
+
+  alias Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow
+
+  @impl Temporalex.Activity
+  def perform(input), do: ExecutionLifecycleWorkflow.create_review_activity(input)
 end
 
 defmodule Mezzanine.Activities.SubmitJidoLowerActivity do

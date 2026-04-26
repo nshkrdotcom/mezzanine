@@ -16,12 +16,24 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
   @workflow_contract "Mezzanine.WorkflowExecutionLifecycleInput.v1"
   @signal_contract "Mezzanine.WorkflowReceiptSignal.v1"
   @terminal_policy_contract "Mezzanine.WorkflowTerminalReceiptPolicy.v1"
+  @operator_signals [
+    "operator.cancel",
+    "operator.pause",
+    "operator.resume",
+    "operator.retry",
+    "operator.replan",
+    "operator.rework"
+  ]
 
   @activity_sequence [
     :compile_citadel_authority,
     :submit_jido_lower_run,
     :await_receipt_signal,
-    :persist_terminal_receipt
+    :persist_terminal_receipt,
+    :cleanup_workspace,
+    :publish_source,
+    :materialize_evidence,
+    :create_review
   ]
 
   @doc "Static contract shape for Scenario 93, 94, and 95."
@@ -38,7 +50,11 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
         compile_citadel_authority: :citadel,
         submit_jido_lower_run: :jido_integration,
         execution_plane_side_effect: :execution_plane,
-        persist_terminal_receipt: :mezzanine
+        persist_terminal_receipt: :mezzanine,
+        cleanup_workspace: :mezzanine,
+        publish_source: :jido_integration,
+        materialize_evidence: :mezzanine,
+        create_review: :mezzanine
       },
       query_boundary: Mezzanine.WorkflowRuntime,
       signal_boundary: Mezzanine.WorkflowRuntime,
@@ -181,6 +197,130 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     end
   end
 
+  @doc "Terminal workspace cleanup activity result."
+  @spec cleanup_workspace_activity(map() | struct()) :: {:ok, map()} | {:error, term()}
+  def cleanup_workspace_activity(attrs) do
+    attrs = normalize(attrs)
+
+    case missing_required(attrs, [:workflow_id, :workspace_ref, :trace_id, :release_manifest_ref]) do
+      [] ->
+        {:ok,
+         %{
+           activity: :cleanup_workspace,
+           activity_call_ref: "activity://#{attrs.workflow_id}/cleanup-workspace",
+           owner_repo: :mezzanine,
+           workspace_ref: attrs.workspace_ref,
+           cleanup_policy: Map.get(attrs, :workspace_cleanup_policy, "terminal_policy"),
+           trace_id: attrs.trace_id,
+           release_manifest_ref: attrs.release_manifest_ref,
+           result_ref: "workspace-cleanup://#{attrs.workflow_id}/#{attrs.workspace_ref}"
+         }}
+
+      missing ->
+        {:error, {:missing_required_fields, missing}}
+    end
+  end
+
+  @doc "Terminal source publication activity result."
+  @spec publish_source_activity(map() | struct()) :: {:ok, map()} | {:error, term()}
+  def publish_source_activity(attrs) do
+    attrs = normalize(attrs)
+
+    case missing_required(attrs, [:workflow_id, :resource_ref, :trace_id, :release_manifest_ref]) do
+      [] ->
+        source_publish_ref =
+          Map.get(
+            attrs,
+            :source_publish_ref,
+            "source-publish://#{attrs.workflow_id}/#{attrs.resource_ref}"
+          )
+
+        {:ok,
+         %{
+           activity: :publish_source,
+           activity_call_ref: "activity://#{attrs.workflow_id}/publish-source",
+           owner_repo: :jido_integration,
+           source_publish_ref: source_publish_ref,
+           resource_ref: attrs.resource_ref,
+           trace_id: attrs.trace_id,
+           release_manifest_ref: attrs.release_manifest_ref,
+           result_ref: source_publish_ref
+         }}
+
+      missing ->
+        {:error, {:missing_required_fields, missing}}
+    end
+  end
+
+  @doc "Terminal evidence materialization activity result."
+  @spec materialize_evidence_activity(map() | struct()) :: {:ok, map()} | {:error, term()}
+  def materialize_evidence_activity(attrs) do
+    attrs = normalize(attrs)
+
+    case missing_required(attrs, [
+           :workflow_id,
+           :lower_receipt_ref,
+           :trace_id,
+           :release_manifest_ref
+         ]) do
+      [] ->
+        evidence_ref =
+          Map.get(
+            attrs,
+            :evidence_ref,
+            "evidence://#{attrs.workflow_id}/#{attrs.lower_receipt_ref}"
+          )
+
+        {:ok,
+         %{
+           activity: :materialize_evidence,
+           activity_call_ref: "activity://#{attrs.workflow_id}/materialize-evidence",
+           owner_repo: :mezzanine,
+           evidence_ref: evidence_ref,
+           lower_receipt_ref: attrs.lower_receipt_ref,
+           trace_id: attrs.trace_id,
+           release_manifest_ref: attrs.release_manifest_ref,
+           result_ref: evidence_ref
+         }}
+
+      missing ->
+        {:error, {:missing_required_fields, missing}}
+    end
+  end
+
+  @doc "Terminal review creation activity result."
+  @spec create_review_activity(map() | struct()) :: {:ok, map()} | {:error, term()}
+  def create_review_activity(attrs) do
+    attrs = normalize(attrs)
+
+    case missing_required(attrs, [
+           :workflow_id,
+           :lower_receipt_ref,
+           :trace_id,
+           :release_manifest_ref
+         ]) do
+      [] ->
+        review_ref =
+          Map.get(attrs, :review_ref, "review://#{attrs.workflow_id}/#{attrs.lower_receipt_ref}")
+
+        {:ok,
+         %{
+           activity: :create_review,
+           activity_call_ref: "activity://#{attrs.workflow_id}/create-review",
+           owner_repo: :mezzanine,
+           review_ref: review_ref,
+           lower_receipt_ref: attrs.lower_receipt_ref,
+           review_required: get_in(attrs, [:routing_facts, :review_required]),
+           trace_id: attrs.trace_id,
+           release_manifest_ref: attrs.release_manifest_ref,
+           result_ref: review_ref
+         }}
+
+      missing ->
+        {:error, {:missing_required_fields, missing}}
+    end
+  end
+
   @doc "Normalize a lower receipt into the workflow signal contract."
   @spec receipt_signal(map() | keyword()) :: {:ok, WorkflowReceiptSignal.t()} | {:error, term()}
   def receipt_signal(attrs), do: attrs |> with_release_ref() |> WorkflowReceiptSignal.new()
@@ -272,6 +412,50 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     end
   end
 
+  @doc "Compact policy fields used by the execution turn loop."
+  @spec execution_control_policy(map() | keyword()) :: map()
+  def execution_control_policy(attrs) do
+    attrs = normalize(attrs)
+
+    %{
+      retry_policy: Map.get(attrs, :retry_policy, %{max_attempts: 3}),
+      max_turns: Map.get(attrs, :max_turns, :unbounded),
+      stall_timeout_ms: Map.get(attrs, :stall_timeout_ms),
+      non_interactive_policy: %{
+        approval_required: :failure,
+        input_required: :blocked
+      },
+      operator_signals: @operator_signals
+    }
+  end
+
+  @doc "Deterministic turn-loop decision used by workflow tests and replay-safe reducers."
+  @spec turn_loop_decision(map() | keyword()) ::
+          {:continue | :stop | :retry | :blocked | :failure | :finalize, map()}
+  def turn_loop_decision(attrs) do
+    attrs = normalize(attrs)
+
+    cond do
+      Map.get(attrs, :receipt_state) == "input_required" ->
+        {:blocked, %{reason: :input_required, safe_action: :operator_review}}
+
+      Map.get(attrs, :receipt_state) == "approval_required" ->
+        {:failure, %{reason: :approval_required, safe_action: :operator_review}}
+
+      max_turns_reached?(attrs) ->
+        {:stop, %{reason: :max_turns_reached, safe_action: :finalize_or_review}}
+
+      Map.get(attrs, :stalled?) == true ->
+        {:retry, %{reason: :stall_timeout, safe_action: :retry_or_cancel}}
+
+      Map.get(attrs, :source_state) == "terminal" ->
+        {:finalize, %{reason: :source_terminal, safe_action: :terminal_cleanup}}
+
+      true ->
+        {:continue, %{reason: :active_state_continuation, safe_action: :next_turn}}
+    end
+  end
+
   @doc "Replay-safe worker failover posture for Scenario 93."
   @spec worker_failover_recovery(map() | keyword()) :: {:ok, map()} | {:error, term()}
   def worker_failover_recovery(attrs) do
@@ -313,6 +497,16 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
 
   defp terminal_state(%WorkflowReceiptSignal{terminal?: true, receipt_state: state}), do: state
   defp terminal_state(_signal), do: "accepted_active"
+
+  defp max_turns_reached?(attrs) do
+    case {Map.get(attrs, :turn_count), Map.get(attrs, :max_turns)} do
+      {turn_count, max_turns} when is_integer(turn_count) and is_integer(max_turns) ->
+        turn_count >= max_turns
+
+      _other ->
+        false
+    end
+  end
 
   defp receipt_signal_request(%WorkflowReceiptSignal{} = signal) do
     %{
