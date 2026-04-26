@@ -2,6 +2,7 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
   use ExUnit.Case, async: true
 
   alias Mezzanine.SourceEngine.Admission
+  alias Mezzanine.SourceEngine.SourceBinding
   alias Mezzanine.SourceEngine.SourceEvent
 
   test "admits a normalized source event with stable ids and hashes" do
@@ -66,5 +67,71 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
     }
 
     assert {:error, {:missing_required, :external_ref}} = Admission.admit(attrs, MapSet.new())
+  end
+
+  test "keeps Todo candidates blocked by non-terminal source blockers out of dispatch" do
+    binding = source_binding()
+
+    assert {:candidate, decision} =
+             Admission.classify_candidate(
+               %{
+                 "state" => "Todo",
+                 "assigned_to_worker" => true,
+                 "blocked_by" => [
+                   %{"external_ref" => "LIN-100", "state" => "In Progress"}
+                 ]
+               },
+               binding
+             )
+
+    assert decision.lifecycle_state == "candidate"
+    assert decision.reason == :blocked_by_non_terminal
+    assert [%{"external_ref" => "LIN-100"}] = decision.blocker_refs
+  end
+
+  test "submits candidates whose blockers are terminal" do
+    binding = source_binding()
+
+    assert {:submitted, decision} =
+             Admission.classify_candidate(
+               %{
+                 "state" => "Todo",
+                 "assigned_to_worker" => true,
+                 "blocked_by" => [
+                   %{"external_ref" => "LIN-100", "state" => "Done"}
+                 ]
+               },
+               binding
+             )
+
+    assert decision.lifecycle_state == "submitted"
+    assert decision.reason == :dispatchable
+    assert decision.blocker_refs == []
+  end
+
+  test "ignores source candidates that are not routed to this worker" do
+    binding = source_binding()
+
+    assert {:ignored, decision} =
+             Admission.classify_candidate(
+               %{"state" => "Todo", "assigned_to_worker" => false},
+               binding
+             )
+
+    assert decision.reason == :not_routed_to_worker
+  end
+
+  defp source_binding do
+    %SourceBinding{
+      source_binding_id: "linear-primary",
+      installation_id: "installation-1",
+      provider: "linear",
+      connection_ref: "linear-primary",
+      state_mapping: %{
+        "submitted" => ["Todo"],
+        "completed" => ["Done"],
+        "rejected" => ["Canceled", "Duplicate"]
+      }
+    }
   end
 end

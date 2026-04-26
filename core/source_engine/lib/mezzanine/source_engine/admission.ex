@@ -3,7 +3,7 @@ defmodule Mezzanine.SourceEngine.Admission do
   Pure source-event admission and dedupe helpers.
   """
 
-  alias Mezzanine.SourceEngine.SourceEvent
+  alias Mezzanine.SourceEngine.{SourceBinding, SourceEvent}
 
   @required_fields [
     :installation_id,
@@ -16,6 +16,9 @@ defmodule Mezzanine.SourceEngine.Admission do
     :trace_id,
     :causation_id
   ]
+
+  @dispatchable_lifecycle_states ["submitted", "retry_submission"]
+  @terminal_lifecycle_states ["completed", "rejected", "expired"]
 
   @spec admit(map(), MapSet.t(String.t())) ::
           {:ok, SourceEvent.t(), MapSet.t(String.t())}
@@ -33,12 +36,158 @@ defmodule Mezzanine.SourceEngine.Admission do
     end
   end
 
+  @spec classify_candidate(map(), SourceBinding.t() | map()) ::
+          {:submitted | :candidate | :ignored, map()}
+  def classify_candidate(payload, binding) when is_map(payload) and is_map(binding) do
+    source_state = source_state(payload)
+    mapping = state_mapping(binding)
+    canonical_state = canonical_lifecycle_state(source_state, mapping)
+
+    classify_routed(payload, mapping, source_state, canonical_state)
+  end
+
   defp validate_required(attrs) do
     case Enum.find(@required_fields, &blank?(value(attrs, &1))) do
       nil -> :ok
       field -> {:error, {:missing_required, field}}
     end
   end
+
+  defp decision(lifecycle_state, canonical_state, source_state, reason, blocker_refs) do
+    %{
+      lifecycle_state: lifecycle_state,
+      canonical_state: canonical_state,
+      source_state: source_state,
+      reason: reason,
+      blocker_refs: blocker_refs
+    }
+  end
+
+  defp classify_routed(_payload, _mapping, source_state, _canonical_state)
+       when source_state in [nil, ""] do
+    {:ignored, decision("ignored", nil, source_state, :missing_source_state, [])}
+  end
+
+  defp classify_routed(payload, mapping, source_state, canonical_state) do
+    if routed_to_worker?(payload) do
+      classify_mapped(payload, mapping, source_state, canonical_state)
+    else
+      {:ignored, decision("ignored", canonical_state, source_state, :not_routed_to_worker, [])}
+    end
+  end
+
+  defp classify_mapped(_payload, _mapping, source_state, nil) do
+    {:ignored, decision("ignored", nil, source_state, :unmapped_source_state, [])}
+  end
+
+  defp classify_mapped(_payload, _mapping, source_state, canonical_state)
+       when canonical_state in @terminal_lifecycle_states do
+    {:ignored, decision("ignored", canonical_state, source_state, :terminal_source_state, [])}
+  end
+
+  defp classify_mapped(payload, mapping, source_state, canonical_state)
+       when canonical_state in @dispatchable_lifecycle_states do
+    dispatch_decision(payload, mapping, source_state, canonical_state)
+  end
+
+  defp classify_mapped(_payload, _mapping, source_state, canonical_state) do
+    {:candidate, decision("candidate", canonical_state, source_state, :non_dispatch_state, [])}
+  end
+
+  defp dispatch_decision(payload, mapping, source_state, canonical_state) do
+    case non_terminal_blockers(payload, terminal_source_states(mapping)) do
+      [] ->
+        {:submitted, decision("submitted", canonical_state, source_state, :dispatchable, [])}
+
+      blocker_refs ->
+        {:candidate,
+         decision(
+           "candidate",
+           canonical_state,
+           source_state,
+           :blocked_by_non_terminal,
+           blocker_refs
+         )}
+    end
+  end
+
+  defp source_state(payload) do
+    value(payload, :state) ||
+      value(payload, :state_name) ||
+      value(payload, :source_state) |> nested_state_name()
+  end
+
+  defp nested_state_name(%{"name" => name}) when is_binary(name), do: name
+  defp nested_state_name(%{name: name}) when is_binary(name), do: name
+  defp nested_state_name(value) when is_binary(value), do: value
+  defp nested_state_name(_value), do: nil
+
+  defp state_mapping(%SourceBinding{state_mapping: mapping}), do: mapping || %{}
+  defp state_mapping(binding), do: value(binding, :state_mapping) || %{}
+
+  defp canonical_lifecycle_state(nil, _mapping), do: nil
+
+  defp canonical_lifecycle_state(source_state, mapping) do
+    mapping
+    |> Enum.find(fn {_canonical_state, provider_states} ->
+      provider_states
+      |> List.wrap()
+      |> Enum.any?(&same_state?(&1, source_state))
+    end)
+    |> case do
+      {canonical_state, _provider_states} -> to_string(canonical_state)
+      nil -> nil
+    end
+  end
+
+  defp terminal_source_states(mapping) do
+    mapping
+    |> Enum.flat_map(fn {canonical_state, provider_states} ->
+      if to_string(canonical_state) in @terminal_lifecycle_states do
+        List.wrap(provider_states)
+      else
+        []
+      end
+    end)
+  end
+
+  defp routed_to_worker?(payload) do
+    case value(payload, :assigned_to_worker) do
+      false -> false
+      _other -> true
+    end
+  end
+
+  defp non_terminal_blockers(payload, terminal_states) do
+    payload
+    |> blocker_refs()
+    |> Enum.reject(&terminal_blocker?(&1, terminal_states))
+  end
+
+  defp blocker_refs(payload) do
+    payload
+    |> value(:blocked_by)
+    |> case do
+      nil -> value(payload, :blockers)
+      blockers -> blockers
+    end
+    |> List.wrap()
+    |> Enum.filter(&is_map/1)
+  end
+
+  defp terminal_blocker?(blocker, terminal_states) do
+    case source_state(blocker) do
+      state when is_binary(state) -> Enum.any?(terminal_states, &same_state?(&1, state))
+      _other -> false
+    end
+  end
+
+  defp same_state?(left, right), do: normalize_state(left) == normalize_state(right)
+
+  defp normalize_state(value) when is_binary(value),
+    do: value |> String.trim() |> String.downcase()
+
+  defp normalize_state(value), do: value |> to_string() |> normalize_state()
 
   defp build_event(attrs) do
     normalized_payload = value(attrs, :normalized_payload) || %{}

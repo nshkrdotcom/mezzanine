@@ -7,6 +7,7 @@ defmodule MezzanineWorkspaceEngine do
   def components do
     [
       Mezzanine.WorkspaceEngine.Allocator,
+      Mezzanine.WorkspaceEngine.Hooks,
       Mezzanine.WorkspaceEngine.PathSafety,
       Mezzanine.WorkspaceEngine.WorkspaceLease,
       Mezzanine.WorkspaceEngine.WorkspaceRecord
