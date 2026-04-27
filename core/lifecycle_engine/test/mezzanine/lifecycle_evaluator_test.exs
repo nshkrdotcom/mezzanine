@@ -632,6 +632,7 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
       pack_slug: :expense_approval,
       version: "1.0.0",
       max_supersession_depth: max_supersession_depth,
+      profile_slots: profile_slots(),
       subject_kind_specs: [
         %SubjectKindSpec{name: :expense_request}
       ],
@@ -681,6 +682,19 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
       "capability_id" => "expense.capture",
       "version" => "2026.04",
       "produces_lifecycle_hints" => Enum.map(produced_lifecycle_hints, &to_string/1)
+    }
+  end
+
+  defp profile_slots do
+    %{
+      source_profile_ref: :fixture_source_v1,
+      runtime_profile_ref: :fixture_runtime_v1,
+      tool_scope_ref: :fixture_tools_v1,
+      evidence_profile_ref: :fixture_evidence_v1,
+      publication_profile_ref: :none,
+      review_profile_ref: :operator_optional,
+      memory_profile_ref: :none,
+      projection_profile_ref: :runtime_readback_v1
     }
   end
 

@@ -234,6 +234,7 @@ defmodule Mezzanine.Authoring.BundleImportTest do
     %Manifest{
       pack_slug: pack_slug,
       version: "1.0.0",
+      profile_slots: profile_slots(),
       subject_kind_specs: [%SubjectKindSpec{name: :phase3_request}],
       context_source_specs: [
         %ContextSourceSpec{
@@ -285,5 +286,18 @@ defmodule Mezzanine.Authoring.BundleImportTest do
       {:ok, compiled} -> compiled.manifest
       {:error, errors} -> raise "invalid test manifest: #{inspect(errors)}"
     end
+  end
+
+  defp profile_slots do
+    %{
+      source_profile_ref: :fixture_source_v1,
+      runtime_profile_ref: :fixture_runtime_v1,
+      tool_scope_ref: :fixture_tools_v1,
+      evidence_profile_ref: :fixture_evidence_v1,
+      publication_profile_ref: :none,
+      review_profile_ref: :operator_optional,
+      memory_profile_ref: :none,
+      projection_profile_ref: :runtime_readback_v1
+    }
   end
 end

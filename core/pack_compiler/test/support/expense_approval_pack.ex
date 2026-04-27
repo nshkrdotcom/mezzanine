@@ -32,6 +32,16 @@ defmodule Mezzanine.TestPacks.ExpenseApprovalPack do
       pack_slug: :expense_approval,
       version: "1.0.0",
       description: "Proof pack for the neutral mezzanine compiler",
+      profile_slots: %{
+        source_profile_ref: :expense_form,
+        runtime_profile_ref: :policy_workflow,
+        tool_scope_ref: :expense_policy_v1,
+        evidence_profile_ref: :receipt_artifacts_v1,
+        publication_profile_ref: :none,
+        review_profile_ref: :manager_review,
+        memory_profile_ref: :none,
+        projection_profile_ref: :runtime_readback_v1
+      },
       subject_kind_specs: [
         %SubjectKindSpec{
           name: :expense_request,

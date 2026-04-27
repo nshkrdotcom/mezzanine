@@ -387,6 +387,7 @@ defmodule MezzanineConfigRegistryTest do
     manifest = %Manifest{
       pack_slug: :operator_policy_pack,
       version: "1.0.0",
+      profile_slots: profile_slots(),
       subject_kind_specs: [%SubjectKindSpec{name: :coding_task}],
       lifecycle_specs: [
         %LifecycleSpec{
@@ -522,6 +523,7 @@ defmodule MezzanineConfigRegistryTest do
       pack_slug: pack_slug,
       version: version,
       max_supersession_depth: 12,
+      profile_slots: profile_slots(),
       subject_kind_specs: [
         %SubjectKindSpec{name: subject_kind}
       ],
@@ -643,6 +645,19 @@ defmodule MezzanineConfigRegistryTest do
         }
       ],
       metadata: %{phase: 7}
+    }
+  end
+
+  defp profile_slots do
+    %{
+      source_profile_ref: :fixture_source_v1,
+      runtime_profile_ref: :fixture_runtime_v1,
+      tool_scope_ref: :fixture_tools_v1,
+      evidence_profile_ref: :fixture_evidence_v1,
+      publication_profile_ref: :fixture_publication_v1,
+      review_profile_ref: :operator_optional,
+      memory_profile_ref: :none,
+      projection_profile_ref: :runtime_readback_v1
     }
   end
 

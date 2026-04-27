@@ -85,6 +85,13 @@ defmodule Mezzanine.Pack.CompilerTest do
            )
   end
 
+  test "rejects manifests missing explicit S0 profile slots" do
+    manifest = %Manifest{pack_slug: :slotless_pack, version: "0.0.1"}
+
+    assert {:error, issues} = Compiler.compile(manifest)
+    assert Enum.any?(issues, &String.contains?(&1.message, "profile_slots"))
+  end
+
   test "returns validation errors for duplicate lifecycle hint declarations" do
     manifest = %Manifest{
       pack_slug: :hinty_pack,
@@ -342,6 +349,16 @@ defmodule Mezzanine.Pack.CompilerTest do
     %Manifest{
       pack_slug: :coding_ops,
       version: "1.0.0",
+      profile_slots: %{
+        source_profile_ref: :linear_coding_task,
+        runtime_profile_ref: :codex_session,
+        tool_scope_ref: :coding_ops_v1,
+        evidence_profile_ref: :github_pr_plus_workpad,
+        publication_profile_ref: :linear_workpad_review,
+        review_profile_ref: :human_operator,
+        memory_profile_ref: :none,
+        projection_profile_ref: :runtime_readback_v1
+      },
       subject_kind_specs: [%SubjectKindSpec{name: :coding_task}],
       source_kind_specs: [
         %Mezzanine.Pack.SourceKindSpec{

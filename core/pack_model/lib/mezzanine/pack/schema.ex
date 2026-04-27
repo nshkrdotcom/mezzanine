@@ -19,6 +19,7 @@ defmodule Mezzanine.Pack.Manifest do
 
   @type pack_identifier :: atom() | String.t()
   @type migration_strategy :: :additive | :force
+  @type profile_slots :: map()
 
   @type t :: %__MODULE__{
           pack_slug: pack_identifier(),
@@ -26,6 +27,7 @@ defmodule Mezzanine.Pack.Manifest do
           description: String.t() | nil,
           migration_strategy: migration_strategy(),
           max_supersession_depth: pos_integer(),
+          profile_slots: profile_slots() | nil,
           subject_kind_specs: [SubjectKindSpec.t()],
           source_kind_specs: [SourceKindSpec.t()],
           source_binding_specs: [SourceBindingSpec.t()],
@@ -45,6 +47,7 @@ defmodule Mezzanine.Pack.Manifest do
     :description,
     migration_strategy: :additive,
     max_supersession_depth: 8,
+    profile_slots: nil,
     subject_kind_specs: [],
     source_kind_specs: [],
     source_binding_specs: [],

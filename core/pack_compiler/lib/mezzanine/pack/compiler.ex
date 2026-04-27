@@ -5,7 +5,7 @@ defmodule Mezzanine.Pack.Compiler do
 
   alias Mezzanine.Pack.{Builder, CompiledPack, Manifest, Normalizer, ValidationError, Validator}
 
-  @type pack_input :: module() | Manifest.t()
+  @type pack_input :: term()
   @type compile_result :: {:ok, CompiledPack.t()} | {:error, [ValidationError.t()]}
 
   @spec compile(pack_input()) :: compile_result()

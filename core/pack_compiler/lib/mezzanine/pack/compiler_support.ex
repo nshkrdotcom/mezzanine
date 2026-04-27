@@ -332,6 +332,7 @@ defmodule Mezzanine.Pack.Validator do
   @spec diagnostics(Manifest.t()) :: [ValidationError.t()]
   def diagnostics(%Manifest{} = manifest) do
     validate_manifest(manifest) ++
+      validate_profile_slots(manifest.profile_slots) ++
       validate_subject_kind_specs(manifest.subject_kind_specs) ++
       validate_source_kind_specs(manifest.source_kind_specs) ++
       validate_source_binding_specs(manifest.source_binding_specs) ++
@@ -353,6 +354,79 @@ defmodule Mezzanine.Pack.Validator do
     |> append(migration_strategy_issue(manifest.migration_strategy))
     |> append(max_supersession_depth_issue(manifest.max_supersession_depth))
   end
+
+  @profile_slots [
+    :source_profile_ref,
+    :runtime_profile_ref,
+    :tool_scope_ref,
+    :evidence_profile_ref,
+    :publication_profile_ref,
+    :review_profile_ref,
+    :memory_profile_ref,
+    :projection_profile_ref
+  ]
+
+  defp validate_profile_slots(nil) do
+    [
+      ValidationError.error(
+        [:profile_slots],
+        "profile_slots must declare all eight S0 profile slot refs"
+      )
+    ]
+  end
+
+  defp validate_profile_slots(slots) when is_map(slots) do
+    unknown_issues =
+      slots
+      |> Map.keys()
+      |> Enum.reject(&(&1 in @profile_slots))
+      |> Enum.map(fn key ->
+        ValidationError.error([:profile_slots, key], "profile slot #{inspect(key)} is unknown")
+      end)
+
+    missing_issues =
+      @profile_slots
+      |> Enum.reject(&Map.has_key?(slots, &1))
+      |> Enum.map(fn slot ->
+        ValidationError.error([:profile_slots, slot], "profile slot #{slot} is required")
+      end)
+
+    value_issues =
+      Enum.flat_map(@profile_slots, fn slot ->
+        value = Map.get(slots, slot)
+
+        if profile_slot_ref?(slot, value) do
+          []
+        else
+          [
+            ValidationError.error(
+              [:profile_slots, slot],
+              "profile slot #{slot} must be an atom or {:custom, ref}"
+            )
+          ]
+        end
+      end)
+
+    unknown_issues ++ missing_issues ++ value_issues
+  end
+
+  defp validate_profile_slots(_slots) do
+    [
+      ValidationError.error(
+        [:profile_slots],
+        "profile_slots must be a map of explicit profile slot refs"
+      )
+    ]
+  end
+
+  defp profile_slot_ref?(:memory_profile_ref, :none), do: true
+  defp profile_slot_ref?(:memory_profile_ref, :private_facts_v1), do: true
+  defp profile_slot_ref?(_slot, value) when is_atom(value) and not is_nil(value), do: true
+
+  defp profile_slot_ref?(_slot, {:custom, value}) when is_binary(value),
+    do: String.trim(value) != ""
+
+  defp profile_slot_ref?(_slot, _value), do: false
 
   defp validate_subject_kind_specs(specs) do
     duplicate_identifier_issues(specs, :name, [:subject_kind_specs], "subject kind") ++
@@ -2027,7 +2101,7 @@ defmodule Mezzanine.Pack.Normalizer do
 
   alias Mezzanine.Pack.Compiler.Helpers, as: H
 
-  @spec normalize(Manifest.t()) :: Manifest.t()
+  @spec normalize(struct()) :: struct()
   def normalize(%Manifest{} = manifest) do
     %Manifest{
       pack_slug: H.canonicalize_identifier!(manifest.pack_slug),
@@ -2035,6 +2109,7 @@ defmodule Mezzanine.Pack.Normalizer do
       description: manifest.description,
       migration_strategy: manifest.migration_strategy,
       max_supersession_depth: manifest.max_supersession_depth,
+      profile_slots: normalize_profile_slots(manifest.profile_slots),
       subject_kind_specs:
         manifest.subject_kind_specs
         |> Enum.map(&normalize_subject_kind/1)
@@ -2079,6 +2154,30 @@ defmodule Mezzanine.Pack.Normalizer do
         manifest.projection_specs |> Enum.map(&normalize_projection/1) |> Enum.sort_by(& &1.name)
     }
   end
+
+  @spec normalize_profile_slots(map() | nil) :: map() | nil
+  defp normalize_profile_slots(slots) when is_map(slots) do
+    Map.new(
+      [
+        :source_profile_ref,
+        :runtime_profile_ref,
+        :tool_scope_ref,
+        :evidence_profile_ref,
+        :publication_profile_ref,
+        :review_profile_ref,
+        :memory_profile_ref,
+        :projection_profile_ref
+      ],
+      fn slot -> {slot, normalize_profile_slot_ref(Map.fetch!(slots, slot))} end
+    )
+  end
+
+  defp normalize_profile_slots(nil), do: nil
+
+  @spec normalize_profile_slot_ref(atom() | {:custom, String.t()}) ::
+          atom() | {:custom, String.t()}
+  defp normalize_profile_slot_ref({:custom, ref}), do: {:custom, ref}
+  defp normalize_profile_slot_ref(ref), do: ref
 
   @spec normalize_subject_kind(SubjectKindSpec.t()) :: SubjectKindSpec.t()
   defp normalize_subject_kind(%SubjectKindSpec{} = spec) do
@@ -2294,7 +2393,7 @@ defmodule Mezzanine.Pack.Builder do
 
   alias Mezzanine.Pack.Compiler.Helpers, as: H
 
-  @spec build(Manifest.t()) :: CompiledPack.t()
+  @spec build(struct()) :: CompiledPack.t()
   def build(%Manifest{} = manifest) do
     subject_kinds = Map.new(manifest.subject_kind_specs, &{&1.name, &1})
 

@@ -25,6 +25,16 @@ defmodule Mezzanine.Pack.Serializer do
   }
 
   @format_version 1
+  @profile_slot_keys %{
+    "source_profile_ref" => :source_profile_ref,
+    "runtime_profile_ref" => :runtime_profile_ref,
+    "tool_scope_ref" => :tool_scope_ref,
+    "evidence_profile_ref" => :evidence_profile_ref,
+    "publication_profile_ref" => :publication_profile_ref,
+    "review_profile_ref" => :review_profile_ref,
+    "memory_profile_ref" => :memory_profile_ref,
+    "projection_profile_ref" => :projection_profile_ref
+  }
 
   @spec version() :: pos_integer()
   def version, do: @format_version
@@ -56,6 +66,7 @@ defmodule Mezzanine.Pack.Serializer do
       "description" => manifest.description,
       "migration_strategy" => Atom.to_string(manifest.migration_strategy),
       "max_supersession_depth" => manifest.max_supersession_depth,
+      "profile_slots" => serialize_profile_slots(manifest.profile_slots),
       "subject_kind_specs" => Enum.map(manifest.subject_kind_specs, &serialize_subject_kind/1),
       "source_kind_specs" => Enum.map(manifest.source_kind_specs, &serialize_source_kind/1),
       "source_binding_specs" =>
@@ -75,13 +86,18 @@ defmodule Mezzanine.Pack.Serializer do
     }
   end
 
-  @spec deserialize_manifest(map()) :: {:ok, Manifest.t()} | {:error, term()}
-  def deserialize_manifest(%{} = payload) do
+  @spec deserialize_manifest(map()) :: {:ok, struct()} | {:error, term()}
+  def deserialize_manifest(
+        %{"pack_slug" => _pack_slug, "version" => _version, "migration_strategy" => _strategy} =
+          payload
+      ) do
     {:ok, build_manifest(payload)}
   rescue
     error in [ArgumentError, KeyError] ->
       {:error, {:invalid_manifest_payload, Exception.message(error)}}
   end
+
+  def deserialize_manifest(_payload), do: {:error, :invalid_manifest_payload}
 
   defp serialize_subject_kind(%SubjectKindSpec{} = spec) do
     %{
@@ -91,6 +107,39 @@ defmodule Mezzanine.Pack.Serializer do
       "normalizer_mod" => serialize_module(spec.normalizer_mod)
     }
   end
+
+  defp serialize_profile_slots(slots) when is_map(slots) do
+    Map.new(slots, fn {slot, ref} ->
+      {serialize_identifier(slot), serialize_profile_slot_ref(ref)}
+    end)
+  end
+
+  defp serialize_profile_slots(nil), do: nil
+
+  defp deserialize_profile_slots(slots) when is_map(slots) do
+    Map.new(slots, fn {slot, ref} ->
+      {deserialize_profile_slot_key(slot), deserialize_profile_slot_ref(ref)}
+    end)
+  end
+
+  defp deserialize_profile_slots(nil), do: nil
+
+  defp serialize_profile_slot_ref({:custom, ref}), do: %{"custom" => ref}
+  defp serialize_profile_slot_ref(ref), do: serialize_identifier(ref)
+
+  defp deserialize_profile_slot_key(slot) when is_atom(slot), do: slot
+
+  defp deserialize_profile_slot_key(slot) when is_binary(slot) do
+    Map.fetch!(@profile_slot_keys, slot)
+  end
+
+  defp deserialize_profile_slot_key(slot), do: slot
+
+  defp deserialize_profile_slot_ref(%{"custom" => ref}), do: {:custom, ref}
+  defp deserialize_profile_slot_ref("none"), do: :none
+  defp deserialize_profile_slot_ref("private_facts_v1"), do: :private_facts_v1
+  defp deserialize_profile_slot_ref(ref) when is_binary(ref), do: {:custom, ref}
+  defp deserialize_profile_slot_ref(ref), do: ref
 
   defp deserialize_subject_kind(payload) do
     %SubjectKindSpec{
@@ -749,15 +798,25 @@ defmodule Mezzanine.Pack.Serializer do
   defp deserialize_projection_field(field) when is_binary(field), do: field
   defp deserialize_projection_field(field) when is_atom(field), do: Atom.to_string(field)
 
-  defp deserialize_atom(value, allowed_atoms) when is_binary(value) do
-    atom = String.to_existing_atom(value)
-
-    if atom in allowed_atoms do
-      atom
+  defp deserialize_atom(value, allowed_atoms) when is_atom(value) do
+    if value in allowed_atoms do
+      value
     else
-      raise ArgumentError, "unexpected atom value: #{value}"
+      raise ArgumentError, "unexpected atom value: #{inspect(value)}"
     end
   end
+
+  defp deserialize_atom(value, allowed_atoms) when is_binary(value) do
+    allowed_atoms
+    |> Enum.find(&(Atom.to_string(&1) == value))
+    |> case do
+      nil -> raise ArgumentError, "unexpected atom value: #{value}"
+      atom -> atom
+    end
+  end
+
+  defp deserialize_atom(value, _allowed_atoms),
+    do: raise(ArgumentError, "unexpected atom value: #{inspect(value)}")
 
   defp deserialize_runtime_failure_kind(value) do
     deserialize_atom(value, [
@@ -819,6 +878,7 @@ defmodule Mezzanine.Pack.Serializer do
         |> Map.fetch!("migration_strategy")
         |> deserialize_atom([:additive, :force]),
       max_supersession_depth: Map.get(payload, "max_supersession_depth", 8),
+      profile_slots: deserialize_profile_slots(Map.get(payload, "profile_slots")),
       subject_kind_specs:
         deserialize_manifest_entries(payload, "subject_kind_specs", &deserialize_subject_kind/1),
       source_kind_specs:
