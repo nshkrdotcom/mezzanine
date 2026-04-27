@@ -18,10 +18,11 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
           trace_id: String.t(),
           idempotency_key: String.t(),
           submission_dedupe_key: String.t(),
-          invocation_request: invocation_request()
+          invocation_request: invocation_request(),
+          action_ref: String.t() | nil
         }
 
-  @enforce_keys [
+  @required_fields [
     :tenant_id,
     :installation_id,
     :subject_id,
@@ -31,7 +32,8 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
     :submission_dedupe_key,
     :invocation_request
   ]
-  defstruct @enforce_keys
+  @optional_fields [:action_ref]
+  defstruct @required_fields ++ @optional_fields
 
   @invocation_request_module :"Elixir.Citadel.InvocationRequest.V2"
   @dialyzer :no_match
@@ -62,7 +64,8 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
         trace_id: required_string!(attrs, :trace_id),
         idempotency_key: required_string!(attrs, :idempotency_key),
         submission_dedupe_key: required_string!(attrs, :submission_dedupe_key),
-        invocation_request: required!(attrs, :invocation_request)
+        invocation_request: required!(attrs, :invocation_request),
+        action_ref: optional_string!(attrs, :action_ref)
       }
 
     :ok = validate_expected_installation_revision!(attrs, invocation.invocation_request)
@@ -127,7 +130,8 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
         permission_decision_ref: required_string!(authority_packet, :decision_id),
         policy_version: required_string!(authority_packet, :policy_version),
         allowed_operations: required!(request, :allowed_operations),
-        execution_governance_id: required_string!(execution_governance, :execution_governance_id)
+        execution_governance_id: required_string!(execution_governance, :execution_governance_id),
+        for_action_ref: invocation.action_ref || authority_for_action_ref(authority_packet)
       }
     }
   end
@@ -169,9 +173,58 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
 
     :ok = validate_authority_packet!(authority_packet)
     :ok = validate_execution_governance!(execution_governance)
+    :ok = validate_action_binding!(invocation, authority_packet, execution_governance)
     :ok = authorize_capability!(invocation, default_capability!(invocation))
 
     invocation
+  end
+
+  defp validate_action_binding!(
+         %__MODULE__{action_ref: nil},
+         authority_packet,
+         execution_governance
+       ) do
+    case {authority_for_action_ref(authority_packet),
+          governance_for_action_ref(execution_governance)} do
+      {nil, _governance_ref} ->
+        :ok
+
+      {authority_ref, nil} when is_binary(authority_ref) ->
+        :ok
+
+      {authority_ref, governance_ref} when authority_ref == governance_ref ->
+        :ok
+
+      {authority_ref, governance_ref} ->
+        raise ArgumentError,
+              "AuthorizedInvocation for_action_ref mismatch: expected #{inspect(authority_ref)}, got #{inspect(governance_ref)}"
+    end
+  end
+
+  defp validate_action_binding!(
+         %__MODULE__{action_ref: action_ref},
+         authority_packet,
+         execution_governance
+       ) do
+    authority_ref = authority_for_action_ref(authority_packet)
+    governance_ref = governance_for_action_ref(execution_governance)
+
+    cond do
+      is_nil(authority_ref) ->
+        raise ArgumentError,
+              "AuthorizedInvocation action_ref requires Citadel authority for_action_ref"
+
+      action_ref != authority_ref ->
+        raise ArgumentError,
+              "AuthorizedInvocation action_ref mismatch: expected #{inspect(authority_ref)}, got #{inspect(action_ref)}"
+
+      not is_nil(governance_ref) and governance_ref != action_ref ->
+        raise ArgumentError,
+              "AuthorizedInvocation for_action_ref mismatch: expected #{inspect(action_ref)}, got #{inspect(governance_ref)}"
+
+      true ->
+        :ok
+    end
   end
 
   defp validate_authority_packet!(packet) do
@@ -257,6 +310,34 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
     "authority-decision://#{required_string!(authority_packet, :decision_id)}"
   end
 
+  defp authority_for_action_ref(authority_packet) do
+    authority_packet
+    |> optional(:extensions)
+    |> citadel_extension()
+    |> optional("for_action_ref")
+    |> normalize_optional_string()
+  end
+
+  defp governance_for_action_ref(execution_governance) do
+    execution_governance
+    |> optional(:extensions)
+    |> citadel_extension()
+    |> optional("for_action_ref")
+    |> normalize_optional_string()
+  end
+
+  defp citadel_extension(%{} = extensions) do
+    case optional(extensions, "citadel") do
+      %{} = citadel -> citadel
+      _other -> %{}
+    end
+  end
+
+  defp citadel_extension(_extensions), do: %{}
+
+  defp normalize_optional_string(value) when is_binary(value) and value != "", do: value
+  defp normalize_optional_string(_value), do: nil
+
   defp require_equals!(actual, expected, _field) when actual == expected, do: actual
 
   defp require_equals!(actual, expected, field) do
@@ -271,6 +352,20 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
           raise ArgumentError, "AuthorizedInvocation #{key} must be a non-empty string"
         end
 
+        value
+
+      value ->
+        raise ArgumentError,
+              "AuthorizedInvocation #{key} must be a non-empty string, got: #{inspect(value)}"
+    end
+  end
+
+  defp optional_string!(attrs, key) do
+    case optional(attrs, key) do
+      nil ->
+        nil
+
+      value when is_binary(value) and value != "" ->
         value
 
       value ->

@@ -201,6 +201,41 @@ defmodule Mezzanine.IntegrationBridgeTest do
     end
   end
 
+  test "authorized invocation binds M2 lower submission to the Citadel for_action_ref" do
+    attrs =
+      authorized_invocation_attrs()
+      |> Map.put(:action_ref, "action://agent-loop/turn-1")
+      |> put_in([:invocation_request, :authority_packet, :extensions, "citadel"], %{
+        "for_action_ref" => "action://agent-loop/turn-1"
+      })
+      |> put_in([:invocation_request, :execution_governance, :extensions, "citadel"], %{
+        "for_action_ref" => "action://agent-loop/turn-1"
+      })
+
+    invocation = AuthorizedInvocation.new!(attrs)
+    input = AuthorizedInvocation.invoke_input(invocation, "linear.issue.update")
+
+    assert input.authority.for_action_ref == "action://agent-loop/turn-1"
+
+    assert_raise ArgumentError, ~r/action_ref mismatch/, fn ->
+      attrs
+      |> Map.put(:action_ref, "action://agent-loop/other")
+      |> AuthorizedInvocation.new!()
+    end
+
+    assert_raise ArgumentError, ~r/for_action_ref mismatch/, fn ->
+      attrs
+      |> put_in([:invocation_request, :execution_governance, :extensions, "citadel"], %{
+        "for_action_ref" => "action://agent-loop/other"
+      })
+      |> AuthorizedInvocation.new!()
+    end
+  end
+
+  test "authorized invocation preserves the older M1 per-execution authority path" do
+    assert %AuthorizedInvocation{} = AuthorizedInvocation.new!(authorized_invocation_attrs())
+  end
+
   test "dispatch_read routes generic lower reads through lineage-owned lower facts" do
     store_lineage!()
 

@@ -3,6 +3,7 @@ defmodule Mezzanine.WorkflowRuntime.AgentLoopTest do
   use Temporalex.Testing
 
   alias Mezzanine.AgentRuntime.AgentLoopProjection
+  alias Mezzanine.PrivateWriter
   alias Mezzanine.WorkflowRuntime.AgentLoop
 
   test "declares M2 contract, linkage strategy, and activity owners" do
@@ -134,6 +135,35 @@ defmodule Mezzanine.WorkflowRuntime.AgentLoopTest do
     assert detail["events"] |> Enum.map(& &1["event_kind"]) |> Enum.member?("run.terminal")
     assert detail["budget_state"]["turns_remaining"] == 2
     assert detail["receipt_ref_set"]["session_refs"] == ["session://local/1"]
+  end
+
+  test "private memory profile commits candidate facts through PrivateWriter and m7a proof" do
+    PrivateWriter.reset!()
+
+    attrs =
+      agent_run_spec_attrs()
+      |> Map.put(:memory_profile_ref, :private_facts_v1)
+      |> put_in([:profile_bundle, :memory_profile_ref], :private_facts_v1)
+      |> Map.put(:release_manifest_ref, "release-manifest://local/private-memory")
+
+    assert {:ok, projection} = AgentLoop.run(attrs)
+
+    assert projection.terminal_state == "completed"
+    assert [memory_commit_ref] = projection.memory_commit_refs
+    assert [memory_proof_ref] = projection.memory_proof_refs
+    assert memory_commit_ref =~ "memory-commit://agent-loop/"
+    assert memory_proof_ref =~ "m7a-proof://"
+
+    [turn] = projection.turn_states
+    assert turn.memory_commit_ref == memory_commit_ref
+
+    event_kinds = Enum.map(projection.runtime_events, & &1.event_kind)
+    assert "memory.committed" in event_kinds
+    refute "memory_commit.skipped" in event_kinds
+
+    assert projection.receipt_ref_set["memory_commit_refs"] == [memory_commit_ref]
+    assert projection.receipt_ref_set["memory_proof_refs"] == [memory_proof_ref]
+    assert projection.receipt_ref_set["memory_recall_refs"] != []
   end
 
   defp agent_run_spec_attrs do

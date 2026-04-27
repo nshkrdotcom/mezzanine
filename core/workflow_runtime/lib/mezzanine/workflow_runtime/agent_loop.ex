@@ -19,6 +19,8 @@ defmodule Mezzanine.WorkflowRuntime.AgentLoop do
     ToolActionRequest
   }
 
+  alias Mezzanine.PrivateWriter
+
   @timestamp ~U[2026-04-27 00:00:00Z]
   @activity_sequence [
     :wake_and_pin,
@@ -294,25 +296,87 @@ defmodule Mezzanine.WorkflowRuntime.AgentLoop do
 
   @spec semanticize_outcome_activity(map()) :: {:ok, map()}
   def semanticize_outcome_activity(%{action_receipt: %{status: :succeeded}} = state) do
+    candidate_fact_ref = "candidate-fact://agent-loop/#{ref_suffix(state.turn_ref)}/1"
+    source_observation_ref = state.action_receipt.receipt_ref
+    redaction_ref = "redaction://agent-loop/#{ref_suffix(state.turn_ref)}"
+    claim_check_ref = "claim-check://agent-loop/#{ref_suffix(state.turn_ref)}/output"
+
     {:ok,
      state
-     |> Map.put(:candidate_fact_refs, [
-       "candidate-fact://agent-loop/#{ref_suffix(state.turn_ref)}/1"
+     |> Map.put(:candidate_fact_refs, [candidate_fact_ref])
+     |> Map.put(:candidate_facts, [
+       %{
+         candidate_fact_ref: candidate_fact_ref,
+         fact_kind: :tool_observation,
+         confidence_class: :observed,
+         confidence_band: :high,
+         risk_band: :low,
+         source_observation_ref: source_observation_ref,
+         evidence_ref: state.action_receipt.evidence_refs |> List.first(),
+         redaction_ref: redaction_ref,
+         redaction_class: :claim_checked,
+         claim_check_refs: [claim_check_ref],
+         proposed_by: "outer-brain://agent-loop/semanticize",
+         trace_id: state.trace_id
+       }
      ])
+     |> Map.put(:source_observation_refs, [source_observation_ref])
+     |> Map.put(:claim_check_refs, [claim_check_ref])
+     |> Map.put(:redaction_ref, redaction_ref)
      |> put_event("outcome.semanticized", "outcome semanticized")}
   end
 
   def semanticize_outcome_activity(state) do
-    {:ok, Map.put_new(state, :candidate_fact_refs, [])}
+    {:ok,
+     state
+     |> Map.put_new(:candidate_fact_refs, [])
+     |> Map.put_new(:candidate_facts, [])
+     |> Map.put_new(:source_observation_refs, [])
+     |> Map.put_new(:claim_check_refs, [])}
   end
 
   @spec commit_private_memory_activity(map()) :: {:ok, map()}
+  def commit_private_memory_activity(%{memory_profile_ref: memory_profile_ref} = state)
+      when memory_profile_ref in [:none, "none", nil] do
+    skipped_private_memory(state)
+  end
+
   def commit_private_memory_activity(state) do
-    {:ok,
-     state
-     |> Map.put(:memory_proof_refs, [])
-     |> Map.put(:memory_commit_state, "skipped_before_phase_7")
-     |> put_event("memory.skipped", "private memory skipped before phase 7")}
+    if Map.get(state, :candidate_fact_refs, []) == [] do
+      skipped_private_memory(state)
+    else
+      commit_ref = memory_commit_ref(state)
+
+      request = %{
+        memory_commit_ref: commit_ref,
+        tenant_ref: state.tenant_ref,
+        subject_ref: state.subject_ref,
+        run_ref: state.run_ref,
+        turn_ref: state.turn_ref,
+        candidate_fact_refs: state.candidate_fact_refs,
+        candidate_facts: Map.get(state, :candidate_facts, []),
+        source_observation_refs: Map.get(state, :source_observation_refs, []),
+        authority_decision_ref: state.authority_decision.decision_ref,
+        redaction_ref:
+          Map.get(state, :redaction_ref, "redaction://agent-loop/#{ref_suffix(state.turn_ref)}"),
+        redaction_class: :claim_checked,
+        claim_check_refs: Map.get(state, :claim_check_refs, []),
+        idempotency_key: "agent-run:memory:#{ref_suffix(state.turn_ref)}:candidate-facts",
+        trace_id: state.trace_id,
+        release_manifest_ref: state.release_manifest_ref
+      }
+
+      with {:ok, receipt} <- PrivateWriter.commit(request, caller: :m2_agent_loop) do
+        {:ok,
+         state
+         |> Map.put(:memory_commit_ref, receipt.private_commit.memory_commit_ref)
+         |> Map.put(:memory_commit_refs, [receipt.private_commit.memory_commit_ref])
+         |> Map.put(:memory_proof_refs, [receipt.m7a_proof.proof_ref])
+         |> Map.put(:memory_recall_refs, PrivateWriter.recall_refs(receipt))
+         |> Map.put(:memory_commit_state, "committed")
+         |> put_event("memory.committed", "private memory committed")}
+      end
+    end
   end
 
   @spec advance_turn_activity(map()) :: {:ok, AgentLoopProjection.t()} | {:error, term()}
@@ -339,6 +403,7 @@ defmodule Mezzanine.WorkflowRuntime.AgentLoop do
       command_results: [command_result(state, terminal_state)],
       budget_state: final_budget_state(state),
       candidate_fact_refs: Map.get(state, :candidate_fact_refs, []),
+      memory_commit_refs: Map.get(state, :memory_commit_refs, []),
       memory_proof_refs: Map.get(state, :memory_proof_refs, []),
       receipt_ref_set: receipt_ref_set,
       diagnostics: diagnostics(state, receipt_ref_set)
@@ -363,6 +428,7 @@ defmodule Mezzanine.WorkflowRuntime.AgentLoop do
        "command_results" => Enum.map(projection.command_results, &RuntimeCommandResult.dump/1),
        "budget_state" => Support.dump_value(projection.budget_state || %{}),
        "candidate_fact_refs" => projection.candidate_fact_refs || [],
+       "memory_commit_refs" => projection.memory_commit_refs || [],
        "memory_proof_refs" => projection.memory_proof_refs || [],
        "session_ref" => projection.session_ref,
        "workspace_ref" => projection.workspace_ref,
@@ -385,6 +451,9 @@ defmodule Mezzanine.WorkflowRuntime.AgentLoop do
       session_ref: spec.session_ref || "session://agent-loop/#{ref_suffix(spec.run_ref)}",
       workspace_ref: spec.workspace_ref || "workspace://agent-loop/#{ref_suffix(spec.run_ref)}",
       worker_ref: spec.worker_ref || "worker://agent-loop/#{ref_suffix(spec.run_ref)}/fixture",
+      memory_profile_ref: spec.memory_profile_ref,
+      release_manifest_ref:
+        spec.release_manifest_ref || "release-manifest://agent-loop/#{ref_suffix(spec.run_ref)}",
       turn_ref: turn_ref,
       turn_index: 1,
       max_turns: spec.max_turns,
@@ -429,7 +498,7 @@ defmodule Mezzanine.WorkflowRuntime.AgentLoop do
       authority_decision_ref: state.authority_decision.decision_ref,
       observation_ref: Map.get(state, :execution_outcome_ref),
       semantic_fact_refs: Map.get(state, :candidate_fact_refs, []),
-      memory_commit_ref: nil,
+      memory_commit_ref: Map.get(state, :memory_commit_ref),
       terminal_reason: terminal_state,
       causation_id: "causation://agent-loop/#{ref_suffix(state.turn_ref)}",
       snapshot_epoch: 1,
@@ -501,7 +570,11 @@ defmodule Mezzanine.WorkflowRuntime.AgentLoop do
         ]),
       "authority_refs" => compact_refs([state.authority_decision.decision_ref]),
       "outcome_refs" =>
-        compact_refs([Map.get(state, :execution_outcome_ref), state.action_receipt.receipt_ref])
+        compact_refs([Map.get(state, :execution_outcome_ref), state.action_receipt.receipt_ref]),
+      "candidate_fact_refs" => compact_refs(Map.get(state, :candidate_fact_refs, [])),
+      "memory_commit_refs" => compact_refs(Map.get(state, :memory_commit_refs, [])),
+      "memory_proof_refs" => compact_refs(Map.get(state, :memory_proof_refs, [])),
+      "memory_recall_refs" => compact_refs(Map.get(state, :memory_recall_refs, []))
     }
     |> Map.new(fn {kind, refs} -> {kind, compact_refs(refs)} end)
     |> Map.reject(fn {_kind, refs} -> refs == [] end)
@@ -546,6 +619,31 @@ defmodule Mezzanine.WorkflowRuntime.AgentLoop do
 
   defp capability_ref_for("denied_write_then_allowed_read"), do: "capability://fixture/write-note"
   defp capability_ref_for(_script), do: "capability://fixture/record-note"
+
+  defp skipped_private_memory(state) do
+    {:ok,
+     state
+     |> Map.put(:memory_commit_refs, [])
+     |> Map.put(:memory_proof_refs, [])
+     |> Map.put(:memory_recall_refs, [])
+     |> Map.put(:memory_commit_state, "memory_commit_skipped")
+     |> put_event("memory_commit.skipped", "private memory skipped")}
+  end
+
+  defp memory_commit_ref(state) do
+    hash =
+      %{
+        turn_ref: state.turn_ref,
+        candidate_fact_refs: Map.get(state, :candidate_fact_refs, []),
+        authority_decision_ref: state.authority_decision.decision_ref,
+        release_manifest_ref: state.release_manifest_ref
+      }
+      |> PrivateWriter.integrity_hash()
+      |> String.replace_prefix("sha256:", "")
+      |> binary_part(0, 16)
+
+    "memory-commit://agent-loop/#{ref_suffix(state.turn_ref)}/#{hash}"
+  end
 
   defp ref_suffix(ref) when is_binary(ref) do
     ref

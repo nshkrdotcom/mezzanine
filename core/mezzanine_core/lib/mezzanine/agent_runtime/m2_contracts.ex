@@ -552,6 +552,7 @@ defmodule Mezzanine.AgentRuntime.AgentLoopProjection do
               :command_results,
               :budget_state,
               :candidate_fact_refs,
+              :memory_commit_refs,
               :memory_proof_refs,
               :session_ref,
               :workspace_ref,
@@ -589,6 +590,8 @@ defmodule Mezzanine.AgentRuntime.AgentLoopProjection do
          true <- is_map(budget_state),
          candidate_fact_refs <- Support.optional(attrs, :candidate_fact_refs, []),
          true <- list_of_refs?(candidate_fact_refs),
+         memory_commit_refs <- Support.optional(attrs, :memory_commit_refs, []),
+         true <- list_of_refs?(memory_commit_refs),
          memory_proof_refs <- Support.optional(attrs, :memory_proof_refs, []),
          true <- list_of_refs?(memory_proof_refs),
          receipt_ref_set <- Support.optional(attrs, :receipt_ref_set, %{}),
@@ -606,6 +609,7 @@ defmodule Mezzanine.AgentRuntime.AgentLoopProjection do
          |> Map.put(:command_results, command_results)
          |> Map.put(:budget_state, budget_state)
          |> Map.put(:candidate_fact_refs, candidate_fact_refs)
+         |> Map.put(:memory_commit_refs, memory_commit_refs)
          |> Map.put(:memory_proof_refs, memory_proof_refs)
          |> Map.put(:receipt_ref_set, receipt_ref_set)
          |> Map.put(:diagnostics, diagnostics)
