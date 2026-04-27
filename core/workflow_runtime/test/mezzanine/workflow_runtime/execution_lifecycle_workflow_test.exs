@@ -55,14 +55,28 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     end
   end
 
+  defmodule FakeReceiptReducer do
+    def reduce(attrs) do
+      {:ok,
+       %{
+         projection_name: "operator_subject_runtime",
+         lower_receipt_ref: attrs.lower_receipt_ref,
+         provider_object_refs: attrs.lower_receipt.provider_object_refs,
+         evidence_artifact_refs: attrs.lower_receipt.evidence_artifact_refs
+       }}
+    end
+  end
+
   setup do
     previous = Application.get_env(:mezzanine_core, :workflow_runtime_impl)
     previous_citadel = Application.get_env(:mezzanine_workflow_runtime, :citadel_bridge)
     previous_integration = Application.get_env(:mezzanine_workflow_runtime, :integration_bridge)
+    previous_reducer = Application.get_env(:mezzanine_workflow_runtime, :receipt_reducer)
 
     Application.put_env(:mezzanine_core, :workflow_runtime_impl, QueryRuntime)
     Application.put_env(:mezzanine_workflow_runtime, :citadel_bridge, Mezzanine.CitadelBridge)
     Application.put_env(:mezzanine_workflow_runtime, :integration_bridge, FakeIntegrationBridge)
+    Application.put_env(:mezzanine_workflow_runtime, :receipt_reducer, FakeReceiptReducer)
 
     on_exit(fn ->
       if previous do
@@ -81,6 +95,12 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
         Application.put_env(:mezzanine_workflow_runtime, :integration_bridge, previous_integration)
       else
         Application.delete_env(:mezzanine_workflow_runtime, :integration_bridge)
+      end
+
+      if previous_reducer do
+        Application.put_env(:mezzanine_workflow_runtime, :receipt_reducer, previous_reducer)
+      else
+        Application.delete_env(:mezzanine_workflow_runtime, :receipt_reducer)
       end
     end)
   end
@@ -225,13 +245,23 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
                Map.merge(attrs, %{
                  terminal_state: "completed",
                  terminal_event_ref: "workflow-event-terminal",
-                 lower_receipt_ref: "lower-receipt-095"
+                 lower_receipt_ref: "lower-receipt-095",
+                 lower_run_ref: "lower-run-095",
+                 lower_attempt_ref: "lower-attempt-095",
+                 routing_facts: %{
+                   provider_object_refs: ["linear://issue/LIN-101"],
+                   evidence_artifact_refs: ["lower-artifact://github_pr/095"]
+                 }
                })
              )
 
     assert persisted.owner_repo == :mezzanine
     assert persisted.terminal_state == "completed"
     assert persisted.lower_receipt_ref == "lower-receipt-095"
+    assert persisted.lower_receipt.provider_object_refs == ["linear://issue/LIN-101"]
+    assert persisted.lower_receipt.evidence_artifact_refs == ["lower-artifact://github_pr/095"]
+    assert persisted.projection_result.projection_name == "operator_subject_runtime"
+    assert persisted.projection_result.lower_receipt_ref == "lower-receipt-095"
 
     terminal_attrs =
       Map.merge(attrs, %{
@@ -310,6 +340,8 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
 
     assert signal.signal_name == "lower_receipt"
     assert signal.idempotency_key == "idem-signal-094"
+    assert signal.routing_facts.provider_object_refs == ["linear://issue/LIN-101"]
+    assert signal.routing_facts.evidence_artifact_refs == ["lower-artifact://github_pr/094"]
 
     state = ExecutionLifecycleWorkflow.initial_state(lifecycle_attrs())
     assert {:ok, advanced} = ExecutionLifecycleWorkflow.apply_receipt_signal(state, signal)
@@ -473,7 +505,13 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
       release_manifest_ref: "phase4-v6-milestone27-execution-lifecycle-workflow",
       receipt_state: "completed",
       terminal?: true,
-      routing_facts: %{terminal_class: "completed"}
+      routing_facts: %{
+        terminal_class: "completed",
+        subject_id: "subject-093",
+        execution_id: "execution-093",
+        provider_object_refs: ["linear://issue/LIN-101"],
+        evidence_artifact_refs: ["lower-artifact://github_pr/094"]
+      }
     }
   end
 end

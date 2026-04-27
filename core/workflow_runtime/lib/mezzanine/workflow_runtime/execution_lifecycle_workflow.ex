@@ -191,6 +191,9 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
 
     case missing_required(attrs, required) do
       [] ->
+        lower_receipt = lower_receipt_payload(attrs)
+        projection_result = reduce_terminal_receipt(attrs, lower_receipt)
+
         {:ok,
          %{
            activity: :persist_terminal_receipt,
@@ -199,6 +202,8 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
            terminal_state: attrs.terminal_state,
            terminal_event_ref: attrs.terminal_event_ref,
            lower_receipt_ref: attrs.lower_receipt_ref,
+           lower_receipt: lower_receipt,
+           projection_result: projection_result,
            trace_id: attrs.trace_id,
            release_manifest_ref: attrs.release_manifest_ref,
            result_ref: "terminal-receipt://#{attrs.workflow_id}/#{attrs.lower_receipt_ref}"
@@ -573,6 +578,74 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
       workflow_effect_state: "pending_ack",
       projection_state: "pending"
     })
+  end
+
+  defp reduce_terminal_receipt(attrs, lower_receipt) do
+    reducer =
+      Application.get_env(
+        :mezzanine_workflow_runtime,
+        :receipt_reducer,
+        Module.concat([Mezzanine, Projections, ReceiptReducer])
+      )
+
+    reducer_attrs =
+      %{
+        installation_id: parse_installation_ref(attrs.installation_ref),
+        subject_id: subject_id_from_attrs(attrs),
+        execution_id: execution_id_from_attrs(attrs),
+        trace_id: attrs.trace_id,
+        causation_id: attrs.correlation_id,
+        receipt_id: Map.get(attrs, :signal_id, attrs.lower_receipt_ref),
+        receipt_state: Map.get(attrs, :receipt_state, attrs.terminal_state),
+        lower_receipt_ref: attrs.lower_receipt_ref,
+        lower_receipt: lower_receipt,
+        required_evidence: get_in(attrs, [:routing_facts, :required_evidence]) || []
+      }
+
+    if Code.ensure_loaded?(reducer) and function_exported?(reducer, :reduce, 1) do
+      case reducer.reduce(reducer_attrs) do
+        {:ok, result} -> result
+        {:error, reason} -> %{projection_name: "operator_subject_runtime", reducer_error: reason}
+      end
+    else
+      %{projection_name: "operator_subject_runtime", reducer_loaded?: false}
+    end
+  end
+
+  defp lower_receipt_payload(attrs) do
+    routing = Map.get(attrs, :routing_facts, %{}) || %{}
+
+    %{
+      receipt_id: Map.get(attrs, :signal_id, attrs.lower_receipt_ref),
+      receipt_state: Map.get(attrs, :receipt_state, attrs.terminal_state),
+      lower_receipt_ref: attrs.lower_receipt_ref,
+      run_id: Map.get(attrs, :lower_run_ref),
+      attempt_id: Map.get(attrs, :lower_attempt_ref),
+      lower_event_ref: Map.get(attrs, :lower_event_ref),
+      provider_object_refs: Map.get(routing, :provider_object_refs) || Map.get(routing, "provider_object_refs") || [],
+      evidence_artifact_refs:
+        Map.get(routing, :evidence_artifact_refs) || Map.get(routing, "evidence_artifact_refs") || [],
+      trace_id: attrs.trace_id,
+      causation_id: attrs.correlation_id,
+      idempotency_key: attrs.idempotency_key
+    }
+  end
+
+  defp subject_id_from_attrs(attrs) do
+    routing = Map.get(attrs, :routing_facts, %{}) || %{}
+
+    Map.get(routing, :subject_id) ||
+      Map.get(routing, "subject_id") ||
+      case Map.get(attrs, :subject_ref) do
+        value when is_binary(value) -> value
+        %{} = map -> Map.get(map, :id) || Map.get(map, "id")
+        _other -> attrs.resource_ref
+      end
+  end
+
+  defp execution_id_from_attrs(attrs) do
+    routing = Map.get(attrs, :routing_facts, %{}) || %{}
+    Map.get(routing, :execution_id) || Map.get(routing, "execution_id") || attrs.command_id
   end
 
   defp sanitize_runtime_receipt(receipt) do
