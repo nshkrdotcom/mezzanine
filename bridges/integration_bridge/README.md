@@ -1,16 +1,22 @@
 # Mezzanine Integration Bridge
 
-`bridges/integration_bridge` is the narrow direct path from Mezzanine intents to
-the public `jido_integration` platform facade for cases that do not need full
-Brain routing.
+`bridges/integration_bridge` is the post-governance path from Mezzanine to the
+public `jido_integration` platform facade.
 
 It owns:
 
-- direct run dispatch
-- effect dispatch via connector-backed capabilities
+- direct run dispatch from `%Mezzanine.IntegrationBridge.AuthorizedInvocation{}`
+- effect dispatch from `%Mezzanine.IntegrationBridge.AuthorizedInvocation{}`
 - read dispatch via typed `Jido.Integration.V2.LowerFacts` operations keyed by
   authorized `ExecutionLineage`
 - event translation back into Mezzanine audit attrs
+
+`DirectRunDispatcher` and `EffectDispatcher` are post-Citadel only. They reject
+generic maps, old `RunIntent` values, and old `EffectIntent` values through
+function-head pattern matching before any provider effect can run. The raw
+`Citadel.InvocationRequest.V2` struct or map representation must be carried in
+the authorized invocation envelope with `AuthorityDecision.v1` and
+`ExecutionGovernance.v1` evidence.
 
 ## Tenant-Scoped Lower Reads
 

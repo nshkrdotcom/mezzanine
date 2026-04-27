@@ -9,12 +9,12 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
   alias Mezzanine.Projections.{ProjectionRow, ReceiptReducer}
 
   @required_evidence [
-    "pull_request",
+    "github_pr",
     "diff",
     "commit",
     "ci",
     "codex_session",
-    "workspace",
+    "source_workpad",
     "run_log",
     "source_comment",
     "connector_event"
@@ -49,6 +49,8 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
            }
 
     assert projection.payload["runtime"]["event_counts"]["tool_call"] == 2
+    assert projection.payload["diagnostics"]["missing_required_evidence"] == []
+    assert projection.payload["diagnostics"]["review_blocking?"] == false
 
     assert {:ok, audit_facts} = AuditFact.list_trace("inst-1", "trace-receipt-completed")
     audit_fact = Enum.find(audit_facts, &(&1.fact_kind == :receipt_reduced))
@@ -115,6 +117,61 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
     assert projection.payload["lower_receipt"]["receipt_id"] == "receipt-completed"
   end
 
+  test "missing required evidence blocks review without crashing receipt reduction" do
+    %{subject: subject, execution: execution} = receipt_fixture("missing-required-evidence")
+
+    attrs =
+      success_attrs(subject, execution,
+        review_required?: true,
+        required_evidence: ["github_pr", "codex_session", "source_workpad"],
+        evidence_refs: [
+          %{kind: "github_pr", content_ref: "lower-artifact://github-pr/1", collector_ref: "github"}
+        ]
+      )
+
+    assert {:ok, reduced} = ReceiptReducer.reduce(attrs)
+
+    assert reduced.execution.dispatch_state == :failed
+    assert reduced.subject.lifecycle_state == "blocked"
+    assert reduced.subject.block_reason == "missing_required_evidence"
+    assert Enum.map(reduced.evidence, & &1.evidence_kind) == ["github_pr"]
+
+    assert {:ok, projection} =
+             ProjectionRow.row_by_key("inst-1", "operator_subject_runtime", subject.id)
+
+    assert projection.payload["diagnostics"]["missing_required_evidence"] == [
+             "codex_session",
+             "source_workpad"
+           ]
+
+    assert projection.payload["diagnostics"]["review_blocking?"] == true
+    assert projection.payload["lower_receipt"]["lower_receipt_ref"] == "lower-receipt://completed"
+  end
+
+  test "placeholder artifact refs cannot satisfy required review evidence" do
+    %{subject: subject, execution: execution} = receipt_fixture("placeholder-required-evidence")
+
+    attrs =
+      success_attrs(subject, execution,
+        review_required?: true,
+        required_evidence: ["github_pr"],
+        evidence_refs: [
+          %{kind: "github_pr", content_ref: "artifact://github_pr", collector_ref: "fixture"}
+        ]
+      )
+
+    assert {:ok, reduced} = ReceiptReducer.reduce(attrs)
+
+    assert reduced.evidence == []
+    assert reduced.subject.lifecycle_state == "blocked"
+    assert reduced.subject.block_reason == "missing_required_evidence"
+
+    assert {:ok, projection} =
+             ProjectionRow.row_by_key("inst-1", "operator_subject_runtime", subject.id)
+
+    assert projection.payload["diagnostics"]["missing_required_evidence"] == ["github_pr"]
+  end
+
   defp receipt_fixture(suffix) do
     source_ref = "linear:ticket:receipt-reducer-#{suffix}-#{System.unique_integer([:positive])}"
 
@@ -160,6 +217,8 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
   defp success_attrs(subject, execution, opts) do
     receipt_state = Keyword.get(opts, :receipt_state, "completed")
     review_required? = Keyword.get(opts, :review_required?, false)
+    required_evidence = Keyword.get(opts, :required_evidence, @required_evidence)
+    evidence_refs = Keyword.get(opts, :evidence_refs, evidence_refs(required_evidence))
 
     %{
       installation_id: "inst-1",
@@ -171,7 +230,7 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
       lower_receipt: %{
         "run_id" => "lower-run-#{receipt_state}",
         "attempt_id" => "lower-attempt-#{receipt_state}",
-        "artifact_refs" => evidence_refs(),
+        "artifact_refs" => evidence_refs,
         "token_totals" => %{"input" => 120, "output" => 45},
         "rate_limit" => %{"remaining" => 80, "reset_at" => "later"},
         "runtime_events" => [
@@ -181,8 +240,8 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
         ]
       },
       normalized_outcome: %{"state" => receipt_state, "terminal" => true},
-      artifact_refs: Enum.map(evidence_refs(), & &1.content_ref),
-      required_evidence: @required_evidence,
+      artifact_refs: Enum.map(evidence_refs, & &1.content_ref),
+      required_evidence: required_evidence,
       review_required?: review_required?,
       trace_id: "trace-receipt-#{receipt_state}",
       causation_id: "cause-receipt-#{receipt_state}",
@@ -190,9 +249,9 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
     }
   end
 
-  defp evidence_refs do
-    Enum.map(@required_evidence, fn kind ->
-      %{kind: kind, content_ref: "artifact://#{kind}", collector_ref: "receipt-reducer"}
+  defp evidence_refs(kinds) do
+    Enum.map(kinds, fn kind ->
+      %{kind: kind, content_ref: "lower-artifact://#{kind}/receipt", collector_ref: "receipt-reducer"}
     end)
   end
 end

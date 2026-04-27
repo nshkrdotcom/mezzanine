@@ -4,33 +4,18 @@ defmodule Mezzanine.IntegrationBridge.EffectDispatcher do
   resolve to an Integration capability.
   """
 
-  alias Mezzanine.Intent.EffectIntent
+  alias Mezzanine.IntegrationBridge.AuthorizedInvocation
 
   @invoke_fun &Jido.Integration.V2.invoke/3
 
-  @spec dispatch_effect(EffectIntent.t(), keyword()) :: {:ok, map()} | {:error, term()}
-  def dispatch_effect(%EffectIntent{} = intent, opts \\ []) when is_list(opts) do
+  @spec dispatch_effect(AuthorizedInvocation.t(), keyword()) :: {:ok, map()} | {:error, term()}
+  def dispatch_effect(%AuthorizedInvocation{} = invocation, opts \\ []) when is_list(opts) do
     invoke_fun = Keyword.get(opts, :invoke_fun, @invoke_fun)
     invoke_opts = Keyword.get(opts, :invoke_opts, [])
+    capability_id = Keyword.get(opts, :capability_id, AuthorizedInvocation.default_capability!(invocation))
 
-    with {:ok, capability_id} <- capability_id(intent),
-         {:ok, input} <- input(intent) do
-      invoke_fun.(capability_id, input, invoke_opts)
-    end
-  end
+    :ok = AuthorizedInvocation.authorize_capability!(invocation, capability_id)
 
-  defp capability_id(intent) do
-    case Map.get(intent.metadata, :capability_id) || Map.get(intent.metadata, "capability_id") ||
-           Map.get(intent.payload, :capability_id) || Map.get(intent.payload, "capability_id") do
-      value when is_binary(value) -> {:ok, value}
-      _ -> {:error, :unsupported_effect_intent}
-    end
-  end
-
-  defp input(intent) do
-    case Map.get(intent.payload, :input) || Map.get(intent.payload, "input") || intent.payload do
-      %{} = payload -> {:ok, payload}
-      _ -> {:error, :unsupported_effect_intent}
-    end
+    invoke_fun.(capability_id, AuthorizedInvocation.invoke_input(invocation, capability_id), invoke_opts)
   end
 end

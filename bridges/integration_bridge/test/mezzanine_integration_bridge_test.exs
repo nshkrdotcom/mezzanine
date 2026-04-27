@@ -5,6 +5,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
   alias Jido.Integration.V2.TenantScope
   alias Mezzanine.Audit.{ExecutionLineage, ExecutionLineageStore, Repo}
   alias Mezzanine.IntegrationBridge
+  alias Mezzanine.IntegrationBridge.AuthorizedInvocation
   alias Mezzanine.Intent.{EffectIntent, ReadIntent, RunIntent}
 
   defmodule LowerFactsStub do
@@ -93,7 +94,44 @@ defmodule Mezzanine.IntegrationBridgeTest do
     :ok
   end
 
-  test "invoke_run_intent delegates to the public integration facade shape" do
+  test "invoke_run_intent dispatches only an authorized invocation envelope" do
+    invocation = authorized_invocation()
+
+    invoke_fun = fn capability, input, opts ->
+      send(self(), {:invoke, capability, input, opts})
+      {:ok, %{capability: capability, input: input}}
+    end
+
+    assert {:ok, %{capability: "linear.issue.execute"}} =
+             IntegrationBridge.invoke_run_intent(
+               invocation,
+               invoke_fun: invoke_fun,
+               invoke_opts: [connection_id: "conn-1"]
+             )
+
+    assert_received {:invoke, "linear.issue.execute", input, [connection_id: "conn-1"]}
+    assert input.invocation_request == invocation.invocation_request
+    assert input.idempotency_key == "idem-1"
+    assert input.submission_dedupe_key == "dedupe-1"
+    assert input.authority.permission_decision_ref == "mock-decision-123"
+    assert input.authority.policy_version == "mock-v1"
+  end
+
+  test "dispatch_effect dispatches only an authorized invocation envelope" do
+    invocation = authorized_invocation()
+
+    invoke_fun = fn capability, input, _opts ->
+      {:ok, %{capability: capability, input: input}}
+    end
+
+    assert {:ok, %{capability: "linear.issue.update"}} =
+             IntegrationBridge.dispatch_effect(invocation,
+               invoke_fun: invoke_fun,
+               capability_id: "linear.issue.update"
+             )
+  end
+
+  test "direct dispatch rejects old RunIntent and generic map inputs before Jido invocation" do
     intent =
       RunIntent.new!(%{
         intent_id: "intent-run-1",
@@ -103,23 +141,18 @@ defmodule Mezzanine.IntegrationBridgeTest do
         input: %{"issue_id" => "ENG-42"}
       })
 
-    invoke_fun = fn capability, input, opts ->
-      send(self(), {:invoke, capability, input, opts})
-      {:ok, %{capability: capability, input: input}}
+    invoke_fun = fn _capability, _input, _opts -> flunk("provider invoke must not run") end
+
+    assert_raise FunctionClauseError, fn ->
+      IntegrationBridge.invoke_run_intent(intent, invoke_fun: invoke_fun)
     end
 
-    assert {:ok, %{capability: "linear.issue.execute"}} =
-             IntegrationBridge.invoke_run_intent(
-               intent,
-               invoke_fun: invoke_fun,
-               invoke_opts: [connection_id: "conn-1"]
-             )
-
-    assert_received {:invoke, "linear.issue.execute", %{"issue_id" => "ENG-42"},
-                     [connection_id: "conn-1"]}
+    assert_raise FunctionClauseError, fn ->
+      IntegrationBridge.invoke_run_intent(%{}, invoke_fun: invoke_fun)
+    end
   end
 
-  test "dispatch_effect invokes a capability-backed effect" do
+  test "effect dispatch rejects old EffectIntent and unauthorized capability inputs" do
     intent =
       EffectIntent.new!(%{
         intent_id: "effect-1",
@@ -131,12 +164,41 @@ defmodule Mezzanine.IntegrationBridgeTest do
         }
       })
 
-    invoke_fun = fn capability, input, _opts ->
-      {:ok, %{capability: capability, input: input}}
+    invoke_fun = fn _capability, _input, _opts -> flunk("provider invoke must not run") end
+
+    assert_raise FunctionClauseError, fn ->
+      IntegrationBridge.dispatch_effect(intent, invoke_fun: invoke_fun)
     end
 
-    assert {:ok, %{capability: "linear.issue.update"}} =
-             IntegrationBridge.dispatch_effect(intent, invoke_fun: invoke_fun)
+    assert_raise ArgumentError, ~r/not present in Citadel authority/, fn ->
+      IntegrationBridge.dispatch_effect(authorized_invocation(),
+        invoke_fun: invoke_fun,
+        capability_id: "github.pr.merge"
+      )
+    end
+  end
+
+  test "authorized invocation requires mock-valid authority and governance packets" do
+    attrs =
+      authorized_invocation_attrs()
+      |> put_in([:invocation_request, :authority_packet], %{})
+
+    assert_raise ArgumentError, ~r/missing required field :contract_version/, fn ->
+      AuthorizedInvocation.new!(attrs)
+    end
+  end
+
+  test "authorized invocation rejects stale installation revision when caller supplies one" do
+    assert %AuthorizedInvocation{} =
+             AuthorizedInvocation.new!(
+               Map.put(authorized_invocation_attrs(), :expected_installation_revision, 3)
+             )
+
+    assert_raise ArgumentError, ~r/stale installation_revision/, fn ->
+      authorized_invocation_attrs()
+      |> Map.put(:expected_installation_revision, 2)
+      |> AuthorizedInvocation.new!()
+    end
   end
 
   test "dispatch_read routes generic lower reads through lineage-owned lower facts" do
@@ -372,5 +434,87 @@ defmodule Mezzanine.IntegrationBridgeTest do
       })
 
     assert {:ok, _stored} = ExecutionLineageStore.store(lineage)
+  end
+
+  defp authorized_invocation do
+    AuthorizedInvocation.new!(authorized_invocation_attrs())
+  end
+
+  defp authorized_invocation_attrs do
+    %{
+      tenant_id: "tenant-1",
+      installation_id: "inst-1",
+      subject_id: "subject-1",
+      execution_id: "exec-1",
+      trace_id: "trace-1",
+      idempotency_key: "idem-1",
+      submission_dedupe_key: "dedupe-1",
+      invocation_request: invocation_request()
+    }
+  end
+
+  defp invocation_request do
+    %{
+      schema_version: 2,
+      invocation_request_id: "invoke-1",
+      request_id: "request-1",
+      session_id: "session-1",
+      tenant_id: "tenant-1",
+      trace_id: "trace-1",
+      actor_id: "actor-1",
+      target_id: "target-1",
+      target_kind: "runtime_target",
+      selected_step_id: "step-1",
+      allowed_operations: ["linear.issue.execute", "linear.issue.update"],
+      authority_packet: authority_packet(),
+      boundary_intent: %{},
+      topology_intent: %{},
+      execution_governance: execution_governance(),
+      extensions: %{
+        "citadel" => %{
+          "execution_envelope" => %{
+            "installation_id" => "inst-1",
+            "installation_revision" => 3,
+            "subject_id" => "subject-1",
+            "execution_id" => "exec-1",
+            "submission_dedupe_key" => "dedupe-1"
+          }
+        }
+      }
+    }
+  end
+
+  defp authority_packet do
+    %{
+      contract_version: "v1",
+      decision_id: "mock-decision-123",
+      tenant_id: "tenant-1",
+      request_id: "request-1",
+      policy_version: "mock-v1",
+      boundary_class: "workspace_session",
+      trust_profile: "baseline",
+      approval_profile: "standard",
+      egress_profile: "restricted",
+      workspace_profile: "workspace",
+      resource_profile: "standard",
+      decision_hash: String.duplicate("a", 64),
+      extensions: %{"citadel" => %{}}
+    }
+  end
+
+  defp execution_governance do
+    %{
+      contract_version: "v1",
+      execution_governance_id: "mock-governance-123",
+      authority_ref: %{"decision_id" => "mock-decision-123"},
+      sandbox: %{"allowed_tools" => ["linear.issue.update"]},
+      boundary: %{},
+      topology: %{},
+      workspace: %{},
+      resources: %{},
+      placement: %{},
+      operations: %{"allowed_operations" => ["linear.issue.execute", "linear.issue.update"]},
+      extensions: %{"citadel" => %{}}
+    }
   end
 end

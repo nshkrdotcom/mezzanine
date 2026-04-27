@@ -4,19 +4,20 @@ defmodule Mezzanine.IntegrationBridge do
   """
 
   alias Mezzanine.IntegrationBridge.{
+    AuthorizedInvocation,
     DirectRunDispatcher,
     EffectDispatcher,
     EventTranslator,
     ReadDispatcher
   }
 
-  alias Mezzanine.Intent.{EffectIntent, ReadIntent, RunIntent}
+  alias Mezzanine.Intent.ReadIntent
 
-  @spec invoke_run_intent(RunIntent.t(), keyword()) :: {:ok, map()} | {:error, term()}
-  defdelegate invoke_run_intent(intent, opts \\ []), to: DirectRunDispatcher
+  @spec invoke_run_intent(AuthorizedInvocation.t(), keyword()) :: {:ok, map()} | {:error, term()}
+  defdelegate invoke_run_intent(invocation, opts \\ []), to: DirectRunDispatcher
 
-  @spec dispatch_effect(EffectIntent.t(), keyword()) :: {:ok, map()} | {:error, term()}
-  defdelegate dispatch_effect(intent, opts \\ []), to: EffectDispatcher
+  @spec dispatch_effect(AuthorizedInvocation.t(), keyword()) :: {:ok, map()} | {:error, term()}
+  defdelegate dispatch_effect(invocation, opts \\ []), to: EffectDispatcher
 
   @spec dispatch_read(ReadIntent.t(), keyword()) :: {:ok, map()} | {:error, term()}
   defdelegate dispatch_read(intent, opts \\ []), to: ReadDispatcher

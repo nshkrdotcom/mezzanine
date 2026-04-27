@@ -34,10 +34,20 @@ defmodule Mezzanine.Projections.ReceiptReducer do
   @spec reduce(map() | keyword()) :: {:ok, reduce_result()} | {:error, term()}
   def reduce(attrs) when is_map(attrs) or is_list(attrs) do
     attrs = normalize_attrs(attrs)
+    missing_evidence = missing_required_evidence(attrs)
+
+    attrs =
+      if missing_evidence == [] do
+        attrs
+      else
+        attrs
+        |> Map.put(:missing_required_evidence, missing_evidence)
+        |> Map.put(:block_reason, "missing_required_evidence")
+      end
 
     with {:ok, execution} <- fetch_execution(required!(attrs, :execution_id)),
          {:ok, subject} <- fetch_subject(required!(attrs, :subject_id)),
-         receipt_state <- receipt_state(attrs),
+         receipt_state <- effective_receipt_state(attrs, receipt_state(attrs), missing_evidence),
          {:ok, execution} <- reduce_execution(execution, attrs, receipt_state),
          {:ok, subject} <- reduce_subject(subject, attrs, receipt_state),
          {:ok, decisions} <- reduce_decisions(subject, execution, attrs, receipt_state),
@@ -122,7 +132,7 @@ defmodule Mezzanine.Projections.ReceiptReducer do
 
   defp reduce_subject(subject, attrs, receipt_state)
        when receipt_state in @terminal_blocked_states do
-    with {:ok, subject} <- block_subject(subject, attrs, receipt_state) do
+    with {:ok, subject} <- block_subject(subject, attrs, value(attrs, :block_reason) || receipt_state) do
       advance_subject(subject, attrs, "blocked")
     end
   end
@@ -259,6 +269,7 @@ defmodule Mezzanine.Projections.ReceiptReducer do
 
   defp runtime_payload(subject, execution, decisions, evidence, attrs, receipt_state) do
     lower_receipt = value(attrs, :lower_receipt) || %{}
+    missing_required_evidence = value(attrs, :missing_required_evidence) || []
 
     %{
       subject: %{
@@ -289,6 +300,10 @@ defmodule Mezzanine.Projections.ReceiptReducer do
       },
       evidence: %{
         evidence_refs: Enum.map(evidence, &evidence_projection/1)
+      },
+      diagnostics: %{
+        missing_required_evidence: missing_required_evidence,
+        review_blocking?: missing_required_evidence != []
       }
     }
   end
@@ -315,13 +330,59 @@ defmodule Mezzanine.Projections.ReceiptReducer do
         receipt_id: required!(attrs, :receipt_id),
         receipt_state: receipt_state,
         lower_receipt_ref: value(attrs, :lower_receipt_ref),
-        projection_name: @projection_name
+        projection_name: @projection_name,
+        missing_required_evidence: value(attrs, :missing_required_evidence) || []
       },
       occurred_at: DateTime.utc_now()
     })
   end
 
   defp evidence_specs(attrs) do
+    refs_by_kind = refs_by_kind(attrs)
+
+    attrs
+    |> value(:required_evidence)
+    |> List.wrap()
+    |> Enum.map(&to_string/1)
+    |> Enum.flat_map(fn kind ->
+      case Map.get(refs_by_kind, kind) do
+        %{} = ref ->
+          content_ref = value(ref, :content_ref)
+
+          if valid_evidence_ref?(content_ref) do
+            [
+              %{
+                kind: kind,
+                content_ref: content_ref,
+                collector_ref: value(ref, :collector_ref) || "receipt_reducer"
+              }
+            ]
+          else
+            []
+          end
+
+        _missing ->
+          []
+      end
+    end)
+  end
+
+  defp missing_required_evidence(attrs) do
+    refs_by_kind = refs_by_kind(attrs)
+
+    attrs
+    |> value(:required_evidence)
+    |> List.wrap()
+    |> Enum.map(&to_string/1)
+    |> Enum.reject(fn kind ->
+      case Map.get(refs_by_kind, kind) do
+        %{} = ref -> valid_evidence_ref?(value(ref, :content_ref))
+        _missing -> false
+      end
+    end)
+  end
+
+  defp refs_by_kind(attrs) do
     refs =
       attrs
       |> value(:lower_receipt)
@@ -330,26 +391,19 @@ defmodule Mezzanine.Projections.ReceiptReducer do
         _other -> []
       end
 
-    refs_by_kind =
-      Map.new(refs, fn ref ->
-        ref = normalize_attrs(ref)
-        {required!(ref, :kind), ref}
-      end)
-
-    attrs
-    |> value(:required_evidence)
-    |> List.wrap()
-    |> Enum.map(fn kind ->
-      kind = to_string(kind)
-      ref = Map.get(refs_by_kind, kind, %{})
-
-      %{
-        kind: kind,
-        content_ref: value(ref, :content_ref) || "artifact://#{kind}",
-        collector_ref: value(ref, :collector_ref) || "receipt_reducer"
-      }
+    Map.new(refs, fn ref ->
+      ref = normalize_attrs(ref)
+      {required!(ref, :kind), ref}
     end)
   end
+
+  defp valid_evidence_ref?(value) when is_binary(value),
+    do: String.trim(value) != "" and not String.starts_with?(value, "artifact://")
+
+  defp valid_evidence_ref?(_value), do: false
+
+  defp effective_receipt_state(_attrs, receipt_state, []), do: receipt_state
+  defp effective_receipt_state(_attrs, _receipt_state, _missing_evidence), do: "blocked"
 
   defp artifact_refs(attrs) do
     attrs
