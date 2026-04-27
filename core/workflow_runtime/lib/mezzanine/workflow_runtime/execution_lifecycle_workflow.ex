@@ -7,11 +7,11 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
   domain truth stays in the owning repositories.
   """
 
+  alias Mezzanine.Intent.RunIntent
   alias Mezzanine.WorkflowExecutionLifecycleInput
   alias Mezzanine.WorkflowReceiptSignal
   alias Mezzanine.WorkflowSignalReceipt
   alias Mezzanine.WorkflowTerminalReceiptPolicy
-  alias Mezzanine.Intent.RunIntent
 
   @release_manifest_ref "phase4-v6-milestone27-execution-lifecycle-workflow"
   @workflow_contract "Mezzanine.WorkflowExecutionLifecycleInput.v1"
@@ -73,7 +73,10 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
   def run(attrs) do
     with {:ok, input} <- new_input(attrs),
          {:ok, authority} <- compile_citadel_authority_activity(input),
-         {:ok, lower} <- submit_jido_lower_run_activity(Map.put(Map.from_struct(input), :citadel_authority, authority)) do
+         {:ok, lower} <-
+           submit_jido_lower_run_activity(
+             Map.put(Map.from_struct(input), :citadel_authority, authority)
+           ) do
       {:ok, runtime_result(input, authority, lower)}
     end
   end
@@ -129,7 +132,8 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     with {:ok, input} <- new_input(attrs),
          {:ok, run_intent} <- citadel_run_intent(input),
          {:ok, compile_attrs} <- citadel_compile_attrs(input),
-         {:ok, compiled} <- compile_citadel_submission(run_intent, compile_attrs, policy_packs(input)) do
+         {:ok, compiled} <-
+           compile_citadel_submission(run_intent, compile_attrs, policy_packs(input)) do
       {:ok,
        %{
          activity: :compile_citadel_authority,
@@ -153,7 +157,8 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     attrs = normalize(attrs)
 
     with {:ok, input} <- new_input(attrs),
-         {:ok, invocation} <- authorized_lower_invocation(input, Map.get(attrs, :citadel_authority)),
+         {:ok, invocation} <-
+           authorized_lower_invocation(input, Map.get(attrs, :citadel_authority)),
          {:ok, dispatched} <- invoke_authorized_lower(invocation) do
       {:ok,
        %{
@@ -622,9 +627,11 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
       run_id: Map.get(attrs, :lower_run_ref),
       attempt_id: Map.get(attrs, :lower_attempt_ref),
       lower_event_ref: Map.get(attrs, :lower_event_ref),
-      provider_object_refs: Map.get(routing, :provider_object_refs) || Map.get(routing, "provider_object_refs") || [],
+      provider_object_refs:
+        Map.get(routing, :provider_object_refs) || Map.get(routing, "provider_object_refs") || [],
       evidence_artifact_refs:
-        Map.get(routing, :evidence_artifact_refs) || Map.get(routing, "evidence_artifact_refs") || [],
+        Map.get(routing, :evidence_artifact_refs) || Map.get(routing, "evidence_artifact_refs") ||
+          [],
       trace_id: attrs.trace_id,
       causation_id: attrs.correlation_id,
       idempotency_key: attrs.idempotency_key
@@ -695,7 +702,10 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     if is_integer(expected_revision) and expected_revision != installation_revision do
       {:error,
        {:stale_installation_revision,
-        %{expected_installation_revision: expected_revision, installation_revision: installation_revision}}}
+        %{
+          expected_installation_revision: expected_revision,
+          installation_revision: installation_revision
+        }}}
     else
       capability = required_routing!(input, routing, :capability)
       subject_id = required_routing!(input, routing, :subject_id)
@@ -737,12 +747,18 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
   end
 
   defp compile_citadel_submission(%RunIntent{} = run_intent, attrs, policy_packs) do
-    bridge = Application.get_env(:mezzanine_workflow_runtime, :citadel_bridge, Mezzanine.CitadelBridge)
+    bridge =
+      Application.get_env(:mezzanine_workflow_runtime, :citadel_bridge, Mezzanine.CitadelBridge)
 
     case bridge.compile_submission(run_intent, attrs, policy_packs, []) do
-      {:ok, %{rejection_classification: nil} = compiled} -> {:ok, compiled}
-      {:ok, %{rejection_classification: rejection} = compiled} -> {:error, {:citadel_rejected, rejection, compiled}}
-      {:error, reason} -> {:error, {:citadel_rejected, reason}}
+      {:ok, %{rejection_classification: nil} = compiled} ->
+        {:ok, compiled}
+
+      {:ok, %{rejection_classification: rejection} = compiled} ->
+        {:error, {:citadel_rejected, rejection, compiled}}
+
+      {:error, reason} ->
+        {:error, {:citadel_rejected, reason}}
     end
   end
 
@@ -772,7 +788,13 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
   end
 
   defp invoke_authorized_lower(invocation) do
-    bridge = Application.get_env(:mezzanine_workflow_runtime, :integration_bridge, Mezzanine.IntegrationBridge)
+    bridge =
+      Application.get_env(
+        :mezzanine_workflow_runtime,
+        :integration_bridge,
+        Mezzanine.IntegrationBridge
+      )
+
     bridge.invoke_run_intent(invocation, [])
   end
 

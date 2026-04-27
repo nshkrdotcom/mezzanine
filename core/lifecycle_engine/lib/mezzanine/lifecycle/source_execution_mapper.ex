@@ -84,7 +84,10 @@ defmodule Mezzanine.Lifecycle.SourceExecutionMapper do
     causation_id = required_string!(source, :causation_id)
     idempotency_key = value(source, :idempotency_key) || source_idempotency_key(source)
     capability = required_string!(source, :capability)
-    workflow_id = value(source, :workflow_id) || deterministic_workflow_id(source, idempotency_key)
+
+    workflow_id =
+      value(source, :workflow_id) || deterministic_workflow_id(source, idempotency_key)
+
     execution_id = value(source, :execution_id) || subject_id
 
     %{
@@ -120,7 +123,7 @@ defmodule Mezzanine.Lifecycle.SourceExecutionMapper do
   end
 
   defp validate_required_source(source) do
-    case Enum.find(@required_source_fields, &(blank?(value(source, &1)))) do
+    case Enum.find(@required_source_fields, &blank?(value(source, &1))) do
       nil -> :ok
       field -> {:error, {:missing_required_source_field, field}}
     end
@@ -177,7 +180,9 @@ defmodule Mezzanine.Lifecycle.SourceExecutionMapper do
   end
 
   defp deterministic_workflow_id(source, idempotency_key) do
-    digest = :crypto.hash(:sha256, idempotency_key) |> Base.encode16(case: :lower) |> binary_part(0, 24)
+    digest =
+      :crypto.hash(:sha256, idempotency_key) |> Base.encode16(case: :lower) |> binary_part(0, 24)
+
     "execution-attempt:#{required_string!(source, :tenant_id)}:#{digest}"
   end
 
@@ -198,14 +203,19 @@ defmodule Mezzanine.Lifecycle.SourceExecutionMapper do
         value
 
       value ->
-        raise ArgumentError, "source field #{inspect(key)} must be a non-empty string, got: #{inspect(value)}"
+        raise ArgumentError,
+              "source field #{inspect(key)} must be a non-empty string, got: #{inspect(value)}"
     end
   end
 
   defp required_non_neg_integer!(source, key) do
     case required!(source, key) do
-      value when is_integer(value) and value >= 0 -> value
-      value -> raise ArgumentError, "source field #{inspect(key)} must be a non-negative integer, got: #{inspect(value)}"
+      value when is_integer(value) and value >= 0 ->
+        value
+
+      value ->
+        raise ArgumentError,
+              "source field #{inspect(key)} must be a non-negative integer, got: #{inspect(value)}"
     end
   end
 

@@ -92,7 +92,11 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
       end
 
       if previous_integration do
-        Application.put_env(:mezzanine_workflow_runtime, :integration_bridge, previous_integration)
+        Application.put_env(
+          :mezzanine_workflow_runtime,
+          :integration_bridge,
+          previous_integration
+        )
       else
         Application.delete_env(:mezzanine_workflow_runtime, :integration_bridge)
       end

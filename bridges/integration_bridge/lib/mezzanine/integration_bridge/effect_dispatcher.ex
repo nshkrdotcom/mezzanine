@@ -12,10 +12,16 @@ defmodule Mezzanine.IntegrationBridge.EffectDispatcher do
   def dispatch_effect(%AuthorizedInvocation{} = invocation, opts \\ []) when is_list(opts) do
     invoke_fun = Keyword.get(opts, :invoke_fun, @invoke_fun)
     invoke_opts = Keyword.get(opts, :invoke_opts, [])
-    capability_id = Keyword.get(opts, :capability_id, AuthorizedInvocation.default_capability!(invocation))
+
+    capability_id =
+      Keyword.get(opts, :capability_id, AuthorizedInvocation.default_capability!(invocation))
 
     :ok = AuthorizedInvocation.authorize_capability!(invocation, capability_id)
 
-    invoke_fun.(capability_id, AuthorizedInvocation.invoke_input(invocation, capability_id), invoke_opts)
+    invoke_fun.(
+      capability_id,
+      AuthorizedInvocation.invoke_input(invocation, capability_id),
+      invoke_opts
+    )
   end
 end

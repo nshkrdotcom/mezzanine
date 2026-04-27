@@ -34,6 +34,7 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
   defstruct @enforce_keys
 
   @invocation_request_module :"Elixir.Citadel.InvocationRequest.V2"
+  @dialyzer :no_match
 
   @spec new(map() | keyword() | t()) :: {:ok, t()} | {:error, Exception.t()}
   def new(attrs) do
@@ -146,7 +147,11 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
       :installation_id
     )
 
-    require_equals!(required_string!(execution_envelope, :subject_id), invocation.subject_id, :subject_id)
+    require_equals!(
+      required_string!(execution_envelope, :subject_id),
+      invocation.subject_id,
+      :subject_id
+    )
 
     require_equals!(
       required_string!(execution_envelope, :execution_id),
@@ -170,7 +175,9 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
   end
 
   defp validate_authority_packet!(packet) do
-    _contract_version = require_equals!(required_string!(packet, :contract_version), "v1", :contract_version)
+    _contract_version =
+      require_equals!(required_string!(packet, :contract_version), "v1", :contract_version)
+
     _decision_id = required_string!(packet, :decision_id)
     _tenant_id = required_string!(packet, :tenant_id)
     _request_id = required_string!(packet, :request_id)
@@ -179,7 +186,9 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
   end
 
   defp validate_execution_governance!(packet) do
-    _contract_version = require_equals!(required_string!(packet, :contract_version), "v1", :contract_version)
+    _contract_version =
+      require_equals!(required_string!(packet, :contract_version), "v1", :contract_version)
+
     _execution_governance_id = required_string!(packet, :execution_governance_id)
     _authority_ref = required!(packet, :authority_ref)
     _operations = required!(packet, :operations)
@@ -192,37 +201,44 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
         :ok
 
       expected_revision ->
-        request = normalized_request!(invocation_request)
-        actual_revision = request |> execution_envelope() |> required!(:installation_revision)
-
-        case {expected_revision, actual_revision} do
-          {expected, actual}
-          when is_integer(expected) and expected >= 0 and is_integer(actual) and actual >= 0 and
-                 expected == actual ->
-            :ok
-
-          {expected, actual}
-          when is_integer(expected) and expected >= 0 and is_integer(actual) and actual >= 0 ->
-            raise ArgumentError,
-                  "AuthorizedInvocation stale installation_revision: expected #{inspect(expected)}, got #{inspect(actual)}"
-
-          {expected, _actual} ->
-            raise ArgumentError,
-                  "AuthorizedInvocation expected_installation_revision must be a non-negative integer, got: #{inspect(expected)}"
-        end
+        invocation_request
+        |> actual_installation_revision!()
+        |> validate_expected_installation_revision_value!(expected_revision)
     end
   end
 
-  defp normalized_request!(%{__struct__: @invocation_request_module} = request), do: Map.from_struct(request)
+  defp actual_installation_revision!(invocation_request) do
+    invocation_request
+    |> normalized_request!()
+    |> execution_envelope()
+    |> required!(:installation_revision)
+  end
+
+  defp validate_expected_installation_revision_value!(actual, expected) do
+    cond do
+      not (is_integer(expected) and expected >= 0) ->
+        raise ArgumentError,
+              "AuthorizedInvocation expected_installation_revision must be a non-negative integer, got: #{inspect(expected)}"
+
+      not (is_integer(actual) and actual >= 0) ->
+        raise ArgumentError,
+              "AuthorizedInvocation installation_revision must be a non-negative integer, got: #{inspect(actual)}"
+
+      actual == expected ->
+        :ok
+
+      true ->
+        raise ArgumentError,
+              "AuthorizedInvocation stale installation_revision: expected #{inspect(expected)}, got: #{inspect(actual)}"
+    end
+  end
+
+  defp normalized_request!(%{__struct__: @invocation_request_module} = request),
+    do: Map.from_struct(request)
 
   defp normalized_request!(%{} = request) do
-    if Map.has_key?(request, :schema_version) or Map.has_key?(request, "schema_version") do
-      require_equals!(required!(request, :schema_version), 2, :schema_version)
-      request
-    else
-      raise ArgumentError,
-            "AuthorizedInvocation.invocation_request must be a Citadel.InvocationRequest.V2 struct or map representation"
-    end
+    require_equals!(required!(request, :schema_version), 2, :schema_version)
+    request
   end
 
   defp normalized_request!(request) do

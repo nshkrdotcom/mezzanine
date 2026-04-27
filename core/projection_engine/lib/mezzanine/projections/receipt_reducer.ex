@@ -132,7 +132,8 @@ defmodule Mezzanine.Projections.ReceiptReducer do
 
   defp reduce_subject(subject, attrs, receipt_state)
        when receipt_state in @terminal_blocked_states do
-    with {:ok, subject} <- block_subject(subject, attrs, value(attrs, :block_reason) || receipt_state) do
+    with {:ok, subject} <-
+           block_subject(subject, attrs, value(attrs, :block_reason) || receipt_state) do
       advance_subject(subject, attrs, "blocked")
     end
   end
@@ -344,28 +345,26 @@ defmodule Mezzanine.Projections.ReceiptReducer do
     |> value(:required_evidence)
     |> List.wrap()
     |> Enum.map(&to_string/1)
-    |> Enum.flat_map(fn kind ->
-      case Map.get(refs_by_kind, kind) do
-        %{} = ref ->
-          content_ref = value(ref, :content_ref)
-
-          if valid_evidence_ref?(content_ref) do
-            [
-              %{
-                kind: kind,
-                content_ref: content_ref,
-                collector_ref: value(ref, :collector_ref) || "receipt_reducer"
-              }
-            ]
-          else
-            []
-          end
-
-        _missing ->
-          []
-      end
-    end)
+    |> Enum.flat_map(&evidence_spec(&1, Map.get(refs_by_kind, &1)))
   end
+
+  defp evidence_spec(kind, %{} = ref) do
+    content_ref = value(ref, :content_ref)
+
+    if valid_evidence_ref?(content_ref) do
+      [
+        %{
+          kind: kind,
+          content_ref: content_ref,
+          collector_ref: value(ref, :collector_ref) || "receipt_reducer"
+        }
+      ]
+    else
+      []
+    end
+  end
+
+  defp evidence_spec(_kind, _missing), do: []
 
   defp missing_required_evidence(attrs) do
     refs_by_kind = refs_by_kind(attrs)

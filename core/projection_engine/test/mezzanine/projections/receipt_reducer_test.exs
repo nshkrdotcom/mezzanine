@@ -125,7 +125,11 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
         review_required?: true,
         required_evidence: ["github_pr", "codex_session", "source_workpad"],
         evidence_refs: [
-          %{kind: "github_pr", content_ref: "lower-artifact://github-pr/1", collector_ref: "github"}
+          %{
+            kind: "github_pr",
+            content_ref: "lower-artifact://github-pr/1",
+            collector_ref: "github"
+          }
         ]
       )
 
@@ -251,7 +255,11 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
 
   defp evidence_refs(kinds) do
     Enum.map(kinds, fn kind ->
-      %{kind: kind, content_ref: "lower-artifact://#{kind}/receipt", collector_ref: "receipt-reducer"}
+      %{
+        kind: kind,
+        content_ref: "lower-artifact://#{kind}/receipt",
+        collector_ref: "receipt-reducer"
+      }
     end)
   end
 end
