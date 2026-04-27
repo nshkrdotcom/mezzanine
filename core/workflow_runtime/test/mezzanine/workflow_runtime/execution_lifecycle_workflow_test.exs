@@ -36,15 +36,30 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     def fetch_workflow_history_ref(_request), do: {:error, :not_used}
   end
 
+  defmodule RejectingCitadelBridge do
+    def compile_submission(_run_intent, _attrs, _policy_packs, _opts) do
+      {:error, %{decision: :deny, reason: :policy_denied}}
+    end
+  end
+
   setup do
     previous = Application.get_env(:mezzanine_core, :workflow_runtime_impl)
+    previous_citadel = Application.get_env(:mezzanine_workflow_runtime, :citadel_bridge)
+
     Application.put_env(:mezzanine_core, :workflow_runtime_impl, QueryRuntime)
+    Application.put_env(:mezzanine_workflow_runtime, :citadel_bridge, Mezzanine.CitadelBridge)
 
     on_exit(fn ->
       if previous do
         Application.put_env(:mezzanine_core, :workflow_runtime_impl, previous)
       else
         Application.delete_env(:mezzanine_core, :workflow_runtime_impl)
+      end
+
+      if previous_citadel do
+        Application.put_env(:mezzanine_workflow_runtime, :citadel_bridge, previous_citadel)
+      else
+        Application.delete_env(:mezzanine_workflow_runtime, :citadel_bridge)
       end
     end)
   end
@@ -166,6 +181,9 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     assert authority.owner_repo == :citadel
     assert authority.authority_packet_ref == "authpkt-093"
     assert authority.permission_decision_ref == "decision-093"
+    assert authority.compiled_submission_ref == "citadel-compiled-submission://execution-093"
+    assert authority.citadel_decision_hash
+    assert authority.invocation_request.request_id == "execution-093"
 
     assert {:ok, lower} = ExecutionLifecycleWorkflow.submit_jido_lower_run_activity(attrs)
     assert lower.owner_repo == :jido_integration
@@ -212,6 +230,29 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     assert {:ok, review} = ExecutionLifecycleWorkflow.create_review_activity(terminal_attrs)
     assert review.owner_repo == :mezzanine
     assert review.review_ref == "review://workflow-093/lower-receipt-095"
+  end
+
+  test "Citadel activity fails closed on explicit rejection" do
+    Application.put_env(:mezzanine_workflow_runtime, :citadel_bridge, RejectingCitadelBridge)
+
+    assert {:error, {:citadel_rejected, %{decision: :deny, reason: :policy_denied}}} =
+             ExecutionLifecycleWorkflow.compile_citadel_authority_activity(lifecycle_attrs())
+  end
+
+  test "Citadel activity rejects missing or stale installation revision" do
+    attrs = lifecycle_attrs()
+
+    assert {:error, "missing required Citadel routing fact :installation_revision"} =
+             attrs
+             |> update_in([:routing_facts], &Map.delete(&1, :installation_revision))
+             |> ExecutionLifecycleWorkflow.compile_citadel_authority_activity()
+
+    assert {:error,
+            {:stale_installation_revision,
+             %{expected_installation_revision: 6, installation_revision: 7}}} =
+             attrs
+             |> put_in([:routing_facts, :expected_installation_revision], 6)
+             |> ExecutionLifecycleWorkflow.compile_citadel_authority_activity()
   end
 
   test "receipt signals are tenant-scoped, idempotent, and late receipts are policy classified" do
@@ -330,7 +371,28 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
       release_manifest_ref: "phase4-v6-milestone27-execution-lifecycle-workflow",
       retry_policy: %{max_attempts: 3},
       terminal_policy: "quarantine_late_receipts",
-      routing_facts: %{review_required: false, risk_band: "low"}
+      routing_facts: %{
+        review_required: false,
+        risk_band: "low",
+        installation_id: "installation-main",
+        installation_revision: 7,
+        actor_ref: "principal-operator",
+        subject_id: "subject-093",
+        execution_id: "execution-093",
+        capability: "linear.issue.execute",
+        allowed_operations: ["linear.issue.execute"],
+        allowed_tools: ["linear.issue.update"],
+        substrate_trace_id: "0123456789abcdef0123456789abcdef",
+        target_id: "workspace_runtime",
+        service_id: "workspace_runtime",
+        boundary_class: "workspace_session",
+        target_kind: "runtime_target",
+        policy_refs: ["policy-v1"],
+        policy_version: "policy-v1",
+        policy_epoch: 3,
+        workspace_mutability: "read_write",
+        downstream_scope: "subject:subject-093"
+      }
     }
   end
 

@@ -11,6 +11,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
   alias Mezzanine.WorkflowReceiptSignal
   alias Mezzanine.WorkflowSignalReceipt
   alias Mezzanine.WorkflowTerminalReceiptPolicy
+  alias Mezzanine.Intent.RunIntent
 
   @release_manifest_ref "phase4-v6-milestone27-execution-lifecycle-workflow"
   @workflow_contract "Mezzanine.WorkflowExecutionLifecycleInput.v1"
@@ -125,7 +126,10 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
   @doc "Citadel authority compilation activity result."
   @spec compile_citadel_authority_activity(map() | struct()) :: {:ok, map()} | {:error, term()}
   def compile_citadel_authority_activity(attrs) do
-    with {:ok, input} <- new_input(attrs) do
+    with {:ok, input} <- new_input(attrs),
+         {:ok, run_intent} <- citadel_run_intent(input),
+         {:ok, compile_attrs} <- citadel_compile_attrs(input),
+         {:ok, compiled} <- compile_citadel_submission(run_intent, compile_attrs, policy_packs(input)) do
       {:ok,
        %{
          activity: :compile_citadel_authority,
@@ -133,6 +137,9 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
          owner_repo: :citadel,
          authority_packet_ref: input.authority_packet_ref,
          permission_decision_ref: input.permission_decision_ref,
+         compiled_submission_ref: "citadel-compiled-submission://#{compile_attrs.execution_id}",
+         citadel_decision_hash: Map.get(compiled, :decision_hash),
+         invocation_request: get_in(compiled, [:lower_intent, :invocation_request]),
          trace_id: input.trace_id,
          routing_facts: input.routing_facts,
          result_ref: "authority-result://#{input.permission_decision_ref}"
@@ -573,6 +580,181 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     attrs
     |> normalize()
     |> Map.put_new(:release_manifest_ref, @release_manifest_ref)
+  end
+
+  defp citadel_run_intent(%WorkflowExecutionLifecycleInput{} = input) do
+    routing = routing_facts(input)
+
+    RunIntent.new(%{
+      intent_id: Map.get(routing, :intent_id, input.command_id),
+      program_id: Map.get(routing, :program_id, input.project_ref || "program:default"),
+      work_id: required_routing!(input, routing, :subject_id),
+      capability: required_routing!(input, routing, :capability),
+      runtime_class: routing_atom(routing, :runtime_class, :session),
+      placement: %{
+        target_id: Map.get(routing, :target_id, "workspace_runtime"),
+        service_id: Map.get(routing, :service_id, "workspace_runtime"),
+        boundary_class: Map.get(routing, :boundary_class, "workspace_session"),
+        routing_tags: List.wrap(Map.get(routing, :routing_tags, []))
+      },
+      grant_profile: %{"allowed_tools" => List.wrap(Map.get(routing, :allowed_tools, []))},
+      input: Map.get(routing, :execution_intent, %{}),
+      metadata: %{
+        "tenant_id" => input.tenant_ref,
+        "installation_id" => installation_id(input, routing),
+        "policy_version" => Map.get(routing, :policy_version, "workflow-runtime-policy-v1"),
+        "workspace_root" => Map.get(routing, :workspace_root),
+        "environment" => input.environment_ref || "default"
+      }
+    })
+  end
+
+  defp citadel_compile_attrs(%WorkflowExecutionLifecycleInput{} = input) do
+    routing = routing_facts(input)
+    installation_revision = required_revision!(input, routing)
+    expected_revision = Map.get(routing, :expected_installation_revision)
+
+    if is_integer(expected_revision) and expected_revision != installation_revision do
+      {:error,
+       {:stale_installation_revision,
+        %{expected_installation_revision: expected_revision, installation_revision: installation_revision}}}
+    else
+      capability = required_routing!(input, routing, :capability)
+      subject_id = required_routing!(input, routing, :subject_id)
+      execution_id = Map.get(routing, :execution_id, input.command_id)
+
+      {:ok,
+       %{
+         tenant_id: input.tenant_ref,
+         installation_id: installation_id(input, routing),
+         installation_revision: installation_revision,
+         actor_ref: Map.get(routing, :actor_ref, input.principal_ref),
+         subject_id: subject_id,
+         execution_id: execution_id,
+         request_trace_id: input.trace_id,
+         substrate_trace_id: Map.get(routing, :substrate_trace_id, input.trace_id),
+         idempotency_key: input.idempotency_key,
+         submission_dedupe_key: input.lower_idempotency_key,
+         target_id: Map.get(routing, :target_id, "workspace_runtime"),
+         service_id: Map.get(routing, :service_id, "workspace_runtime"),
+         boundary_class: Map.get(routing, :boundary_class, "workspace_session"),
+         scope_kind: Map.get(routing, :scope_kind, "work_object"),
+         target_kind: Map.get(routing, :target_kind, "runtime_target"),
+         execution_intent_family: Map.get(routing, :execution_intent_family, "process"),
+         execution_intent:
+           Map.get(routing, :execution_intent, %{
+             "command" => capability,
+             "subject_id" => subject_id,
+             "trace_id" => input.trace_id
+           }),
+         allowed_operations: List.wrap(Map.get(routing, :allowed_operations, [capability])),
+         downstream_scope: Map.get(routing, :downstream_scope, "subject:#{subject_id}"),
+         workspace_mutability: Map.get(routing, :workspace_mutability, "read_write"),
+         risk_hints: List.wrap(Map.get(routing, :risk_hints, [])),
+         policy_refs: List.wrap(Map.get(routing, :policy_refs, [input.permission_decision_ref]))
+       }}
+    end
+  rescue
+    error in ArgumentError -> {:error, Exception.message(error)}
+  end
+
+  defp compile_citadel_submission(%RunIntent{} = run_intent, attrs, policy_packs) do
+    bridge = Application.get_env(:mezzanine_workflow_runtime, :citadel_bridge, Mezzanine.CitadelBridge)
+
+    case bridge.compile_submission(run_intent, attrs, policy_packs, []) do
+      {:ok, %{rejection_classification: nil} = compiled} -> {:ok, compiled}
+      {:ok, %{rejection_classification: rejection} = compiled} -> {:error, {:citadel_rejected, rejection, compiled}}
+      {:error, reason} -> {:error, {:citadel_rejected, reason}}
+    end
+  end
+
+  defp policy_packs(%WorkflowExecutionLifecycleInput{} = input) do
+    routing = routing_facts(input)
+
+    [
+      %{
+        pack_id: Map.get(routing, :policy_pack_id, "workflow-runtime-default"),
+        policy_version: Map.get(routing, :policy_version, "workflow-runtime-policy-v1"),
+        policy_epoch: Map.get(routing, :policy_epoch, 0),
+        priority: 0,
+        selector: %{
+          tenant_ids: [],
+          scope_kinds: [],
+          environments: [],
+          default?: true,
+          extensions: %{}
+        },
+        profiles: %{
+          trust_profile: "baseline",
+          approval_profile: "standard",
+          egress_profile: "restricted",
+          workspace_profile: "workspace",
+          resource_profile: "standard",
+          boundary_class: Map.get(routing, :boundary_class, "workspace_session"),
+          extensions: %{}
+        },
+        rejection_policy: %{
+          denial_audit_reason_codes: ["policy_denied", "approval_missing"],
+          derived_state_reason_codes: ["planning_failed"],
+          runtime_change_reason_codes: ["scope_unavailable", "service_hidden", "boundary_stale"],
+          governance_change_reason_codes: ["approval_missing"],
+          extensions: %{}
+        },
+        extensions: %{}
+      }
+    ]
+  end
+
+  defp routing_facts(%WorkflowExecutionLifecycleInput{routing_facts: routing}) do
+    routing
+    |> normalize()
+    |> Map.new(fn
+      {key, value} when is_binary(key) -> {String.to_atom(key), value}
+      pair -> pair
+    end)
+  end
+
+  defp required_routing!(input, routing, key) do
+    value = Map.get(routing, key) || fallback_routing(input, key)
+
+    if present?(value) do
+      value
+    else
+      raise ArgumentError, "missing required Citadel routing fact #{inspect(key)}"
+    end
+  end
+
+  defp required_revision!(_input, routing) do
+    case Map.get(routing, :installation_revision) do
+      value when is_integer(value) and value >= 0 -> value
+      nil -> raise ArgumentError, "missing required Citadel routing fact :installation_revision"
+      value -> raise ArgumentError, "invalid Citadel installation_revision: #{inspect(value)}"
+    end
+  end
+
+  defp fallback_routing(%WorkflowExecutionLifecycleInput{} = input, :subject_id) do
+    case input.subject_ref do
+      value when is_binary(value) -> value
+      %{} = map -> Map.get(map, "id") || Map.get(map, :id)
+      _other -> nil
+    end
+  end
+
+  defp fallback_routing(_input, _key), do: nil
+
+  defp installation_id(%WorkflowExecutionLifecycleInput{} = input, routing) do
+    Map.get(routing, :installation_id) || parse_installation_ref(input.installation_ref)
+  end
+
+  defp parse_installation_ref("installation://" <> rest), do: rest |> String.split("@") |> hd()
+  defp parse_installation_ref(value), do: value
+
+  defp routing_atom(routing, key, default) do
+    case Map.get(routing, key, default) do
+      value when is_atom(value) -> value
+      value when is_binary(value) -> String.to_atom(value)
+      _other -> default
+    end
   end
 
   defp normalize(attrs) when is_list(attrs), do: attrs |> Map.new() |> normalize_keys()

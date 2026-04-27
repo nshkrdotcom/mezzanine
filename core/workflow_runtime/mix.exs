@@ -47,6 +47,7 @@ defmodule MezzanineWorkflowRuntime.MixProject do
   defp deps do
     [
       {:mezzanine_core, path: "../mezzanine_core"},
+      {:mezzanine_citadel_bridge, path: "../../bridges/citadel_bridge"},
       {:temporalex, path: "../../../temporalex"},
       {:ecto_sql, "~> 3.13"},
       {:oban, "~> 2.17"},
