@@ -18,6 +18,13 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
 
   @workflow_types [
     %{
+      name: :agent_loop,
+      module: Mezzanine.Workflows.AgentLoop,
+      task_queue: "mezzanine.agentic",
+      version: "agent-loop.v1",
+      workflow_id_format: "tenant:<tenant_ref>:subject:<subject_ref>:agent-loop:<run_ref>"
+    },
+    %{
       name: :agent_run,
       module: Mezzanine.Workflows.AgentRun,
       task_queue: "mezzanine.agentic",
@@ -55,6 +62,86 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
   ]
 
   @activity_registrations [
+    %{
+      name: :agent_loop_wake_and_pin,
+      module: Mezzanine.Activities.AgentLoopWakeAndPin,
+      owner_repo: :mezzanine,
+      task_queue: "mezzanine.agentic",
+      lease_broker?: false,
+      version: "agent-loop-wake-and-pin.v1"
+    },
+    %{
+      name: :agent_loop_recall,
+      module: Mezzanine.Activities.AgentLoopRecall,
+      owner_repo: :outer_brain,
+      task_queue: "mezzanine.semantic",
+      lease_broker?: false,
+      version: "agent-loop-recall.v1"
+    },
+    %{
+      name: :agent_loop_assemble_context,
+      module: Mezzanine.Activities.AgentLoopAssembleContext,
+      owner_repo: :outer_brain,
+      task_queue: "mezzanine.semantic",
+      lease_broker?: false,
+      version: "agent-loop-assemble-context.v1"
+    },
+    %{
+      name: :agent_loop_reflect,
+      module: Mezzanine.Activities.AgentLoopReflect,
+      owner_repo: :outer_brain,
+      task_queue: "mezzanine.semantic",
+      lease_broker?: false,
+      version: "agent-loop-reflect.v1"
+    },
+    %{
+      name: :agent_loop_govern,
+      module: Mezzanine.Activities.AgentLoopGovern,
+      owner_repo: :citadel,
+      task_queue: "mezzanine.agentic",
+      lease_broker?: false,
+      version: "agent-loop-govern.v1"
+    },
+    %{
+      name: :agent_loop_submit_lower_run,
+      module: Mezzanine.Activities.AgentLoopSubmitLowerRun,
+      owner_repo: :jido_integration,
+      task_queue: "mezzanine.hazmat",
+      lease_broker?: true,
+      version: "agent-loop-submit-lower-run.v1"
+    },
+    %{
+      name: :agent_loop_await_execution_outcome,
+      module: Mezzanine.Activities.AgentLoopAwaitExecutionOutcome,
+      owner_repo: :execution_plane,
+      task_queue: "mezzanine.hazmat",
+      lease_broker?: true,
+      version: "agent-loop-await-execution-outcome.v1"
+    },
+    %{
+      name: :agent_loop_semanticize_outcome,
+      module: Mezzanine.Activities.AgentLoopSemanticizeOutcome,
+      owner_repo: :outer_brain,
+      task_queue: "mezzanine.semantic",
+      lease_broker?: false,
+      version: "agent-loop-semanticize-outcome.v1"
+    },
+    %{
+      name: :agent_loop_commit_private_memory,
+      module: Mezzanine.Activities.AgentLoopCommitPrivateMemory,
+      owner_repo: :mezzanine,
+      task_queue: "mezzanine.agentic",
+      lease_broker?: false,
+      version: "agent-loop-commit-private-memory.v1"
+    },
+    %{
+      name: :agent_loop_advance_turn,
+      module: Mezzanine.Activities.AgentLoopAdvanceTurn,
+      owner_repo: :mezzanine,
+      task_queue: "mezzanine.agentic",
+      lease_broker?: false,
+      version: "agent-loop-advance-turn.v1"
+    },
     %{
       name: :start_lower_execution,
       module: Mezzanine.Activities.StartLowerExecution,
@@ -518,6 +605,7 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
         "core/workflow_runtime/lib/mezzanine/workflow_runtime/temporalex_adapter.ex",
         "core/workflow_runtime/lib/mezzanine/workflow_runtime/workflow_starter_outbox.ex",
         "core/workflow_runtime/lib/mezzanine/workflow_runtime/execution_lifecycle_workflow.ex",
+        "core/workflow_runtime/lib/mezzanine/workflow_runtime/agent_loop.ex",
         "core/workflow_runtime/lib/mezzanine/workflow_runtime/operator_signal_control.ex",
         "core/workflow_runtime/test/mezzanine/workflow_runtime/temporal_supervisor_test.exs",
         "core/workflow_runtime/test/mezzanine/workflow_runtime/temporalex_adapter_test.exs",
@@ -533,7 +621,7 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
   def complete? do
     [
       integration_mode() == :direct_temporalex_beam_workers,
-      length(workflow_types()) == 5,
+      length(workflow_types()) == 6,
       length(activity_registrations()) >= 6,
       length(operator_signal_registry()) == 6,
       decision_timer_policy().timer_semantics == :temporal_workflow_timer,

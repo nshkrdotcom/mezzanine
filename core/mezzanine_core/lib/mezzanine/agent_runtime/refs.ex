@@ -8,11 +8,13 @@ for {module, error} <- [
       {Mezzanine.AgentRuntime.ActionReceiptRef, :invalid_action_receipt_ref},
       {Mezzanine.AgentRuntime.SessionRef, :invalid_session_ref},
       {Mezzanine.AgentRuntime.WorkspaceRef, :invalid_workspace_ref},
+      {Mezzanine.AgentRuntime.WorkerRef, :invalid_worker_ref},
       {Mezzanine.AgentRuntime.EventRef, :invalid_event_ref},
       {Mezzanine.AgentRuntime.EvidenceRef, :invalid_evidence_ref},
       {Mezzanine.AgentRuntime.AuthorityRef, :invalid_authority_ref},
       {Mezzanine.AgentRuntime.LowerRef, :invalid_lower_ref},
-      {Mezzanine.AgentRuntime.MemoryRef, :invalid_memory_ref}
+      {Mezzanine.AgentRuntime.MemoryRef, :invalid_memory_ref},
+      {Mezzanine.AgentRuntime.ToolCatalogRef, :invalid_tool_catalog_ref}
     ] do
   defmodule module do
     @moduledoc "Opaque S0 substrate reference."

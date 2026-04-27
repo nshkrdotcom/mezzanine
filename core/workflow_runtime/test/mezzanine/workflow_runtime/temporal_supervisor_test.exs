@@ -30,7 +30,14 @@ defmodule Mezzanine.WorkflowRuntime.TemporalSupervisorTest do
     assert hazmat.name == Mezzanine.WorkflowRuntime.TestTemporal.MezzanineHazmat
     assert hazmat.connection == Mezzanine.WorkflowRuntime.TestTemporal.MezzanineHazmat.Connection
     assert Mezzanine.Workflows.ExecutionAttempt in hazmat.workflows
+
+    assert Mezzanine.Workflows.AgentLoop in Enum.find(
+             specs,
+             &(&1.task_queue == "mezzanine.agentic")
+           ).workflows
+
     assert Mezzanine.Activities.StartLowerExecution in hazmat.activities
+    assert Mezzanine.Activities.AgentLoopSubmitLowerRun in hazmat.activities
     assert Mezzanine.Activities.SubmitJidoLowerActivity in hazmat.activities
 
     assert %{

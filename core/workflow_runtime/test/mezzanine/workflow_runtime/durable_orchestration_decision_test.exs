@@ -44,6 +44,7 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecisionTest do
     activity_modules = TemporalRegistry.activities()
 
     assert workflow_modules == [
+             Mezzanine.Workflows.AgentLoop,
              Mezzanine.Workflows.AgentRun,
              Mezzanine.Workflows.ExecutionAttempt,
              Mezzanine.Workflows.DecisionReview,
@@ -53,6 +54,9 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecisionTest do
 
     assert Mezzanine.Activities.StartLowerExecution in activity_modules
     assert Mezzanine.Activities.CallOuterBrain in activity_modules
+    assert Mezzanine.Activities.AgentLoopWakeAndPin in activity_modules
+    assert Mezzanine.Activities.AgentLoopReflect in activity_modules
+    assert Mezzanine.Activities.AgentLoopAdvanceTurn in activity_modules
     assert Mezzanine.Activities.SubmitJidoLowerActivity in activity_modules
     assert Mezzanine.Activities.ExecutionSideEffectActivity in activity_modules
     assert Mezzanine.Activities.SemanticPayloadBoundaryActivity in activity_modules
@@ -77,6 +81,7 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecisionTest do
 
   test "workflow and activity modules are Temporalex runtime modules, not skeletons" do
     expected_workflow_queues = %{
+      Mezzanine.Workflows.AgentLoop => "mezzanine.agentic",
       Mezzanine.Workflows.AgentRun => "mezzanine.agentic",
       Mezzanine.Workflows.ExecutionAttempt => "mezzanine.hazmat",
       Mezzanine.Workflows.DecisionReview => "mezzanine.review",
@@ -90,6 +95,16 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecisionTest do
     end
 
     expected_activity_queues = %{
+      Mezzanine.Activities.AgentLoopWakeAndPin => "mezzanine.agentic",
+      Mezzanine.Activities.AgentLoopRecall => "mezzanine.semantic",
+      Mezzanine.Activities.AgentLoopAssembleContext => "mezzanine.semantic",
+      Mezzanine.Activities.AgentLoopReflect => "mezzanine.semantic",
+      Mezzanine.Activities.AgentLoopGovern => "mezzanine.agentic",
+      Mezzanine.Activities.AgentLoopSubmitLowerRun => "mezzanine.hazmat",
+      Mezzanine.Activities.AgentLoopAwaitExecutionOutcome => "mezzanine.hazmat",
+      Mezzanine.Activities.AgentLoopSemanticizeOutcome => "mezzanine.semantic",
+      Mezzanine.Activities.AgentLoopCommitPrivateMemory => "mezzanine.agentic",
+      Mezzanine.Activities.AgentLoopAdvanceTurn => "mezzanine.agentic",
       Mezzanine.Activities.StartLowerExecution => "mezzanine.hazmat",
       Mezzanine.Activities.RecordEvidence => "mezzanine.agentic",
       Mezzanine.Activities.RequestDecision => "mezzanine.agentic",

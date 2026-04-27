@@ -8,12 +8,23 @@ defmodule Mezzanine.AgentRuntime.CoreTest do
     RuntimeEventRow,
     RuntimeProjectionEnvelope,
     SubjectRef,
+    ToolCatalogRef,
+    WorkerRef,
     WorkspaceRef
   }
 
   test "strict refs reject unsafe selectors and raw paths" do
     assert {:ok, %SubjectRef{id: "subject-1"}} = SubjectRef.new("subject-1")
+
+    assert {:ok, %ToolCatalogRef{id: "tool-catalog://fixture/local"}} =
+             ToolCatalogRef.new("tool-catalog://fixture/local")
+
+    assert {:ok, %WorkerRef{id: "worker://fixture/local"}} =
+             WorkerRef.new("worker://fixture/local")
+
     assert {:error, :invalid_workspace_ref} = WorkspaceRef.new(%{id: "/home/user/project"})
+    assert {:error, :invalid_tool_catalog_ref} = ToolCatalogRef.new(%{id: "/tmp/tools"})
+    assert {:error, :invalid_worker_ref} = WorkerRef.new(%{id: "/tmp/worker"})
     assert {:error, :invalid_subject_ref} = SubjectRef.new(%{id: "subject-1", prompt: "raw"})
   end
 

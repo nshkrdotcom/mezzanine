@@ -46,6 +46,9 @@ defmodule Mezzanine.AgentRuntime.Support do
   def dump_value(%{} = value),
     do: Map.new(value, fn {key, val} -> {to_string(key), dump_value(val)} end)
 
+  def dump_value(value) when is_atom(value) and not is_boolean(value) and not is_nil(value),
+    do: Atom.to_string(value)
+
   def dump_value(value), do: value
 
   def drop_nil_values(map), do: Map.reject(map, fn {_key, value} -> is_nil(value) end)
