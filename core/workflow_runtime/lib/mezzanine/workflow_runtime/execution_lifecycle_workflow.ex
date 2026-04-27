@@ -73,7 +73,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
   def run(attrs) do
     with {:ok, input} <- new_input(attrs),
          {:ok, authority} <- compile_citadel_authority_activity(input),
-         {:ok, lower} <- submit_jido_lower_run_activity(input) do
+         {:ok, lower} <- submit_jido_lower_run_activity(Map.put(Map.from_struct(input), :citadel_authority, authority)) do
       {:ok, runtime_result(input, authority, lower)}
     end
   end
@@ -150,7 +150,11 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
   @doc "Jido lower submission activity with execution-plane side-effect ownership."
   @spec submit_jido_lower_run_activity(map() | struct()) :: {:ok, map()} | {:error, term()}
   def submit_jido_lower_run_activity(attrs) do
-    with {:ok, input} <- new_input(attrs) do
+    attrs = normalize(attrs)
+
+    with {:ok, input} <- new_input(attrs),
+         {:ok, invocation} <- authorized_lower_invocation(input, Map.get(attrs, :citadel_authority)),
+         {:ok, dispatched} <- invoke_authorized_lower(invocation) do
       {:ok,
        %{
          activity: :submit_jido_lower_run,
@@ -162,6 +166,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
          idempotency_key: input.lower_idempotency_key,
          authority_packet_ref: input.authority_packet_ref,
          permission_decision_ref: input.permission_decision_ref,
+         provider_submission: dispatched,
          lease_broker: Mezzanine.ActivityLeaseBroker,
          trace_id: input.trace_id,
          routing_facts: input.routing_facts,
@@ -667,6 +672,49 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
       {:error, reason} -> {:error, {:citadel_rejected, reason}}
     end
   end
+
+  defp authorized_lower_invocation(%WorkflowExecutionLifecycleInput{} = input, authority) do
+    authority = normalize_authority(authority)
+    invocation_request = Map.get(authority, :invocation_request)
+
+    if is_nil(invocation_request) do
+      {:error, :missing_citadel_authority}
+    else
+      routing = routing_facts(input)
+
+      invocation_attrs = %{
+        tenant_id: input.tenant_ref,
+        installation_id: installation_id(input, routing),
+        subject_id: required_routing!(input, routing, :subject_id),
+        execution_id: Map.get(routing, :execution_id, input.command_id),
+        trace_id: input.trace_id,
+        idempotency_key: input.idempotency_key,
+        submission_dedupe_key: input.lower_idempotency_key,
+        expected_installation_revision: Map.get(routing, :installation_revision),
+        invocation_request: invocation_request
+      }
+
+      build_authorized_invocation(invocation_attrs)
+    end
+  end
+
+  defp invoke_authorized_lower(invocation) do
+    bridge = Application.get_env(:mezzanine_workflow_runtime, :integration_bridge, Mezzanine.IntegrationBridge)
+    bridge.invoke_run_intent(invocation, [])
+  end
+
+  defp build_authorized_invocation(attrs) do
+    module = Module.concat([Mezzanine, IntegrationBridge, AuthorizedInvocation])
+
+    if Code.ensure_loaded?(module) and function_exported?(module, :new, 1) do
+      module.new(attrs)
+    else
+      {:ok, Map.put(attrs, :authorized_invocation_boundary, module)}
+    end
+  end
+
+  defp normalize_authority(nil), do: %{}
+  defp normalize_authority(authority) when is_map(authority), do: normalize(authority)
 
   defp policy_packs(%WorkflowExecutionLifecycleInput{} = input) do
     routing = routing_facts(input)

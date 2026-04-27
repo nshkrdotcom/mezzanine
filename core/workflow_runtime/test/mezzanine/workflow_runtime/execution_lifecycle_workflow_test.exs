@@ -42,12 +42,27 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     end
   end
 
+  defmodule FakeIntegrationBridge do
+    def invoke_run_intent(%{authorized_invocation_boundary: _boundary} = invocation, _opts) do
+      {:ok,
+       %{
+         lower_submission_ref: "jido-lower://#{invocation.submission_dedupe_key}",
+         idempotency_key: invocation.idempotency_key,
+         lower_submission_dedupe_key: invocation.submission_dedupe_key,
+         trace_id: invocation.trace_id,
+         authority_present?: true
+       }}
+    end
+  end
+
   setup do
     previous = Application.get_env(:mezzanine_core, :workflow_runtime_impl)
     previous_citadel = Application.get_env(:mezzanine_workflow_runtime, :citadel_bridge)
+    previous_integration = Application.get_env(:mezzanine_workflow_runtime, :integration_bridge)
 
     Application.put_env(:mezzanine_core, :workflow_runtime_impl, QueryRuntime)
     Application.put_env(:mezzanine_workflow_runtime, :citadel_bridge, Mezzanine.CitadelBridge)
+    Application.put_env(:mezzanine_workflow_runtime, :integration_bridge, FakeIntegrationBridge)
 
     on_exit(fn ->
       if previous do
@@ -60,6 +75,12 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
         Application.put_env(:mezzanine_workflow_runtime, :citadel_bridge, previous_citadel)
       else
         Application.delete_env(:mezzanine_workflow_runtime, :citadel_bridge)
+      end
+
+      if previous_integration do
+        Application.put_env(:mezzanine_workflow_runtime, :integration_bridge, previous_integration)
+      else
+        Application.delete_env(:mezzanine_workflow_runtime, :integration_bridge)
       end
     end)
   end
@@ -185,11 +206,18 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     assert authority.citadel_decision_hash
     assert authority.invocation_request.request_id == "execution-093"
 
-    assert {:ok, lower} = ExecutionLifecycleWorkflow.submit_jido_lower_run_activity(attrs)
+    assert {:ok, lower} =
+             attrs
+             |> Map.put(:citadel_authority, authority)
+             |> ExecutionLifecycleWorkflow.submit_jido_lower_run_activity()
+
     assert lower.owner_repo == :jido_integration
     assert lower.execution_plane_owner_repo == :execution_plane
     assert lower.lower_submission_ref == "lower-submission-093"
     assert lower.idempotency_key == "lower-idem-093"
+    assert lower.provider_submission.lower_submission_dedupe_key == "lower-idem-093"
+    assert lower.provider_submission.trace_id == "trace-093"
+    assert lower.provider_submission.authority_present? == true
     assert lower.lease_broker == Mezzanine.ActivityLeaseBroker
 
     assert {:ok, persisted} =
@@ -253,6 +281,28 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
              attrs
              |> put_in([:routing_facts, :expected_installation_revision], 6)
              |> ExecutionLifecycleWorkflow.compile_citadel_authority_activity()
+  end
+
+  test "lower submission refuses to run without Citadel authority evidence" do
+    assert {:error, :missing_citadel_authority} =
+             ExecutionLifecycleWorkflow.submit_jido_lower_run_activity(lifecycle_attrs())
+  end
+
+  test "lower submission replays with the same idempotency and lower submission keys" do
+    attrs = lifecycle_attrs()
+    assert {:ok, authority} = ExecutionLifecycleWorkflow.compile_citadel_authority_activity(attrs)
+    lower_attrs = Map.put(attrs, :citadel_authority, authority)
+
+    assert {:ok, first} = ExecutionLifecycleWorkflow.submit_jido_lower_run_activity(lower_attrs)
+    assert {:ok, second} = ExecutionLifecycleWorkflow.submit_jido_lower_run_activity(lower_attrs)
+
+    assert first.provider_submission.idempotency_key == second.provider_submission.idempotency_key
+
+    assert first.provider_submission.lower_submission_dedupe_key ==
+             second.provider_submission.lower_submission_dedupe_key
+
+    assert first.provider_submission.lower_submission_ref ==
+             "jido-lower://#{first.provider_submission.lower_submission_dedupe_key}"
   end
 
   test "receipt signals are tenant-scoped, idempotent, and late receipts are policy classified" do

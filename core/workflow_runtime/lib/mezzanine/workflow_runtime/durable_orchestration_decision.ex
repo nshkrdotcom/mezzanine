@@ -693,7 +693,9 @@ defmodule Mezzanine.Workflows.ExecutionAttempt do
              start_to_close_timeout: :timer.seconds(10)
            ),
          {:ok, lower} <-
-           execute_activity(Mezzanine.Activities.StartLowerExecution, input,
+           execute_activity(
+             Mezzanine.Activities.StartLowerExecution,
+             Map.put(Support.normalize_payload(input), :citadel_authority, authority),
              start_to_close_timeout: :timer.seconds(30)
            ) do
       result = ExecutionLifecycleWorkflow.runtime_result(lifecycle_input, authority, lower)
