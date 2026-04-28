@@ -41,3 +41,46 @@ just temporal-ui
 ```
 
 Do not invent raw `temporal server start-dev` commands for normal work. Do not reset local Temporal state unless the user explicitly approves `just temporal-reset-confirm`.
+
+<!-- gn-ten:repo-agent:start repo=mezzanine source_sha=ab276c0640772b73065ab12bf05d77be51f1bb67 -->
+# mezzanine Agent Instructions Draft
+
+## Owns
+
+- Neutral operational engines.
+- Lifecycle coordination.
+- Runtime projections.
+- Audit, archival, incident bundles, and workflow truth.
+- Durable command, outbox, reducer, and operator state.
+
+## Does Not Own
+
+- Product UX.
+- Raw provider execution.
+- Raw semantic reasoning.
+- Connector SDK mechanics.
+- Universal lower primitives that belong in GroundPlane.
+
+## Allowed Dependencies
+
+- GroundPlane primitives.
+- Citadel authority and governance packets.
+- Jido Integration lower gateway contracts.
+- AITrace refs for evidence joins.
+
+## Forbidden Imports
+
+- Product modules.
+- Provider SDKs for governed execution.
+- Ad hoc Temporal dev-server commands.
+
+## Verification
+
+- `mix ci`
+- Focused workflow/projection/audit tests for changed mechanisms.
+
+## Escalation
+
+If a missing primitive is universal, move it to GroundPlane. If it is lower
+execution, move it to Execution Plane or Jido Integration.
+<!-- gn-ten:repo-agent:end -->
