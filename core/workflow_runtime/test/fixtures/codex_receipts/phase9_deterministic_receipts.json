@@ -1,0 +1,78 @@
+{
+  "fixture_schema": "mezzanine.codex.receipts.phase9.v1",
+  "fixture_ref": "fixture://codex/phase9/deterministic-receipts",
+  "temporal": {
+    "address": "127.0.0.1:7233",
+    "namespace": "default"
+  },
+  "receipts": [
+    {
+      "receipt_ref": "codex-receipt://phase9/completed",
+      "event_ref": "codex-event://phase9/completed",
+      "idempotency_key": "codex:phase9:completed",
+      "state": "completed",
+      "terminal": true,
+      "lower_receipt_ref": "lower-receipt://phase9/completed",
+      "evidence_refs": ["evidence://phase9/completed"],
+      "output_artifact_refs": ["artifact://phase9/completed-summary"]
+    },
+    {
+      "receipt_ref": "codex-receipt://phase9/failed",
+      "event_ref": "codex-event://phase9/failed",
+      "idempotency_key": "codex:phase9:failed",
+      "state": "failed",
+      "terminal": true,
+      "failure_class": "codex_execution_failed",
+      "lower_receipt_ref": "lower-receipt://phase9/failed",
+      "evidence_refs": ["evidence://phase9/failed"]
+    },
+    {
+      "receipt_ref": "codex-receipt://phase9/stalled",
+      "event_ref": "codex-event://phase9/stalled",
+      "idempotency_key": "codex:phase9:stalled",
+      "state": "stalled",
+      "terminal": false,
+      "stall_timeout_ms": 60000,
+      "last_heartbeat_ref": "heartbeat://phase9/stalled/last",
+      "lower_receipt_ref": "lower-receipt://phase9/stalled"
+    },
+    {
+      "receipt_ref": "codex-receipt://phase9/input-required",
+      "event_ref": "codex-event://phase9/input-required",
+      "idempotency_key": "codex:phase9:input-required",
+      "state": "user_input_required",
+      "terminal": false,
+      "input_request_ref": "input-request://phase9/operator",
+      "lower_receipt_ref": "lower-receipt://phase9/input-required"
+    },
+    {
+      "receipt_ref": "codex-receipt://phase9/rate-limited",
+      "event_ref": "codex-event://phase9/rate-limited",
+      "idempotency_key": "codex:phase9:rate-limited",
+      "state": "rate_limited",
+      "terminal": false,
+      "retry_after_ms": 120000,
+      "lower_receipt_ref": "lower-receipt://phase9/rate-limited"
+    }
+  ],
+  "token_events": [
+    {
+      "event_ref": "token-event://phase9/1",
+      "idempotency_key": "codex-token:phase9:1",
+      "token_index": 1,
+      "token_text": "never-project-this-token"
+    },
+    {
+      "event_ref": "token-event://phase9/1-replayed",
+      "idempotency_key": "codex-token:phase9:1",
+      "token_index": 1,
+      "token_text": "never-project-this-token"
+    },
+    {
+      "event_ref": "token-event://phase9/2",
+      "idempotency_key": "codex-token:phase9:2",
+      "token_index": 2,
+      "token_text": "second-token"
+    }
+  ]
+}

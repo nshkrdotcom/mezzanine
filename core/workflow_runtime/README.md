@@ -130,6 +130,15 @@ The broker cache is process-local to the activity worker and never enters
 workflow history; workflow history carries only compact refs, hashes, bounded
 routing facts, validation state, and diagnostics refs.
 
+`Mezzanine.WorkflowRuntime.DeterministicCodexReceipt` defines the Phase 9
+fixture-only Codex receipt activity. It reads a local deterministic receipt
+fixture and local Temporal state-file metadata, rejects live provider, Linear,
+GitHub, connector, and network adapters before fixture reads, and maps compact
+completion, failure, stall, user-input-required, token-dedupe, and rate-limit
+facts for WorkflowRuntime reducers. The activity wrapper is
+`Mezzanine.Activities.DeterministicCodexReceipt`; default CI remains provider
+credential independent.
+
 ## Workflow Fan-Out/Fan-In
 
 `Mezzanine.WorkflowRuntime.WorkflowFanoutFanin` defines the M30
