@@ -10,6 +10,8 @@ defmodule Mezzanine.Objects.SubjectRecord do
   alias Mezzanine.Audit.AuditAppend
   alias Mezzanine.Objects.SubjectPayloadSchema
 
+  @status_values ["active", "paused", "cancelled"]
+
   postgres do
     table("subject_records")
     repo(Mezzanine.Objects.Repo)
@@ -82,6 +84,7 @@ defmodule Mezzanine.Objects.SubjectRecord do
       change(set_attribute(:opened_at, &DateTime.utc_now/0, set_when_nil?: false))
       change(set_attribute(:status, "active", set_when_nil?: false))
       change(set_attribute(:status_updated_at, &DateTime.utc_now/0, set_when_nil?: false))
+      change(&validate_status/2)
       change(&bind_payload_schema/2)
 
       change(
@@ -202,6 +205,7 @@ defmodule Mezzanine.Objects.SubjectRecord do
       change(set_attribute(:status, "paused"))
       change(set_attribute(:status_reason, arg(:reason)))
       change(set_attribute(:status_updated_at, &DateTime.utc_now/0))
+      change(&validate_status/2)
 
       change(
         after_action(fn changeset, subject, _context ->
@@ -223,6 +227,7 @@ defmodule Mezzanine.Objects.SubjectRecord do
       change(set_attribute(:status, "active"))
       change(set_attribute(:status_reason, nil))
       change(set_attribute(:status_updated_at, &DateTime.utc_now/0))
+      change(&validate_status/2)
 
       change(
         after_action(fn changeset, subject, _context ->
@@ -246,6 +251,7 @@ defmodule Mezzanine.Objects.SubjectRecord do
       change(set_attribute(:status_reason, arg(:reason)))
       change(set_attribute(:status_updated_at, &DateTime.utc_now/0))
       change(set_attribute(:terminal_at, &DateTime.utc_now/0, set_when_nil?: false))
+      change(&validate_status/2)
 
       change(
         after_action(fn changeset, subject, _context ->
@@ -358,7 +364,6 @@ defmodule Mezzanine.Objects.SubjectRecord do
     attribute :status, :string do
       allow_nil?(false)
       default("active")
-      constraints(match: ~r/^(active|paused|cancelled)$/)
       public?(true)
     end
 
@@ -440,6 +445,20 @@ defmodule Mezzanine.Objects.SubjectRecord do
           changeset,
           field: :payload,
           message: "subject payload must match a source-owned schema: #{inspect(reason)}"
+        )
+    end
+  end
+
+  defp validate_status(changeset, _context) do
+    case Ash.Changeset.get_attribute(changeset, :status) do
+      status when status in @status_values ->
+        changeset
+
+      status ->
+        Ash.Changeset.add_error(
+          changeset,
+          field: :status,
+          message: "status must be one of #{inspect(@status_values)}; got #{inspect(status)}"
         )
     end
   end

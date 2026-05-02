@@ -12,6 +12,7 @@ defmodule Mezzanine.LifecycleEvaluator do
   alias Mezzanine.Audit.AuditAppend
   alias Mezzanine.Execution.{DispatchState, PayloadBoundary}
   alias Mezzanine.Execution.Repo
+  alias Mezzanine.Lifecycle.DispatchEnvelopeRefValidator
   alias Mezzanine.Lifecycle.Evaluator, as: PackEvaluator
   alias Mezzanine.Lifecycle.SubjectSnapshot
   alias Mezzanine.Pack.{CompiledPack, ExecutionRecipeSpec, Serializer}
@@ -961,8 +962,14 @@ defmodule Mezzanine.LifecycleEvaluator do
       "runtime_class" => normalize_identifier(recipe.runtime_class),
       "placement_ref" => Map.get(binding_snapshot, "placement_ref"),
       "execution_params" => Map.get(binding_snapshot, "execution_params", %{}),
-      "grant_spec" => normalize_map(recipe.grant_spec)
+      "grant_spec" => normalize_map(recipe.grant_spec),
+      "authority_decision_ref" => Map.get(binding_snapshot, "authority_decision_ref"),
+      "credential_lease_ref" => Map.get(binding_snapshot, "credential_lease_ref"),
+      "credentials_required" => Map.get(binding_snapshot, "credentials_required"),
+      "no_credentials_posture_ref" => Map.get(binding_snapshot, "no_credentials_posture_ref"),
+      "dispatch_ref_requirements" => normalize_map(recipe.dispatch_ref_requirements)
     }
+    |> compact_map()
   end
 
   defp intent_snapshot(%ExecutionRecipeSpec{} = recipe, binding_snapshot, dispatch_envelope) do
@@ -995,7 +1002,8 @@ defmodule Mezzanine.LifecycleEvaluator do
          execution_attrs,
          now
        ) do
-    with :ok <- validate_execution_payloads(execution_attrs) do
+    with :ok <- validate_dispatch_ref_payloads(subject, installation, execution_attrs),
+         :ok <- validate_execution_payloads(execution_attrs) do
       execution_id = Ecto.UUID.generate()
 
       params = [
@@ -1026,6 +1034,20 @@ defmodule Mezzanine.LifecycleEvaluator do
         {:error, error} -> {:error, error}
       end
     end
+  end
+
+  defp validate_dispatch_ref_payloads(subject, installation, execution_attrs) do
+    DispatchEnvelopeRefValidator.validate(%{
+      tenant_id: installation.tenant_id,
+      installation_id: installation.id,
+      subject_id: subject.id,
+      compiled_pack_revision: installation.compiled_pack_revision,
+      binding_snapshot: execution_attrs.binding_snapshot,
+      dispatch_envelope: execution_attrs.dispatch_envelope,
+      intent_snapshot: execution_attrs.intent_snapshot,
+      submission_dedupe_key: execution_attrs.submission_dedupe_key,
+      trace_id: execution_attrs.trace_id
+    })
   end
 
   defp validate_execution_payloads(execution_attrs) do

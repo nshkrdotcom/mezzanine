@@ -289,6 +289,7 @@ defmodule Mezzanine.Pack.ExecutionRecipeSpec do
           hook_stages: [atom()],
           max_turns: pos_integer() | nil,
           stall_timeout_ms: pos_integer() | nil,
+          dispatch_ref_requirements: map(),
           execution_params: map(),
           applicable_to: [pack_identifier()]
         }
@@ -308,6 +309,11 @@ defmodule Mezzanine.Pack.ExecutionRecipeSpec do
     hook_stages: [],
     max_turns: nil,
     stall_timeout_ms: nil,
+    dispatch_ref_requirements: %{
+      authority_decision_ref: :required,
+      connector_binding_ref: :required,
+      credential_posture_ref: :credential_lease_or_no_credentials
+    },
     execution_params: %{},
     applicable_to: []
   ]

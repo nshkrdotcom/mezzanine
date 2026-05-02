@@ -805,6 +805,13 @@ defmodule Mezzanine.Pack.Validator do
            ])
          )
          |> append(
+           map_issue(spec.dispatch_ref_requirements, [
+             :execution_recipe_specs,
+             index,
+             :dispatch_ref_requirements
+           ])
+         )
+         |> append(
            atom_list_issue(spec.hook_stages, [:execution_recipe_specs, index, :hook_stages])
          )
          |> append(
@@ -2258,7 +2265,6 @@ defmodule Mezzanine.Pack.Normalizer do
     end
   end
 
-  @spec normalize_recipe(ExecutionRecipeSpec.t()) :: ExecutionRecipeSpec.t()
   defp normalize_recipe(%ExecutionRecipeSpec{} = spec) do
     retry_on = spec.retry_config[:retry_on] || []
     rekey_on = spec.retry_config[:rekey_on] || []
@@ -2288,7 +2294,9 @@ defmodule Mezzanine.Pack.Normalizer do
           |> Enum.map(&H.canonicalize_identifier!/1)
           |> Enum.uniq()
           |> Enum.sort(),
-        hook_stages: Enum.uniq(spec.hook_stages)
+        hook_stages: Enum.uniq(spec.hook_stages),
+        dispatch_ref_requirements:
+          normalize_dispatch_ref_requirements(spec.dispatch_ref_requirements)
     }
   end
 
@@ -2373,6 +2381,15 @@ defmodule Mezzanine.Pack.Normalizer do
         |> Map.put(:root_ref, H.canonicalize_identifier!(root_ref))
     end
   end
+
+  defp normalize_dispatch_ref_requirements(requirements) when is_map(requirements) do
+    Map.new(requirements, fn {key, value} ->
+      {H.canonicalize_identifier!(key), normalize_dispatch_requirement_value(value)}
+    end)
+  end
+
+  defp normalize_dispatch_requirement_value(value) when is_atom(value), do: Atom.to_string(value)
+  defp normalize_dispatch_requirement_value(value), do: value
 
   defp normalize_optional_identifier(nil), do: nil
   defp normalize_optional_identifier(value), do: H.canonicalize_identifier!(value)

@@ -22,6 +22,13 @@ defmodule Mezzanine.Pack.CompilerTest do
     assert compiled.subject_kinds["expense_request"].name == "expense_request"
     assert compiled.recipes_by_ref["policy_check"].recipe_ref == "policy_check"
     assert compiled.recipes_by_ref["policy_check"].required_lifecycle_hints == ["receipt_status"]
+
+    assert compiled.recipes_by_ref["policy_check"].dispatch_ref_requirements == %{
+             "authority_decision_ref" => "required",
+             "connector_binding_ref" => "required",
+             "credential_posture_ref" => "credential_lease_or_no_credentials"
+           }
+
     assert compiled.context_sources_by_ref["workspace_memory"].binding_key == "shared_memory"
     assert compiled.context_sources_by_ref["workspace_memory"].usage_phase == :retrieval
 

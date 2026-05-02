@@ -97,6 +97,9 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
     assert execution.binding_snapshot == %{
              "placement_ref" => "local_runner",
              "execution_params" => %{"timeout_ms" => 300_000},
+             "authority_decision_ref" => "authority-decision://fixture/expense_capture",
+             "connector_binding_ref" => "connector-binding://expense_system_api",
+             "no_credentials_posture_ref" => "no-credentials://fixture/expense_capture",
              "connector_bindings" => %{
                "expense_system" => %{"connector_key" => "expense_system_api"}
              },
@@ -109,7 +112,14 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
              "runtime_class" => "session",
              "placement_ref" => "local_runner",
              "execution_params" => %{"timeout_ms" => 300_000},
-             "grant_spec" => %{}
+             "grant_spec" => %{},
+             "authority_decision_ref" => "authority-decision://fixture/expense_capture",
+             "no_credentials_posture_ref" => "no-credentials://fixture/expense_capture",
+             "dispatch_ref_requirements" => %{
+               "authority_decision_ref" => "required",
+               "connector_binding_ref" => "required",
+               "credential_posture_ref" => "credential_lease_or_no_credentials"
+             }
            }
 
     assert execution.intent_snapshot == %{
@@ -207,6 +217,87 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
     assert Repo.aggregate(Oban.Job, :count, :id) == 0
   end
 
+  test "advance/1 rejects missing Phase 2 opaque refs before execution and workflow effects" do
+    [
+      {default_execution_binding([]) |> Map.delete("authority_decision_ref"),
+       :missing_authority_decision_ref},
+      {default_execution_binding([]) |> Map.delete("connector_binding_ref"),
+       :missing_connector_binding_ref},
+      {default_execution_binding([]) |> Map.delete("no_credentials_posture_ref"),
+       :missing_no_credentials_posture_ref},
+      {default_execution_binding([])
+       |> Map.delete("no_credentials_posture_ref")
+       |> Map.put("credentials_required", true), :missing_credential_lease_ref}
+    ]
+    |> Enum.with_index(1)
+    |> Enum.each(fn {{binding, error}, index} ->
+      installation =
+        active_installation_fixture(
+          binding_config: execution_binding_config(binding),
+          environment: "stage9-opaque-ref-#{index}",
+          pack_version: "1.0.#{index}"
+        )
+
+      subject =
+        subject_fixture(%{
+          installation_id: installation.id,
+          source_ref: "expense:request:opaque-ref-#{error}",
+          subject_kind: "expense_request",
+          lifecycle_state: "submitted",
+          payload: %{"amount_cents" => 12_500},
+          trace_id: "trace-lifecycle-opaque-ref-#{error}",
+          causation_id: "cause-lifecycle-opaque-ref-#{error}"
+        })
+
+      assert {:error, ^error} = LifecycleEvaluator.advance(subject.id)
+      assert_no_dispatch_effects(subject.id)
+    end)
+  end
+
+  test "advance/1 rejects raw credential material before execution and workflow effects" do
+    binding =
+      default_execution_binding([])
+      |> Map.put("api_key", "raw-provider-secret")
+
+    installation = active_installation_fixture(binding_config: execution_binding_config(binding))
+
+    subject =
+      subject_fixture(%{
+        installation_id: installation.id,
+        source_ref: "expense:request:raw-credential",
+        subject_kind: "expense_request",
+        lifecycle_state: "submitted",
+        payload: %{"amount_cents" => 12_500},
+        trace_id: "trace-lifecycle-raw-credential",
+        causation_id: "cause-lifecycle-raw-credential"
+      })
+
+    assert {:error, :raw_credential_material_forbidden} = LifecycleEvaluator.advance(subject.id)
+    assert_no_dispatch_effects(subject.id)
+  end
+
+  test "advance/1 rejects tenant/install mismatch when dispatch attrs carry tenant scope" do
+    binding =
+      default_execution_binding([])
+      |> Map.put("tenant_id", "tenant-other")
+
+    installation = active_installation_fixture(binding_config: execution_binding_config(binding))
+
+    subject =
+      subject_fixture(%{
+        installation_id: installation.id,
+        source_ref: "expense:request:tenant-mismatch",
+        subject_kind: "expense_request",
+        lifecycle_state: "submitted",
+        payload: %{"amount_cents" => 12_500},
+        trace_id: "trace-lifecycle-tenant-mismatch",
+        causation_id: "cause-lifecycle-tenant-mismatch"
+      })
+
+    assert {:error, :tenant_installation_mismatch} = LifecycleEvaluator.advance(subject.id)
+    assert_no_dispatch_effects(subject.id)
+  end
+
   test "advance/1 captures required lifecycle hints inside the execution intent snapshot" do
     installation =
       active_installation_fixture(
@@ -249,6 +340,9 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
                 "timeout_ms" => 120_000,
                 "reasoning_tier" => "deliberate"
               },
+              "authority_decision_ref" => "authority-decision://fixture/expense_capture",
+              "connector_binding_ref" => "connector-binding://expense_system_api",
+              "no_credentials_posture_ref" => "no-credentials://fixture/expense_capture",
               "descriptor" => %{
                 "attachment" => "mezzanine.execution_recipe",
                 "contract" => "authoritative",
@@ -518,6 +612,8 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
     max_supersession_depth = Keyword.get(opts, :max_supersession_depth, 8)
     required_lifecycle_hints = Keyword.get(opts, :required_lifecycle_hints, [])
     produced_lifecycle_hints = Keyword.get(opts, :produced_lifecycle_hints, [])
+    environment = Keyword.get(opts, :environment, "stage9")
+    pack_version = Keyword.get(opts, :pack_version, "1.0.0")
 
     binding_config =
       Keyword.get(
@@ -538,6 +634,7 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
         join_transition?: join_transition?,
         max_supersession_depth: max_supersession_depth,
         required_lifecycle_hints: required_lifecycle_hints,
+        pack_version: pack_version,
         runtime_class: Keyword.get(opts, :runtime_class, :session)
       )
 
@@ -602,7 +699,7 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
         "tenant-lifecycle-engine",
         binding_config,
         to_string(compiled_pack.pack_slug),
-        "stage9",
+        environment,
         dump_uuid!(registration_id)
       ]
     )
@@ -620,6 +717,7 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
     join_transition? = Keyword.get(opts, :join_transition?, false)
     max_supersession_depth = Keyword.get(opts, :max_supersession_depth, 8)
     required_lifecycle_hints = Keyword.get(opts, :required_lifecycle_hints, [])
+    pack_version = Keyword.get(opts, :pack_version, "1.0.0")
     runtime_class = Keyword.get(opts, :runtime_class, :session)
 
     transitions =
@@ -630,7 +728,7 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
 
     manifest = %Manifest{
       pack_slug: :expense_approval,
-      version: "1.0.0",
+      version: pack_version,
       max_supersession_depth: max_supersession_depth,
       profile_slots: profile_slots(),
       subject_kind_specs: [
@@ -702,11 +800,18 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
     %{
       "placement_ref" => "local_runner",
       "execution_params" => %{"timeout_ms" => 300_000},
+      "authority_decision_ref" => "authority-decision://fixture/expense_capture",
+      "connector_binding_ref" => "connector-binding://expense_system_api",
+      "no_credentials_posture_ref" => "no-credentials://fixture/expense_capture",
       "connector_capability" => connector_capability_fixture(produced_lifecycle_hints),
       "connector_bindings" => %{
         "expense_system" => %{"connector_key" => "expense_system_api"}
       }
     }
+  end
+
+  defp execution_binding_config(binding) do
+    %{"execution_bindings" => %{"expense_capture" => binding}}
   end
 
   defp base_transitions(true) do
@@ -866,6 +971,18 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
       lifecycle_state: lifecycle_state,
       row_version: row_version
     }
+  end
+
+  defp assert_no_dispatch_effects(subject_id) do
+    assert %{lifecycle_state: "submitted"} = fetch_subject(subject_id)
+    assert execution_count(subject_id) == 0
+    assert workflow_start_outbox_count() == 0
+    assert Repo.aggregate(Oban.Job, :count, :id) == 0
+  end
+
+  defp workflow_start_outbox_count do
+    %{rows: [[count]]} = Repo.query!("SELECT count(*) FROM workflow_start_outbox")
+    count
   end
 
   defp list_trace_fact_kinds(subject_id, trace_id) do

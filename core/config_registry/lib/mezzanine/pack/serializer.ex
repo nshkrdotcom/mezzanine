@@ -312,6 +312,8 @@ defmodule Mezzanine.Pack.Serializer do
       "hook_stages" => Enum.map(spec.hook_stages, &Atom.to_string/1),
       "max_turns" => spec.max_turns,
       "stall_timeout_ms" => spec.stall_timeout_ms,
+      "dispatch_ref_requirements" =>
+        serialize_dispatch_ref_requirements(spec.dispatch_ref_requirements),
       "execution_params" => serialize_map(spec.execution_params),
       "applicable_to" => Enum.map(spec.applicable_to, &serialize_identifier/1)
     }
@@ -340,6 +342,8 @@ defmodule Mezzanine.Pack.Serializer do
       hook_stages: payload |> payload_list("hook_stages") |> deserialize_existing_atom_list(),
       max_turns: payload["max_turns"],
       stall_timeout_ms: payload["stall_timeout_ms"],
+      dispatch_ref_requirements:
+        deserialize_dispatch_ref_requirements(payload_map(payload, "dispatch_ref_requirements")),
       execution_params: deserialize_map(payload_map(payload, "execution_params")),
       applicable_to: payload_list(payload, "applicable_to")
     }
@@ -750,6 +754,26 @@ defmodule Mezzanine.Pack.Serializer do
 
   defp deserialize_nullable_map(nil), do: nil
   defp deserialize_nullable_map(map), do: deserialize_map(map)
+
+  defp serialize_dispatch_ref_requirements(requirements) when is_map(requirements) do
+    Map.new(requirements, fn {key, value} ->
+      {to_string(key), serialize_dispatch_requirement_value(value)}
+    end)
+  end
+
+  defp deserialize_dispatch_ref_requirements(requirements) when is_map(requirements) do
+    Map.new(requirements, fn {key, value} ->
+      {to_string(key), deserialize_dispatch_requirement_value(value)}
+    end)
+  end
+
+  defp serialize_dispatch_requirement_value(value) when is_atom(value), do: Atom.to_string(value)
+  defp serialize_dispatch_requirement_value(value), do: value
+
+  defp deserialize_dispatch_requirement_value(value) when is_atom(value),
+    do: Atom.to_string(value)
+
+  defp deserialize_dispatch_requirement_value(value), do: value
 
   defp serialize_state_mapping(mapping) when is_map(mapping) do
     Map.new(mapping, fn {state, provider_states} ->

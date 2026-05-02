@@ -373,6 +373,13 @@ defmodule MezzanineConfigRegistryTest do
     assert recipe.sandbox_policy_ref == "standard_registry_fixture"
     assert recipe.prompt_refs == ["registry_fixture_prompt"]
     assert recipe.dynamic_tool_manifest == %{tools: ["linear.comment.update"]}
+
+    assert recipe.dispatch_ref_requirements == %{
+             "authority_decision_ref" => "required",
+             "connector_binding_ref" => "required",
+             "credential_posture_ref" => "credential_lease_or_no_credentials"
+           }
+
     assert recipe.hook_stages == [:prepare_workspace]
     assert recipe.max_turns == 8
     assert recipe.stall_timeout_ms == 300_000
