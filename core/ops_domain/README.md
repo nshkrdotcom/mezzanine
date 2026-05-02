@@ -33,6 +33,11 @@ This package owns the first Ash/AshPostgres-backed durable truth for:
 - evidence bundles, evidence items, audit events, and timeline projections
 - operator control sessions and interventions
 
+Policy bundles support prompt-only bodies with structured runtime config:
+`:structured_config` loads runtime settings from metadata while preserving the
+body as the prompt template. The legacy `:workflow_md` path still parses
+front-matter bundles.
+
 It does not own:
 
 - pure policy compilation

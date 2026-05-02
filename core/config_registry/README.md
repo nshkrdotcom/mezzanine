@@ -27,6 +27,9 @@ Primary modules:
 internal/operator import path. It accepts a deterministic
 `Mezzanine.Authoring.Bundle`, validates the bundle before persistence, and then
 registers the pack plus creates or updates the installation in one transaction.
+When an import carries the same binding descriptors as the active
+installation, the registry keeps the existing compiled-pack revision instead of
+creating a no-op revision bump.
 
 The pre-activation gates reject:
 

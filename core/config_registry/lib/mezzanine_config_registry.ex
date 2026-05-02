@@ -250,18 +250,26 @@ defmodule MezzanineConfigRegistry do
 
       true ->
         with {:ok, updated_installation, update_notifications} <-
-               Installation.update_bindings(
-                 installation,
-                 %{
-                   binding_config: bundle.binding_descriptors
-                 },
-                 return_notifications?: true
-               )
-               |> action_result_with_notifications(),
+               update_bindings_for_bundle(installation, bundle),
              {:ok, active_installation, activation_notifications} <-
                ensure_installation_active(updated_installation) do
           {:ok, active_installation, update_notifications ++ activation_notifications}
         end
+    end
+  end
+
+  defp update_bindings_for_bundle(%Installation{} = installation, %Bundle{} = bundle) do
+    if installation.binding_config == bundle.binding_descriptors do
+      {:ok, installation, []}
+    else
+      installation
+      |> Installation.update_bindings(
+        %{
+          binding_config: bundle.binding_descriptors
+        },
+        return_notifications?: true
+      )
+      |> action_result_with_notifications()
     end
   end
 

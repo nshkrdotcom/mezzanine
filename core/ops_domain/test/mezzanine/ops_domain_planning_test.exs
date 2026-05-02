@@ -52,6 +52,47 @@ defmodule Mezzanine.OpsDomainPlanningTest do
     assert stale_bundle.metadata["compile_error"]
   end
 
+  test "structured config policy bundles keep prompt body separate from runtime config" do
+    actor = %{tenant_id: "tenant-structured-policy"}
+    {:ok, program} = create_program(actor, "structured-policy")
+
+    assert {:ok, %PolicyBundle{} = bundle} =
+             PolicyBundle
+             |> Ash.Changeset.for_create(:load_bundle, %{
+               program_id: program.id,
+               name: "structured_default",
+               version: "1.0.0",
+               policy_kind: :structured_config,
+               source_ref: "structured://default",
+               body: "# Prompt Only\n\nOperate on the assigned work.",
+               metadata: %{
+                 "runtime_policy_config" => %{
+                   "run" => %{
+                     "profile" => "default_session",
+                     "runtime_class" => "session",
+                     "capability" => "linear.issue.execute",
+                     "target" => "linear-default"
+                   },
+                   "review" => %{
+                     "required" => true,
+                     "required_decisions" => 1,
+                     "gates" => ["operator"]
+                   },
+                   "retry" => %{"strategy" => "linear", "max_attempts" => 2}
+                 }
+               }
+             })
+             |> Ash.Changeset.set_tenant(actor.tenant_id)
+             |> Ash.create(actor: actor, domain: Mezzanine.Programs)
+
+    assert bundle.status == :compiled
+    assert bundle.prompt_template =~ "Prompt Only"
+    assert bundle.config["review"]["required"] == true
+    assert bundle.compiled_form["run_profile"]["capability"] == "linear.issue.execute"
+    assert bundle.compiled_form["review_rules"]["required"] == true
+    assert bundle.compiled_form["retry_profile"]["strategy"] == "linear"
+  end
+
   test "compile_plan persists a work plan and attaches it to the work object" do
     actor = %{tenant_id: "tenant-a"}
     {:ok, program} = create_program(actor, "mezzanine-core")

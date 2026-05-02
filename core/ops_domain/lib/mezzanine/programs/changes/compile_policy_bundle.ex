@@ -13,8 +13,10 @@ defmodule Mezzanine.Programs.Changes.CompilePolicyBundle do
     Ash.Changeset.before_action(changeset, fn changeset ->
       body = Ash.Changeset.get_attribute(changeset, :body)
       source_ref = Ash.Changeset.get_attribute(changeset, :source_ref) || "inline"
+      policy_kind = Ash.Changeset.get_attribute(changeset, :policy_kind)
+      metadata = Ash.Changeset.get_attribute(changeset, :metadata) || %{}
 
-      with {:ok, bundle} <- BundleLoader.load_string(body, source_ref: source_ref),
+      with {:ok, bundle} <- load_bundle(policy_kind, body, source_ref, metadata),
            {:ok, compiled_bundle} <- Compiler.compile(bundle) do
         changeset
         |> Ash.Changeset.force_change_attribute(:source_ref, compiled_bundle.source_ref)
@@ -43,4 +45,28 @@ defmodule Mezzanine.Programs.Changes.CompilePolicyBundle do
     |> Kernel.||(%{})
     |> Map.put("compile_error", inspect(reason))
   end
+
+  defp load_bundle(:structured_config, body, source_ref, metadata) do
+    BundleLoader.load_map(
+      %{
+        "config" => structured_config(metadata),
+        "prompt_template" => body
+      },
+      source_ref: source_ref
+    )
+  end
+
+  defp load_bundle(_policy_kind, body, source_ref, _metadata) do
+    BundleLoader.load_string(body, source_ref: source_ref)
+  end
+
+  defp structured_config(metadata) when is_map(metadata) do
+    Map.get(metadata, "runtime_policy_config") ||
+      Map.get(metadata, :runtime_policy_config) ||
+      Map.get(metadata, "config") ||
+      Map.get(metadata, :config) ||
+      %{}
+  end
+
+  defp structured_config(_metadata), do: %{}
 end
