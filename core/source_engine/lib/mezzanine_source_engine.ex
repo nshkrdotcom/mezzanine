@@ -7,6 +7,7 @@ defmodule MezzanineSourceEngine do
   def components do
     [
       Mezzanine.SourceEngine.Admission,
+      Mezzanine.SourceEngine.LinearIssue,
       Mezzanine.SourceEngine.SourceBinding,
       Mezzanine.SourceEngine.SourceCursor,
       Mezzanine.SourceEngine.SourceEvent

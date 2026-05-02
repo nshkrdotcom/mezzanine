@@ -112,15 +112,29 @@ defmodule Mezzanine.SourceEngine.Admission do
   end
 
   defp source_state(payload) do
-    value(payload, :state) ||
+    state =
+      payload
+      |> value(:state)
+      |> nested_state_name()
+
+    state ||
       value(payload, :state_name) ||
-      value(payload, :source_state) |> nested_state_name()
+      payload |> value(:source_state) |> nested_state_name() ||
+      payload |> value(:issue) |> nested_state_name_from_issue()
   end
 
   defp nested_state_name(%{"name" => name}) when is_binary(name), do: name
   defp nested_state_name(%{name: name}) when is_binary(name), do: name
   defp nested_state_name(value) when is_binary(value), do: value
   defp nested_state_name(_value), do: nil
+
+  defp nested_state_name_from_issue(issue) when is_map(issue) do
+    issue
+    |> value(:state)
+    |> nested_state_name()
+  end
+
+  defp nested_state_name_from_issue(_issue), do: nil
 
   defp state_mapping(%SourceBinding{state_mapping: mapping}), do: mapping || %{}
   defp state_mapping(binding), do: value(binding, :state_mapping) || %{}
