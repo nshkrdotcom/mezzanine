@@ -45,12 +45,63 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
 
     assert projection.payload["runtime"]["rate_limit"] == %{
              "remaining" => 80,
+             "retry_after_ms" => 120_000,
              "reset_at" => "later"
            }
 
+    assert projection.payload["runtime"]["token_dedupe"] == %{
+             "accepted_count" => 2,
+             "duplicate_count" => 1,
+             "token_hash_refs" => ["sha256:token-1", "sha256:token-2"]
+           }
+
+    assert projection.payload["runtime"]["retry_queue"] == [
+             %{
+               "due_at" => "2026-05-01T12:00:00Z",
+               "reason" => "rate_limited",
+               "retry_ref" => "retry://receipt/completed"
+             }
+           ]
+
     assert projection.payload["runtime"]["event_counts"]["tool_call"] == 2
+
+    assert projection.payload["evidence"]["aitrace"]["evidence_receipt_ref"] ==
+             "aitrace://receipt/1"
+
+    assert projection.payload["evidence"]["aitrace"]["export_bounds"] == %{
+             "overflow_safe_action" => "spill_to_artifact_ref",
+             "redaction_policy_ref" => "aitrace.export_bounds.redact_hash.v1",
+             "schema_version" => "aitrace.export_bounds.v1"
+           }
+
+    assert projection.payload["prompt"] == %{
+             "context_hash" => "sha256:context",
+             "input_claim_check_ref" => "claim://prompt/input",
+             "output_claim_check_ref" => "claim://prompt/output",
+             "prompt_hash" => "sha256:prompt",
+             "provenance_refs" => ["outer-brain://provenance/1"],
+             "redaction_policy_ref" => "redaction://prompt",
+             "semantic_ref" => "semantic://context/1"
+           }
+
+    assert projection.payload["semantic"]["failure"] == %{
+             "failure_ref" => "semantic-failure://phase12/1",
+             "kind" => "semantic_insufficient_context",
+             "retry_class" => "repairable"
+           }
+
+    assert projection.payload["authority"] == %{
+             "credential_ref" => "credential://lease/redacted",
+             "credential_redaction" => "ref_only",
+             "provider_account_redaction" => "ref_only",
+             "provider_account_ref" => "provider-account://codex/redacted"
+           }
+
+    assert projection.payload["workpad"]["refs"] == ["source-workpad://linear/tenant-1/subj-1"]
     assert projection.payload["diagnostics"]["missing_required_evidence"] == []
     assert projection.payload["diagnostics"]["review_blocking?"] == false
+    refute inspect(projection.payload) =~ "should-drop"
+    refute inspect(projection.payload) =~ "never-project-this-token"
 
     assert {:ok, audit_facts} = AuditFact.list_trace("inst-1", "trace-receipt-completed")
     audit_fact = Enum.find(audit_facts, &(&1.fact_kind == :receipt_reduced))
@@ -236,7 +287,55 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
         "attempt_id" => "lower-attempt-#{receipt_state}",
         "artifact_refs" => evidence_refs,
         "token_totals" => %{"input" => 120, "output" => 45},
-        "rate_limit" => %{"remaining" => 80, "reset_at" => "later"},
+        "token_dedupe" => %{
+          "accepted_count" => 2,
+          "duplicate_count" => 1,
+          "token_hash_refs" => ["sha256:token-1", "sha256:token-2"],
+          "token_text" => "never-project-this-token"
+        },
+        "rate_limit" => %{"remaining" => 80, "reset_at" => "later", "retry_after_ms" => 120_000},
+        "retry" => %{
+          "retry_ref" => "retry://receipt/completed",
+          "due_at" => "2026-05-01T12:00:00Z",
+          "reason" => "rate_limited"
+        },
+        "aitrace" => %{
+          "evidence_receipt_ref" => "aitrace://receipt/1",
+          "trace_artifact_ref" => "aitrace://artifact/1",
+          "export_bounds" => %{
+            "schema_version" => "aitrace.export_bounds.v1",
+            "redaction_policy_ref" => "aitrace.export_bounds.redact_hash.v1",
+            "overflow_safe_action" => "spill_to_artifact_ref"
+          },
+          "raw_provider_payload" => "should-drop"
+        },
+        "prompt_provenance" => %{
+          "semantic_ref" => "semantic://context/1",
+          "prompt_hash" => "sha256:prompt",
+          "context_hash" => "sha256:context",
+          "input_claim_check_ref" => "claim://prompt/input",
+          "output_claim_check_ref" => "claim://prompt/output",
+          "provenance_refs" => ["outer-brain://provenance/1"],
+          "redaction_policy_ref" => "redaction://prompt",
+          "raw_prompt" => "should-drop"
+        },
+        "semantic_failure" => %{
+          "semantic_failure_ref" => "semantic-failure://phase12/1",
+          "kind" => "semantic_insufficient_context",
+          "retry_class" => "repairable",
+          "provider_ref" => %{"raw_provider_payload" => "should-drop"}
+        },
+        "provider_account" => %{
+          "provider_account_ref" => "provider-account://codex/redacted",
+          "provider_account_id" => "should-drop",
+          "redaction" => "ref_only"
+        },
+        "credential" => %{
+          "credential_ref" => "credential://lease/redacted",
+          "api_key" => "should-drop",
+          "redaction" => "ref_only"
+        },
+        "workpad_refs" => ["source-workpad://linear/tenant-1/subj-1"],
         "runtime_events" => [
           %{"event_kind" => "tool_call"},
           %{"event_kind" => "tool_call"},

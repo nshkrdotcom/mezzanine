@@ -293,15 +293,22 @@ defmodule Mezzanine.Projections.ReceiptReducer do
       },
       runtime: %{
         token_totals: map_value(lower_receipt, :token_totals) || %{},
-        rate_limit: map_value(lower_receipt, :rate_limit) || %{},
+        token_dedupe: token_dedupe_projection(lower_receipt),
+        rate_limit: rate_limit_projection(lower_receipt),
+        retry_queue: retry_queue_projection(lower_receipt),
         event_counts: event_counts(map_value(lower_receipt, :runtime_events) || [])
       },
       review: %{
         pending_decision_ids: Enum.map(decisions, & &1.id)
       },
       evidence: %{
-        evidence_refs: Enum.map(evidence, &evidence_projection/1)
+        evidence_refs: Enum.map(evidence, &evidence_projection/1),
+        aitrace: aitrace_projection(lower_receipt)
       },
+      prompt: prompt_projection(lower_receipt),
+      semantic: semantic_projection(lower_receipt),
+      authority: authority_projection(lower_receipt),
+      workpad: %{refs: string_list(map_value(lower_receipt, :workpad_refs))},
       diagnostics: %{
         missing_required_evidence: missing_required_evidence,
         review_blocking?: missing_required_evidence != []
@@ -316,6 +323,120 @@ defmodule Mezzanine.Projections.ReceiptReducer do
       content_ref: evidence.content_ref,
       status: evidence.status
     }
+  end
+
+  defp token_dedupe_projection(lower_receipt) do
+    source = map_value(lower_receipt, :token_dedupe) || %{}
+
+    %{}
+    |> maybe_put("accepted_count", integer_or_nil(map_value(source, :accepted_count)))
+    |> maybe_put("duplicate_count", integer_or_nil(map_value(source, :duplicate_count)))
+    |> maybe_put("token_hash_refs", string_list_or_nil(map_value(source, :token_hash_refs)))
+  end
+
+  defp rate_limit_projection(lower_receipt) do
+    source = map_value(lower_receipt, :rate_limit) || %{}
+
+    %{}
+    |> maybe_put("remaining", integer_or_nil(map_value(source, :remaining)))
+    |> maybe_put("reset_at", string_or_nil(map_value(source, :reset_at)))
+    |> maybe_put("retry_after_ms", integer_or_nil(map_value(source, :retry_after_ms)))
+    |> maybe_put("window", string_or_nil(map_value(source, :window)))
+    |> maybe_put("source_event_ref", string_or_nil(map_value(source, :source_event_ref)))
+  end
+
+  defp retry_queue_projection(lower_receipt) do
+    lower_receipt
+    |> map_value(:retry)
+    |> List.wrap()
+    |> Enum.flat_map(&retry_projection/1)
+  end
+
+  defp retry_projection(%{} = retry) do
+    [
+      %{}
+      |> maybe_put("retry_ref", string_or_nil(map_value(retry, :retry_ref)))
+      |> maybe_put("attempt_ref", string_or_nil(map_value(retry, :attempt_ref)))
+      |> maybe_put("due_at", string_or_nil(map_value(retry, :due_at)))
+      |> maybe_put("reason", string_or_nil(map_value(retry, :reason)))
+      |> maybe_put("last_error_ref", string_or_nil(map_value(retry, :last_error_ref)))
+    ]
+  end
+
+  defp retry_projection(_retry), do: []
+
+  defp aitrace_projection(lower_receipt) do
+    source = map_value(lower_receipt, :aitrace) || %{}
+
+    %{}
+    |> maybe_put("evidence_receipt_ref", string_or_nil(map_value(source, :evidence_receipt_ref)))
+    |> maybe_put("trace_artifact_ref", string_or_nil(map_value(source, :trace_artifact_ref)))
+    |> maybe_put("export_bounds", export_bounds_projection(map_value(source, :export_bounds)))
+  end
+
+  defp export_bounds_projection(%{} = bounds) do
+    %{}
+    |> maybe_put("schema_version", string_or_nil(map_value(bounds, :schema_version)))
+    |> maybe_put("redaction_policy_ref", string_or_nil(map_value(bounds, :redaction_policy_ref)))
+    |> maybe_put("overflow_safe_action", string_or_nil(map_value(bounds, :overflow_safe_action)))
+    |> maybe_put(
+      "spillover_artifact_policy",
+      string_or_nil(map_value(bounds, :spillover_artifact_policy))
+    )
+  end
+
+  defp export_bounds_projection(_bounds), do: nil
+
+  defp prompt_projection(lower_receipt) do
+    source = map_value(lower_receipt, :prompt_provenance) || %{}
+
+    %{}
+    |> maybe_put("semantic_ref", string_or_nil(map_value(source, :semantic_ref)))
+    |> maybe_put("prompt_hash", string_or_nil(map_value(source, :prompt_hash)))
+    |> maybe_put("context_hash", string_or_nil(map_value(source, :context_hash)))
+    |> maybe_put(
+      "input_claim_check_ref",
+      string_or_nil(map_value(source, :input_claim_check_ref))
+    )
+    |> maybe_put(
+      "output_claim_check_ref",
+      string_or_nil(map_value(source, :output_claim_check_ref))
+    )
+    |> maybe_put("provenance_refs", string_list_or_nil(map_value(source, :provenance_refs)))
+    |> maybe_put("normalizer_version", string_or_nil(map_value(source, :normalizer_version)))
+    |> maybe_put("redaction_policy_ref", string_or_nil(map_value(source, :redaction_policy_ref)))
+  end
+
+  defp semantic_projection(lower_receipt) do
+    %{failure: semantic_failure_projection(map_value(lower_receipt, :semantic_failure))}
+  end
+
+  defp semantic_failure_projection(%{} = failure) do
+    %{}
+    |> maybe_put("failure_ref", string_or_nil(map_value(failure, :semantic_failure_ref)))
+    |> maybe_put("kind", string_or_nil(map_value(failure, :kind)))
+    |> maybe_put("retry_class", string_or_nil(map_value(failure, :retry_class)))
+    |> maybe_put("journal_entry_ref", string_or_nil(map_value(failure, :journal_entry_ref)))
+    |> maybe_put("context_hash", string_or_nil(map_value(failure, :context_hash)))
+  end
+
+  defp semantic_failure_projection(_failure), do: %{}
+
+  defp authority_projection(lower_receipt) do
+    provider_account = map_value(lower_receipt, :provider_account) || %{}
+    credential = map_value(lower_receipt, :credential) || %{}
+
+    %{}
+    |> maybe_put(
+      "provider_account_ref",
+      string_or_nil(map_value(provider_account, :provider_account_ref))
+    )
+    |> maybe_put(
+      "provider_account_redaction",
+      string_or_nil(map_value(provider_account, :redaction))
+    )
+    |> maybe_put("credential_ref", string_or_nil(map_value(credential, :credential_ref)))
+    |> maybe_put("credential_redaction", string_or_nil(map_value(credential, :redaction)))
   end
 
   defp append_receipt_audit(subject, execution, attrs, receipt_state) do
@@ -422,6 +543,42 @@ defmodule Mezzanine.Projections.ReceiptReducer do
       |> to_string()
     end)
   end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  defp integer_or_nil(value) when is_integer(value), do: value
+  defp integer_or_nil(_value), do: nil
+
+  defp string_or_nil(nil), do: nil
+
+  defp string_or_nil(value) when is_binary(value) do
+    if String.trim(value) == "", do: nil, else: value
+  end
+
+  defp string_or_nil(value) when is_atom(value), do: Atom.to_string(value)
+  defp string_or_nil(_value), do: nil
+
+  defp string_list_or_nil(value) do
+    values = string_list(value)
+    if values == [], do: nil, else: values
+  end
+
+  defp string_list(value) when is_list(value) do
+    value
+    |> Enum.flat_map(fn
+      item when is_binary(item) ->
+        if String.trim(item) == "", do: [], else: [item]
+
+      item when is_atom(item) ->
+        [Atom.to_string(item)]
+
+      _item ->
+        []
+    end)
+  end
+
+  defp string_list(_value), do: []
 
   defp sort_key(subject, execution) do
     case {subject.lifecycle_state, execution.dispatch_state} do
