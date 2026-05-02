@@ -377,6 +377,66 @@ defmodule Mezzanine.Decisions.PersistenceTest do
     })
   end
 
+  test "operator tenant authorization rejects before terminal decision mutation" do
+    assert {:ok, subject} = ingest_subject("linear:ticket:decision-tenant-auth")
+    assert {:ok, execution} = dispatch_execution(subject, "decision-tenant-auth")
+    assert {:ok, decision} = create_pending_decision(subject, execution, "tenant-auth")
+
+    assert {:error, :cross_tenant_operator_command_denied} =
+             DecisionCommands.accept(decision, %{
+               tenant_id: "tenant-2",
+               authorized_installation_id: "inst-other",
+               reason: "wrong tenant",
+               trace_id: "trace-decision-tenant-denied",
+               causation_id: "cause-decision-tenant-denied",
+               actor_ref: %{kind: :operator, id: "mallory", tenant_id: "tenant-2"},
+               idempotency_key: "idem-decision-tenant-denied"
+             })
+
+    assert {:ok, current_decision} =
+             DecisionCommands.fetch_by_identity(%{
+               installation_id: "inst-1",
+               subject_id: subject.id,
+               execution_id: execution.id,
+               decision_kind: "human_review_required"
+             })
+
+    assert current_decision.lifecycle_state == "pending"
+    assert [] = audit_facts_for_trace("inst-1", "trace-decision-tenant-denied")
+
+    assert {:error, :operator_actor_tenant_mismatch} =
+             DecisionCommands.accept(decision, %{
+               tenant_id: "tenant-1",
+               authorized_installation_id: "inst-1",
+               reason: "actor mismatch",
+               trace_id: "trace-decision-tenant-actor-mismatch",
+               causation_id: "cause-decision-tenant-actor-mismatch",
+               actor_ref: %{kind: :operator, id: "mallory", tenant_id: "tenant-2"},
+               idempotency_key: "idem-decision-tenant-actor-mismatch"
+             })
+
+    assert {:ok, accepted_decision} =
+             DecisionCommands.accept(decision, %{
+               tenant_id: "tenant-1",
+               authorized_installation_id: "inst-1",
+               reason: "authorized operator",
+               trace_id: "trace-decision-tenant-accepted",
+               causation_id: "cause-decision-tenant-accepted",
+               actor_ref: %{kind: :operator, id: "alice", tenant_id: "tenant-1"},
+               idempotency_key: "idem-decision-tenant-accepted"
+             })
+
+    assert accepted_decision.lifecycle_state == "resolved"
+    assert accepted_decision.decision_value == "accept"
+
+    assert_terminal_attempt("trace-decision-tenant-accepted", accepted_decision, %{
+      "idempotency_key" => "idem-decision-tenant-accepted",
+      "tenant_id" => "tenant-1",
+      "requested_decision" => "accept",
+      "outcome" => "accepted"
+    })
+  end
+
   defp ingest_subject(source_ref) do
     now = DateTime.utc_now() |> DateTime.truncate(:microsecond)
     subject_id = Ecto.UUID.generate()

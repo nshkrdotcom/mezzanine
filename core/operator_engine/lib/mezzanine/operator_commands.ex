@@ -35,7 +35,8 @@ defmodule Mezzanine.OperatorCommands do
     causation_id = causation_id(opts, "cancel", subject_id)
     actor_ref = actor_ref(opts)
 
-    with {:ok, subject} <- fetch_subject(subject_id) do
+    with {:ok, subject} <- fetch_subject(subject_id),
+         :ok <- ensure_operator_authorized(subject, opts) do
       cancel_subject(subject_id, subject, cancel_reason, trace_id, causation_id, actor_ref, now)
     end
   end
@@ -278,6 +279,63 @@ defmodule Mezzanine.OperatorCommands do
       {:error, error} -> {:error, error}
     end
   end
+
+  defp ensure_operator_authorized(subject, opts) do
+    tenant_id = Keyword.get(opts, :tenant_id)
+    authorized_installation_id = Keyword.get(opts, :authorized_installation_id)
+
+    if is_nil(tenant_id) and is_nil(authorized_installation_id) do
+      :ok
+    else
+      opts
+      |> ensure_operator_tenant_present()
+      |> ensure_actor_tenant_matches(opts)
+      |> ensure_authorized_installation_matches(subject, opts)
+    end
+  end
+
+  defp ensure_operator_tenant_present(opts) do
+    case Keyword.get(opts, :tenant_id) do
+      tenant_id when is_binary(tenant_id) and tenant_id != "" -> :ok
+      _other -> {:error, :missing_operator_tenant_scope}
+    end
+  end
+
+  defp ensure_actor_tenant_matches(:ok, opts) do
+    tenant_id = Keyword.fetch!(opts, :tenant_id)
+
+    opts
+    |> actor_ref()
+    |> Map.get("tenant_id")
+    |> case do
+      nil -> :ok
+      ^tenant_id -> :ok
+      _other -> {:error, :operator_actor_tenant_mismatch}
+    end
+  end
+
+  defp ensure_actor_tenant_matches({:error, reason}, _opts), do: {:error, reason}
+
+  defp ensure_authorized_installation_matches(:ok, subject, opts) do
+    case Keyword.get(opts, :authorized_installation_id) do
+      installation_id when is_binary(installation_id) and installation_id != "" ->
+        if installation_id == subject.installation_id do
+          :ok
+        else
+          {:error, :cross_tenant_operator_command_denied}
+        end
+
+      _other ->
+        if Keyword.fetch!(opts, :tenant_id) == subject.installation_id do
+          :ok
+        else
+          {:error, :cross_tenant_operator_command_denied}
+        end
+    end
+  end
+
+  defp ensure_authorized_installation_matches({:error, reason}, _subject, _opts),
+    do: {:error, reason}
 
   defp fetch_active_executions(subject_id) do
     case ExecutionRecord.active_for_subject(subject_id) do

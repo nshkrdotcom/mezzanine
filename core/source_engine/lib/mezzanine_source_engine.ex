@@ -10,7 +10,8 @@ defmodule MezzanineSourceEngine do
       Mezzanine.SourceEngine.LinearIssue,
       Mezzanine.SourceEngine.SourceBinding,
       Mezzanine.SourceEngine.SourceCursor,
-      Mezzanine.SourceEngine.SourceEvent
+      Mezzanine.SourceEngine.SourceEvent,
+      Mezzanine.SourceEngine.SourceRefreshRequest
     ]
   end
 end

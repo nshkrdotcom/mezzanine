@@ -138,6 +138,24 @@ defmodule Mezzanine.OperatorCommandsTest do
     assert Repo.aggregate(Oban.Job, :count, :id) == 0
   end
 
+  test "cancel rejects cross-tenant operator context before subject mutation" do
+    assert {:ok, subject} = ingest_subject("linear:ticket:cancel-tenant-denied")
+
+    assert {:error, :cross_tenant_operator_command_denied} =
+             OperatorCommands.cancel(subject.id,
+               tenant_id: "tenant-2",
+               authorized_installation_id: "inst-other",
+               reason: "wrong tenant",
+               trace_id: "trace-operator-cancel-denied",
+               causation_id: "cause-operator-cancel-denied",
+               actor_ref: %{kind: :operator, id: "mallory", tenant_id: "tenant-2"}
+             )
+
+    assert {:ok, reloaded_subject} = Ash.get(SubjectRecord, subject.id)
+    assert reloaded_subject.status == "active"
+    assert audit_kinds_for_trace("inst-1", "trace-operator-cancel-denied") == []
+  end
+
   test "operator commands delegate durable row mutation to bounded-context owners" do
     source =
       Path.expand("../../lib/mezzanine/operator_commands.ex", __DIR__)

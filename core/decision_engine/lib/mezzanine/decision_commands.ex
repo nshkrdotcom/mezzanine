@@ -103,6 +103,7 @@ defmodule Mezzanine.DecisionCommands do
     current_job_id = Keyword.get(opts, :current_job_id)
 
     with {:ok, decision} <- load_current_decision(decision_or_id),
+         :ok <- ensure_operator_authorized(decision, attrs),
          :ok <- ensure_pending_or_record_conflict(decision, action, attrs),
          :ok <- ensure_expected_row_version_or_record_conflict(decision, action, attrs),
          :ok <- reject_legacy_expiry_job_ref(decision, action, current_job_id) do
@@ -198,6 +199,64 @@ defmodule Mezzanine.DecisionCommands do
       {:error, error} -> {:error, error}
     end
   end
+
+  defp ensure_operator_authorized(%DecisionRecord{} = decision, attrs) do
+    top_level_tenant_id = map_value(attrs, :tenant_id)
+    authorized_installation_id = map_value(attrs, :authorized_installation_id)
+
+    if is_nil(top_level_tenant_id) and is_nil(authorized_installation_id) do
+      :ok
+    else
+      attrs
+      |> ensure_operator_tenant_present()
+      |> ensure_actor_tenant_matches(attrs)
+      |> ensure_authorized_installation_matches(decision, attrs)
+    end
+  end
+
+  defp ensure_operator_tenant_present(attrs) do
+    case map_value(attrs, :tenant_id) do
+      tenant_id when is_binary(tenant_id) and tenant_id != "" -> :ok
+      _other -> {:error, :missing_operator_tenant_scope}
+    end
+  end
+
+  defp ensure_actor_tenant_matches(:ok, attrs) do
+    tenant_id = map_value(attrs, :tenant_id)
+
+    attrs
+    |> map_value(:actor_ref)
+    |> normalize_map()
+    |> Map.get("tenant_id")
+    |> case do
+      nil -> :ok
+      ^tenant_id -> :ok
+      _other -> {:error, :operator_actor_tenant_mismatch}
+    end
+  end
+
+  defp ensure_actor_tenant_matches({:error, reason}, _attrs), do: {:error, reason}
+
+  defp ensure_authorized_installation_matches(:ok, %DecisionRecord{} = decision, attrs) do
+    case map_value(attrs, :authorized_installation_id) do
+      installation_id when is_binary(installation_id) and installation_id != "" ->
+        if installation_id == decision.installation_id do
+          :ok
+        else
+          {:error, :cross_tenant_operator_command_denied}
+        end
+
+      _other ->
+        if map_value(attrs, :tenant_id) == decision.installation_id do
+          :ok
+        else
+          {:error, :cross_tenant_operator_command_denied}
+        end
+    end
+  end
+
+  defp ensure_authorized_installation_matches({:error, reason}, _decision, _attrs),
+    do: {:error, reason}
 
   defp ensure_pending(%DecisionRecord{lifecycle_state: "pending"}), do: :ok
 
