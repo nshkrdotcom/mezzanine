@@ -12,6 +12,9 @@ defmodule Mezzanine.Lifecycle.SourceExecutionMapper do
   @workflow_type "execution_attempt"
   @workflow_version "execution_attempt.v1"
   @release_manifest_ref "phase3-source-admission-to-execution-attempt"
+  @default_candidate_states ["Todo"]
+  @default_held_states ["Backlog"]
+  @default_terminal_states ["Done", "Completed", "Canceled", "Cancelled", "Duplicate"]
 
   @required_source_fields [
     :tenant_id,
@@ -43,10 +46,78 @@ defmodule Mezzanine.Lifecycle.SourceExecutionMapper do
     |> compact()
   end
 
+  @spec select_dispatch_candidates([map() | struct()], keyword()) :: %{
+          dispatchable: [map() | struct()],
+          held: [map()]
+        }
+  def select_dispatch_candidates(sources, opts \\ []) when is_list(sources) and is_list(opts) do
+    {dispatchable, held} =
+      Enum.reduce(sources, {[], []}, fn source, {dispatchable, held} ->
+        case dispatch_preflight(source, opts) do
+          {:ok, _fact} ->
+            {[source | dispatchable], held}
+
+          {:error, {:dispatch_preflight_rejected, fact}} ->
+            {dispatchable, [fact | held]}
+        end
+      end)
+
+    %{
+      dispatchable:
+        dispatchable
+        |> Enum.reverse()
+        |> Enum.sort_by(&dispatch_sort_key/1),
+      held: Enum.reverse(held)
+    }
+  end
+
+  @spec dispatch_preflight(map() | struct(), keyword()) ::
+          {:ok, map()} | {:error, {:dispatch_preflight_rejected, map()}}
+  def dispatch_preflight(source, opts \\ []) when is_map(source) and is_list(opts) do
+    source_state = source_state(source)
+
+    candidate_states =
+      normalized_state_set(Keyword.get(opts, :candidate_states, @default_candidate_states))
+
+    held_states = normalized_state_set(Keyword.get(opts, :held_states, @default_held_states))
+
+    terminal_states =
+      normalized_state_set(Keyword.get(opts, :terminal_states, @default_terminal_states))
+
+    known_states = MapSet.union(candidate_states, MapSet.union(held_states, terminal_states))
+
+    cond do
+      blank?(source_state) ->
+        reject_preflight(source, source_state, :missing_source_state, [])
+
+      state_member?(source_state, terminal_states) ->
+        reject_preflight(source, source_state, :terminal_source_state, [])
+
+      not state_member?(source_state, known_states) ->
+        reject_preflight(source, source_state, :unknown_source_state, [])
+
+      not state_member?(source_state, candidate_states) ->
+        reject_preflight(source, source_state, :source_state_not_dispatchable, [])
+
+      true ->
+        case non_terminal_dependencies(source, terminal_states) do
+          [] ->
+            {:ok,
+             preflight_fact(source, source_state, :dispatchable, true, [],
+               fact_kind: "dispatch_preflight_accepted"
+             )}
+
+          dependencies ->
+            reject_preflight(source, source_state, :non_terminal_dependency, dependencies)
+        end
+    end
+  end
+
   @spec to_execution_attempt_input(map() | struct(), keyword()) ::
           {:ok, WorkflowExecutionLifecycleInput.t()} | {:error, term()}
   def to_execution_attempt_input(source, opts \\ []) when is_map(source) and is_list(opts) do
     with :ok <- validate_required_source(source),
+         {:ok, _preflight_fact} <- dispatch_preflight(source, opts),
          attrs <- execution_attempt_attrs(source, opts) do
       WorkflowExecutionLifecycleInput.new(attrs)
     end
@@ -56,7 +127,8 @@ defmodule Mezzanine.Lifecycle.SourceExecutionMapper do
 
   @spec to_lifecycle_advance(map() | struct(), keyword()) :: {:ok, map()} | {:error, term()}
   def to_lifecycle_advance(source, opts \\ []) when is_map(source) and is_list(opts) do
-    with :ok <- validate_required_source(source) do
+    with :ok <- validate_required_source(source),
+         {:ok, _preflight_fact} <- dispatch_preflight(source, opts) do
       {:ok,
        %{
          subject_id: required_string!(source, :subject_id),
@@ -129,6 +201,136 @@ defmodule Mezzanine.Lifecycle.SourceExecutionMapper do
     end
   end
 
+  defp reject_preflight(source, source_state, reason, dependencies) do
+    {:error,
+     {:dispatch_preflight_rejected,
+      preflight_fact(source, source_state, reason, false, dependencies,
+        fact_kind: "dispatch_preflight_rejected"
+      )}}
+  end
+
+  defp preflight_fact(source, source_state, reason, eligible?, dependencies, opts) do
+    %{
+      "fact_kind" => Keyword.fetch!(opts, :fact_kind),
+      "dispatch_eligible" => eligible?,
+      "reason" => Atom.to_string(reason),
+      "subject_id" => value(source, :subject_id),
+      "source_ref" => source_ref_value(source),
+      "source_state" => source_state,
+      "provider" => value(source, :provider, "linear"),
+      "provider_external_ref" =>
+        value(source, :external_ref) || value(source, :provider_external_ref),
+      "identifier" => value(source, :identifier),
+      "priority" => value(source, :priority),
+      "opened_at" => value(source, :opened_at) || value(source, :created_at),
+      "dependency_refs" => Enum.map(dependencies, &dependency_projection/1)
+    }
+    |> compact_string_map()
+  end
+
+  defp non_terminal_dependencies(source, terminal_states) do
+    source
+    |> dependency_refs()
+    |> Enum.reject(fn dependency ->
+      dependency
+      |> source_state()
+      |> state_member?(terminal_states)
+    end)
+  end
+
+  defp dependency_refs(source) do
+    [
+      value(source, :dependency_refs),
+      value(source, :dependencies),
+      value(source, :blocked_by),
+      value(source, :blockers),
+      value(source, :blocker_refs)
+    ]
+    |> Enum.flat_map(&List.wrap/1)
+    |> Enum.filter(&is_map/1)
+  end
+
+  defp dependency_projection(dependency) do
+    %{
+      "provider_external_ref" =>
+        value(dependency, :provider_external_ref) || value(dependency, :external_ref),
+      "source_ref" => source_ref_value(dependency),
+      "identifier" => value(dependency, :identifier),
+      "source_state" => source_state(dependency)
+    }
+    |> compact_string_map()
+  end
+
+  defp dispatch_sort_key(source) do
+    {
+      priority_rank(value(source, :priority)),
+      opened_at_rank(value(source, :opened_at) || value(source, :created_at)),
+      value(source, :identifier) || value(source, :external_ref) || source_ref_value(source) || ""
+    }
+  end
+
+  defp priority_rank(priority) when is_integer(priority) and priority >= 0, do: priority
+
+  defp priority_rank(priority) when is_binary(priority) do
+    case Integer.parse(String.trim(priority)) do
+      {integer, ""} when integer >= 0 -> integer
+      _other -> 9_999
+    end
+  end
+
+  defp priority_rank(_priority), do: 9_999
+
+  defp opened_at_rank(%DateTime{} = datetime), do: DateTime.to_unix(datetime, :microsecond)
+
+  defp opened_at_rank(opened_at) when is_binary(opened_at) do
+    case DateTime.from_iso8601(opened_at) do
+      {:ok, datetime, _offset} -> DateTime.to_unix(datetime, :microsecond)
+      {:error, _reason} -> 9_999_999_999_999_999
+    end
+  end
+
+  defp opened_at_rank(_opened_at), do: 9_999_999_999_999_999
+
+  defp normalized_state_set(states) do
+    states
+    |> List.wrap()
+    |> Enum.map(&normalize_state/1)
+    |> Enum.reject(&blank?/1)
+    |> MapSet.new()
+  end
+
+  defp state_member?(state, states) do
+    MapSet.member?(states, normalize_state(state))
+  end
+
+  defp source_state(source) when is_map(source) do
+    state_name(value(source, :source_state)) ||
+      state_name(value(source, :state)) ||
+      state_name(value(source, :state_name)) ||
+      source |> value(:issue) |> issue_state()
+  end
+
+  defp source_state(_source), do: nil
+
+  defp issue_state(issue) when is_map(issue), do: issue |> value(:state) |> state_name()
+  defp issue_state(_issue), do: nil
+
+  defp state_name(nil), do: nil
+  defp state_name(state) when is_binary(state), do: String.trim(state)
+  defp state_name(%{"name" => name}) when is_binary(name), do: String.trim(name)
+  defp state_name(%{name: name}) when is_binary(name), do: String.trim(name)
+  defp state_name(_state), do: nil
+
+  defp normalize_state(nil), do: nil
+
+  defp normalize_state(state) when is_binary(state) do
+    state
+    |> String.trim()
+    |> String.downcase()
+  end
+
+  defp normalize_state(state), do: state |> to_string() |> normalize_state()
+
   defp routing_facts(source, capability, installation_revision) do
     %{
       "source_binding_ref" => required_string!(source, :source_binding_id),
@@ -166,6 +368,17 @@ defmodule Mezzanine.Lifecycle.SourceExecutionMapper do
   defp source_ref(source) do
     value(source, :source_ref) ||
       "linear://issue/#{required_string!(source, :external_ref)}"
+  end
+
+  defp source_ref_value(source) do
+    value(source, :source_ref) ||
+      case value(source, :external_ref) || value(source, :provider_external_ref) do
+        external_ref when is_binary(external_ref) and external_ref != "" ->
+          "linear://issue/#{external_ref}"
+
+        _missing ->
+          nil
+      end
   end
 
   defp source_idempotency_key(source) do
@@ -228,6 +441,12 @@ defmodule Mezzanine.Lifecycle.SourceExecutionMapper do
   defp compact(map) do
     map
     |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new()
+  end
+
+  defp compact_string_map(map) do
+    map
+    |> Enum.reject(fn {_key, value} -> value in [nil, "", []] end)
     |> Map.new()
   end
 end

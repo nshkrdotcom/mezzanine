@@ -33,6 +33,97 @@ defmodule Mezzanine.Lifecycle.SourceExecutionMapperTest do
     assert input.routing_facts["actor_ref"] == %{kind: "system", id: "source-admission"}
   end
 
+  test "orders dispatchable sources by priority, opened time, and identifier" do
+    result =
+      SourceExecutionMapper.select_dispatch_candidates([
+        source(%{
+          external_ref: "LIN-003",
+          identifier: "ENG-003",
+          priority: 2,
+          opened_at: "2026-03-12T09:30:00Z"
+        }),
+        source(%{
+          external_ref: "LIN-001",
+          identifier: "ENG-001",
+          priority: 1,
+          opened_at: "2026-03-12T10:00:00Z"
+        }),
+        source(%{
+          external_ref: "LIN-002",
+          identifier: "ENG-002",
+          priority: 1,
+          opened_at: "2026-03-12T09:00:00Z"
+        })
+      ])
+
+    assert Enum.map(result.dispatchable, &Map.fetch!(&1, :identifier)) == [
+             "ENG-002",
+             "ENG-001",
+             "ENG-003"
+           ]
+
+    assert result.held == []
+  end
+
+  test "rejects Todo with non-terminal dependencies before workflow input creation" do
+    assert {:error, {:dispatch_preflight_rejected, fact}} =
+             source(%{
+               blocker_refs: [
+                 %{
+                   "provider_external_ref" => "LIN-099",
+                   "source_ref" => "linear://issue/LIN-099",
+                   "source_state" => "In Progress"
+                 }
+               ]
+             })
+             |> SourceExecutionMapper.to_execution_attempt_input()
+
+    assert fact["fact_kind"] == "dispatch_preflight_rejected"
+    assert fact["dispatch_eligible"] == false
+    assert fact["reason"] == "non_terminal_dependency"
+
+    assert [
+             %{
+               "provider_external_ref" => "LIN-099",
+               "source_ref" => "linear://issue/LIN-099",
+               "source_state" => "In Progress"
+             }
+           ] = fact["dependency_refs"]
+  end
+
+  test "allows Todo with terminal dependencies through dispatch preflight" do
+    assert {:ok, %WorkflowExecutionLifecycleInput{}} =
+             source(%{
+               blocker_refs: [
+                 %{
+                   "provider_external_ref" => "LIN-099",
+                   "source_ref" => "linear://issue/LIN-099",
+                   "source_state" => "Done"
+                 }
+               ]
+             })
+             |> SourceExecutionMapper.to_execution_attempt_input()
+  end
+
+  test "holds Backlog and unknown states with preflight projection facts" do
+    assert {:error, {:dispatch_preflight_rejected, backlog_fact}} =
+             source(%{state: "Backlog"})
+             |> SourceExecutionMapper.to_lifecycle_advance()
+
+    assert backlog_fact["fact_kind"] == "dispatch_preflight_rejected"
+    assert backlog_fact["source_state"] == "Backlog"
+    assert backlog_fact["reason"] == "source_state_not_dispatchable"
+    assert backlog_fact["dispatch_eligible"] == false
+
+    assert {:error, {:dispatch_preflight_rejected, unknown_fact}} =
+             source(%{state: "Investigating"})
+             |> SourceExecutionMapper.to_lifecycle_advance()
+
+    assert unknown_fact["source_state"] == "Investigating"
+    assert unknown_fact["reason"] == "unknown_source_state"
+    assert unknown_fact["dispatch_eligible"] == false
+  end
+
   test "maps admitted source to existing lifecycle evaluator handoff instead of a new queue" do
     assert {:ok, handoff} = SourceExecutionMapper.to_lifecycle_advance(source())
 
@@ -51,23 +142,26 @@ defmodule Mezzanine.Lifecycle.SourceExecutionMapperTest do
              |> SourceExecutionMapper.to_execution_attempt_input()
   end
 
-  defp source do
-    %{
-      tenant_id: "tenant-1",
-      installation_id: "inst-1",
-      installation_revision: 7,
-      subject_id: "subject-1",
-      subject_kind: "linear_coding_ticket",
-      source_binding_id: "linear-primary",
-      provider: "linear",
-      external_ref: "LIN-101",
-      provider_revision: "rev-1",
-      state: "Todo",
-      trace_id: "trace-1",
-      causation_id: "cause-1",
-      actor_ref: %{kind: "system", id: "source-admission"},
-      capability: "linear.issue.execute",
-      normalized_payload: %{"title" => "Ship mapper"}
-    }
+  defp source(overrides \\ %{}) do
+    Map.merge(
+      %{
+        tenant_id: "tenant-1",
+        installation_id: "inst-1",
+        installation_revision: 7,
+        subject_id: "subject-1",
+        subject_kind: "linear_coding_ticket",
+        source_binding_id: "linear-primary",
+        provider: "linear",
+        external_ref: "LIN-101",
+        provider_revision: "rev-1",
+        state: "Todo",
+        trace_id: "trace-1",
+        causation_id: "cause-1",
+        actor_ref: %{kind: "system", id: "source-admission"},
+        capability: "linear.issue.execute",
+        normalized_payload: %{"title" => "Ship mapper"}
+      },
+      overrides
+    )
   end
 end

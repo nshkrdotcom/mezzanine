@@ -6,6 +6,7 @@ defmodule MezzanineLifecycleEngine do
   @spec components() :: [module()]
   def components do
     [
+      Mezzanine.Lifecycle.SourceExecutionMapper,
       Mezzanine.LifecycleEvaluator
     ]
   end
