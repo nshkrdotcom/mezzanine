@@ -257,5 +257,18 @@ defmodule Mezzanine.Execution.LifecycleContinuationTest do
   end
 
   defp evidence_field(evidence, field),
-    do: Map.get(evidence, field) || Map.get(evidence, String.to_atom(field))
+    do: Map.get(evidence, field) || Map.get(evidence, evidence_field_key(field))
+
+  defp evidence_field_key("attempt_ref"), do: :attempt_ref
+  defp evidence_field_key("attempt_number"), do: :attempt_number
+  defp evidence_field_key("compensation_kind"), do: :compensation_kind
+  defp evidence_field_key("dead_letter_ref"), do: :dead_letter_ref
+  defp evidence_field_key("event_kind"), do: :event_kind
+  defp evidence_field_key("failure_class"), do: :failure_class
+  defp evidence_field_key("failure_reason"), do: :failure_reason
+  defp evidence_field_key("max_attempts"), do: :max_attempts
+  defp evidence_field_key("operator_action_ref"), do: :operator_action_ref
+  defp evidence_field_key("owner_command_or_signal"), do: :owner_command_or_signal
+  defp evidence_field_key("source_event_ref"), do: :source_event_ref
+  defp evidence_field_key(_field), do: nil
 end

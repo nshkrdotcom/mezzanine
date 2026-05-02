@@ -574,12 +574,24 @@ defmodule Mezzanine.Decisions.PersistenceTest do
     ).rows
     |> Enum.map(fn [fact_kind, decision_id, payload] ->
       %{
-        fact_kind: String.to_atom(fact_kind),
+        fact_kind: audit_fact_kind(fact_kind),
         decision_id: normalize_uuid(decision_id),
         payload: payload
       }
     end)
   end
+
+  defp audit_fact_kind("decision_created"), do: :decision_created
+  defp audit_fact_kind("decision_expired"), do: :decision_expired
+  defp audit_fact_kind("decision_resolved"), do: :decision_resolved
+  defp audit_fact_kind("decision_conflict_attempt"), do: :decision_conflict_attempt
+
+  defp audit_fact_kind("decision_terminal_resolution_attempt"),
+    do: :decision_terminal_resolution_attempt
+
+  defp audit_fact_kind("decision_terminal_attempt"), do: :decision_terminal_attempt
+  defp audit_fact_kind("decision_operator_audit"), do: :decision_operator_audit
+  defp audit_fact_kind(fact_kind), do: fact_kind
 
   defp assert_terminal_attempt(trace_id, decision, expected_payload) do
     attempt_fact =

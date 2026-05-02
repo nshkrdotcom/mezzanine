@@ -18,6 +18,43 @@ defmodule Mezzanine.Telemetry do
     :tenant_id,
     :installation_id
   ]
+  @event_segments [
+    :accepted,
+    :ambiguous,
+    :archival,
+    :barrier,
+    :checkout_timeout,
+    :child_completion,
+    :circuit,
+    :closed,
+    :db,
+    :dispatch,
+    :failed,
+    :gap_detected,
+    :half_open,
+    :handoff_recorded,
+    :invalidate,
+    :invalidated,
+    :issued,
+    :lease,
+    :open,
+    :pool,
+    :queue_time,
+    :reconcile,
+    :rows_removed,
+    :run,
+    :snooze,
+    :spine,
+    :startup,
+    :stream,
+    :attach,
+    :active,
+    :terminated_by_invalidation,
+    :unique_drop,
+    :unknown_event_segment,
+    :verified
+  ]
+  @event_segment_lookup Map.new(@event_segments, &{Atom.to_string(&1), &1})
 
   @type event_segment :: atom() | String.t()
   @type event_name :: [event_segment()]
@@ -61,13 +98,13 @@ defmodule Mezzanine.Telemetry do
   defp normalize_event(event) do
     Enum.map(event, fn
       segment when is_atom(segment) ->
-        segment
+        if segment in @event_segments, do: segment, else: :unknown_event_segment
 
       segment when is_binary(segment) ->
         segment
         |> String.trim()
         |> String.replace("-", "_")
-        |> String.to_atom()
+        |> then(&Map.get(@event_segment_lookup, &1, :unknown_event_segment))
     end)
   end
 

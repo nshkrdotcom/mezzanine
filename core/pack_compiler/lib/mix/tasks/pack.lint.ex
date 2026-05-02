@@ -16,14 +16,7 @@ defmodule Mix.Tasks.Pack.Lint do
   def run(args) do
     Mix.Task.run("compile", [])
 
-    module =
-      case args do
-        [module_name] ->
-          module_name |> String.split(".") |> Enum.map(&String.to_atom/1) |> Module.concat()
-
-        _other ->
-          Mix.raise("usage: mix pack.lint Elixir.Module.Name")
-      end
+    module = parse_module!(args)
 
     diagnostics = Compiler.diagnostics(module)
 
@@ -42,6 +35,14 @@ defmodule Mix.Tasks.Pack.Lint do
   defp format_diagnostic(%{severity: severity, path: path, message: message}) do
     "#{severity}: #{format_path(path)} #{message}"
   end
+
+  defp parse_module!([module_name]) do
+    Module.safe_concat([module_name])
+  rescue
+    ArgumentError -> Mix.raise("pack lint failed for #{module_name}")
+  end
+
+  defp parse_module!(_args), do: Mix.raise("usage: mix pack.lint Elixir.Module.Name")
 
   defp format_path([]), do: "<root>"
   defp format_path(path), do: Enum.map_join(path, ".", &to_string/1)

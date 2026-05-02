@@ -74,6 +74,7 @@ defmodule Mezzanine.LifecycleEvaluator do
     :pack_revision_change,
     :manual_retry
   ]
+  @supersession_reason_lookup Map.new(@supersession_reasons, &{Atom.to_string(&1), &1})
   @default_actor_ref %{kind: :lifecycle_evaluator}
 
   @subject_lock_sql """
@@ -1429,11 +1430,10 @@ defmodule Mezzanine.LifecycleEvaluator do
     do: {:ok, reason}
 
   defp normalize_supersession_reason(reason) when is_binary(reason) do
-    reason
-    |> String.to_existing_atom()
-    |> normalize_supersession_reason()
-  rescue
-    ArgumentError -> {:error, {:invalid_supersession_reason, reason}}
+    case Map.fetch(@supersession_reason_lookup, reason) do
+      {:ok, normalized_reason} -> {:ok, normalized_reason}
+      :error -> {:error, {:invalid_supersession_reason, reason}}
+    end
   end
 
   defp normalize_supersession_reason(reason),

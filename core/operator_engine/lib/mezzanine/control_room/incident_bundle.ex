@@ -42,6 +42,11 @@ defmodule Mezzanine.ControlRoom.IncidentBundle do
     :projection_ref
   ]
   @optional_binary_fields [:workspace_ref, :project_ref, :environment_ref, :system_actor_ref]
+  @normalizable_fields @required_binary_fields ++
+                         @optional_binary_fields ++
+                         [:lower_fact_refs, :staleness_class, :evidence_refs, :metadata]
+  @field_lookup Map.new(@normalizable_fields, &{Atom.to_string(&1), &1})
+  @staleness_lookup Map.new(@staleness_classes, &{Atom.to_string(&1), &1})
 
   @enforce_keys [
     :contract_name,
@@ -187,7 +192,7 @@ defmodule Mezzanine.ControlRoom.IncidentBundle do
 
   defp normalize_attrs(attrs) do
     Map.new(attrs, fn
-      {key, value} when is_binary(key) -> {String.to_atom(key), value}
+      {key, value} when is_binary(key) -> {Map.get(@field_lookup, key, key), value}
       {key, value} -> {key, value}
     end)
   end
@@ -220,11 +225,10 @@ defmodule Mezzanine.ControlRoom.IncidentBundle do
     do: {:ok, value}
 
   defp normalize_staleness(value) when is_binary(value) do
-    value
-    |> String.to_existing_atom()
-    |> normalize_staleness()
-  rescue
-    ArgumentError -> {:error, {:invalid_staleness_class, value}}
+    case Map.fetch(@staleness_lookup, value) do
+      {:ok, staleness} -> {:ok, staleness}
+      :error -> {:error, {:invalid_staleness_class, value}}
+    end
   end
 
   defp normalize_staleness(value), do: {:error, {:invalid_staleness_class, value}}

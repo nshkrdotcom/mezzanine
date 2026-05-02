@@ -14,6 +14,7 @@ defmodule MezzanineOpsModel.WorkStatus do
     :failed,
     :cancelled
   ]
+  @value_lookup Map.new(@values, &{Atom.to_string(&1), &1})
 
   @type t ::
           :draft
@@ -52,16 +53,15 @@ defmodule MezzanineOpsModel.WorkStatus do
     case String.trim(value) do
       "canceled" -> {:ok, :cancelled}
       "cancelled" -> {:ok, :cancelled}
-      candidate -> cast_existing_atom(candidate)
+      candidate -> cast_lookup(candidate)
     end
   end
 
-  defp cast_existing_atom(value) do
-    value
-    |> String.to_existing_atom()
-    |> cast()
-  rescue
-    ArgumentError -> {:error, {:invalid_work_status, value}}
+  defp cast_lookup(value) do
+    case Map.fetch(@value_lookup, value) do
+      {:ok, status} -> {:ok, status}
+      :error -> {:error, {:invalid_work_status, value}}
+    end
   end
 end
 
@@ -69,6 +69,7 @@ defmodule MezzanineOpsModel.RunStatus do
   @moduledoc "Canonical run lifecycle vocabulary."
 
   @values [:pending, :scheduled, :running, :completed, :failed, :cancelled, :stalled]
+  @value_lookup Map.new(@values, &{Atom.to_string(&1), &1})
 
   @type t :: :pending | :scheduled | :running | :completed | :failed | :cancelled | :stalled
 
@@ -83,7 +84,7 @@ defmodule MezzanineOpsModel.RunStatus do
     case String.trim(value) do
       "canceled" -> {:ok, :cancelled}
       "cancelled" -> {:ok, :cancelled}
-      candidate -> cast_existing_atom(candidate)
+      candidate -> cast_lookup(candidate)
     end
   end
 
@@ -97,12 +98,11 @@ defmodule MezzanineOpsModel.RunStatus do
     end
   end
 
-  defp cast_existing_atom(value) do
-    value
-    |> String.to_existing_atom()
-    |> cast()
-  rescue
-    ArgumentError -> {:error, {:invalid_run_status, value}}
+  defp cast_lookup(value) do
+    case Map.fetch(@value_lookup, value) do
+      {:ok, status} -> {:ok, status}
+      :error -> {:error, {:invalid_run_status, value}}
+    end
   end
 end
 
@@ -110,6 +110,7 @@ defmodule MezzanineOpsModel.ReviewStatus do
   @moduledoc "Canonical review lifecycle vocabulary."
 
   @values [:pending, :in_review, :accepted, :rejected, :waived, :escalated]
+  @value_lookup Map.new(@values, &{Atom.to_string(&1), &1})
 
   @type t :: :pending | :in_review | :accepted | :rejected | :waived | :escalated
 
@@ -124,7 +125,7 @@ defmodule MezzanineOpsModel.ReviewStatus do
     case String.trim(value) do
       "approved" -> {:ok, :accepted}
       "accepted" -> {:ok, :accepted}
-      candidate -> cast_existing_atom(candidate)
+      candidate -> cast_lookup(candidate)
     end
   end
 
@@ -138,12 +139,11 @@ defmodule MezzanineOpsModel.ReviewStatus do
     end
   end
 
-  defp cast_existing_atom(value) do
-    value
-    |> String.to_existing_atom()
-    |> cast()
-  rescue
-    ArgumentError -> {:error, {:invalid_review_status, value}}
+  defp cast_lookup(value) do
+    case Map.fetch(@value_lookup, value) do
+      {:ok, status} -> {:ok, status}
+      :error -> {:error, {:invalid_review_status, value}}
+    end
   end
 end
 
@@ -171,6 +171,7 @@ defmodule MezzanineOpsModel.AuditEventKind do
     :grant_override_applied,
     :replan_requested
   ]
+  @value_lookup Map.new(@values, &{Atom.to_string(&1), &1})
 
   @type t ::
           :work_ingested
@@ -205,7 +206,7 @@ defmodule MezzanineOpsModel.AuditEventKind do
       "plan_compiled" -> {:ok, :work_planned}
       "run_requested" -> {:ok, :run_scheduled}
       "review_decided" -> {:ok, :review_accepted}
-      candidate -> cast_existing_atom(candidate)
+      candidate -> cast_lookup(candidate)
     end
   end
 
@@ -219,11 +220,10 @@ defmodule MezzanineOpsModel.AuditEventKind do
     end
   end
 
-  defp cast_existing_atom(value) do
-    value
-    |> String.to_existing_atom()
-    |> cast()
-  rescue
-    ArgumentError -> {:error, {:invalid_audit_event_kind, value}}
+  defp cast_lookup(value) do
+    case Map.fetch(@value_lookup, value) do
+      {:ok, kind} -> {:ok, kind}
+      :error -> {:error, {:invalid_audit_event_kind, value}}
+    end
   end
 end

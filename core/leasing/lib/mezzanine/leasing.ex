@@ -13,6 +13,25 @@ defmodule Mezzanine.Leasing do
   alias Mezzanine.Telemetry
 
   @invalidation_lock_sql "SELECT pg_advisory_xact_lock(hashtext('lease_invalidations.write'))"
+  @invalidation_result_columns %{
+    "activation_epoch" => :activation_epoch,
+    "cache_invalidation_ref" => :cache_invalidation_ref,
+    "execution_id" => :execution_id,
+    "id" => :id,
+    "inserted_at" => :inserted_at,
+    "installation_id" => :installation_id,
+    "installation_revision" => :installation_revision,
+    "invalidated_at" => :invalidated_at,
+    "lease_epoch" => :lease_epoch,
+    "lease_id" => :lease_id,
+    "lease_kind" => :lease_kind,
+    "reason" => :reason,
+    "revocation_ref" => :revocation_ref,
+    "sequence_number" => :sequence_number,
+    "subject_id" => :subject_id,
+    "tenant_id" => :tenant_id,
+    "trace_id" => :trace_id
+  }
 
   @type repo_option :: {:repo, module()}
   @type connection_option :: {:connection, pid()}
@@ -650,7 +669,8 @@ defmodule Mezzanine.Leasing do
 
   defp result_rows(%Postgrex.Result{columns: columns, rows: rows}) do
     Enum.map(rows, fn row ->
-      Enum.zip(columns, row) |> Map.new(fn {key, value} -> {String.to_atom(key), value} end)
+      Enum.zip(columns, row)
+      |> Map.new(fn {key, value} -> {Map.get(@invalidation_result_columns, key, key), value} end)
     end)
   end
 

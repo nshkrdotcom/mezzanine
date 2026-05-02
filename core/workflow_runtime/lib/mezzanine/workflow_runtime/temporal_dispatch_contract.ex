@@ -33,6 +33,10 @@ defmodule Mezzanine.WorkflowRuntime.TemporalDispatchContract do
     :replay_or_continuation_evidence_ref,
     :persisted_outcome_state_ref
   ]
+  @key_lookup Map.new(
+                @required_fields ++ [:dispatch_state, :workflow_run_id],
+                &{Atom.to_string(&1), &1}
+              )
 
   @forbidden [
     :raw_workflow_history_in_evidence,
@@ -276,9 +280,7 @@ defmodule Mezzanine.WorkflowRuntime.TemporalDispatchContract do
   defp normalize_key(key) when is_atom(key), do: key
 
   defp normalize_key(key) when is_binary(key) do
-    String.to_existing_atom(key)
-  rescue
-    ArgumentError -> key
+    Map.get(@key_lookup, key, key)
   end
 
   defp fetch!(map, key) do

@@ -59,6 +59,17 @@ defmodule Mezzanine.Execution.LifecycleContinuation do
 
   @type status :: :pending | :running | :retry_scheduled | :dead_lettered | :completed
   @type t :: %__MODULE__{}
+  @target_key_lookup %{
+    "idempotency_key" => :idempotency_key,
+    "kind" => :kind,
+    "owner" => :owner
+  }
+  @metadata_key_lookup %{
+    "audit_or_evidence_ref" => :audit_or_evidence_ref,
+    "causation_id" => :causation_id,
+    "compensation_ref" => :compensation_ref,
+    "dead_letter_ref" => :dead_letter_ref
+  }
 
   @required_fields [
     :continuation_id,
@@ -327,10 +338,10 @@ defmodule Mezzanine.Execution.LifecycleContinuation do
   defp compensation_owner(_target), do: "lifecycle_continuation"
 
   defp target_value(target, field),
-    do: Map.get(target, field) || Map.get(target, String.to_atom(field))
+    do: Map.get(target, field) || Map.get(target, Map.get(@target_key_lookup, field))
 
   defp metadata_value(metadata, field),
-    do: Map.get(metadata, field) || Map.get(metadata, String.to_atom(field))
+    do: Map.get(metadata, field) || Map.get(metadata, Map.get(@metadata_key_lookup, field))
 
   defp claim_for_processing(continuation_id, now) do
     Repo.transaction(fn ->

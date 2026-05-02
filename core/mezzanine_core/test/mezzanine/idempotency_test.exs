@@ -141,7 +141,8 @@ defmodule Mezzanine.IdempotencyTest do
     canonical_key = canonical_root_key()
 
     expected_json =
-      ~s({"canonical_idempotency_key":"#{canonical_key}","scope":"activity","stable_ref":"activity-call-1"})
+      "{\"canonical_idempotency_key\":\"" <>
+        canonical_key <> "\",\"scope\":\"activity\",\"stable_ref\":\"activity-call-1\"}"
 
     expected_digest =
       :sha256

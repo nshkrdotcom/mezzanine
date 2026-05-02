@@ -20,6 +20,21 @@ defmodule Mezzanine.Memory.PromotionCoordinator do
   @workflow_input_version "memory-promotion-input.v1"
   @typed_queue_regex ~r/\Amez\.(?:promotion|workflow_runtime)\.([a-z2-7]{20})\z/
   @node_shortname_regex ~r/\A[A-Za-z0-9_.-]+\z/
+  @normalizable_keys [
+    :candidate_id,
+    :decision,
+    :decision_id,
+    :decision_ref,
+    :node_instance_id,
+    :node_shortname,
+    :reason,
+    :review_ref,
+    :review_refs,
+    :signal_name,
+    :signal_version,
+    :source_node_ref
+  ]
+  @key_lookup Map.new(@normalizable_keys, &{Atom.to_string(&1), &1})
 
   @type callback_opts :: keyword()
 
@@ -505,9 +520,7 @@ defmodule Mezzanine.Memory.PromotionCoordinator do
   defp normalize_key(key) when is_atom(key), do: key
 
   defp normalize_key(key) when is_binary(key) do
-    String.to_existing_atom(key)
-  rescue
-    ArgumentError -> key
+    Map.get(@key_lookup, key, key)
   end
 
   defp missing_required_strings(attrs, fields) do

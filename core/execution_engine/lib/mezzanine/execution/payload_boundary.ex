@@ -32,6 +32,27 @@ defmodule Mezzanine.Execution.PayloadBoundary do
     "oversize_action",
     "release_manifest_ref"
   ]
+  @artifact_ref_field_lookup %{
+    "artifact_id" => :artifact_id,
+    "content_hash" => :content_hash,
+    "content_hash_alg" => :content_hash_alg,
+    "byte_size" => :byte_size,
+    "schema_name" => :schema_name,
+    "schema_hash" => :schema_hash,
+    "schema_hash_alg" => :schema_hash_alg,
+    "media_type" => :media_type,
+    "producer_repo" => :producer_repo,
+    "tenant_scope" => :tenant_scope,
+    "sensitivity_class" => :sensitivity_class,
+    "store_security_posture_ref" => :store_security_posture_ref,
+    "encryption_posture_ref" => :encryption_posture_ref,
+    "retrieval_owner" => :retrieval_owner,
+    "existing_fetch_or_restore_path" => :existing_fetch_or_restore_path,
+    "safe_actions" => :safe_actions,
+    "queue_key" => :queue_key,
+    "oversize_action" => :oversize_action,
+    "release_manifest_ref" => :release_manifest_ref
+  }
 
   @phase5_lifecycle_fields ["storage_tier", "retention_class", "fetch_policy"]
   @raw_payload_fields [
@@ -338,9 +359,8 @@ defmodule Mezzanine.Execution.PayloadBoundary do
 
   defp blank?(value), do: is_nil(value) or value == "" or value == []
 
-  defp field_value(map, field) do
-    Map.get(map, field) || Map.get(map, String.to_atom(field))
-  end
+  defp field_value(map, field) when is_binary(field),
+    do: Map.get(map, field) || Map.get(map, Map.get(@artifact_ref_field_lookup, field))
 
   defp normalize_key(key) when is_atom(key), do: Atom.to_string(key)
   defp normalize_key(key) when is_binary(key), do: key

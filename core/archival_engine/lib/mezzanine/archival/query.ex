@@ -358,7 +358,7 @@ defmodule Mezzanine.Archival.Query do
   defp deep_atomize(value), do: value
 
   defp atomize_key(key) when is_atom(key), do: key
-  defp atomize_key(key) when is_binary(key), do: String.to_atom(key)
+  defp atomize_key(key) when is_binary(key), do: key
 
   defp dump_uuid!(value) when is_binary(value), do: Ecto.UUID.dump!(value)
 end

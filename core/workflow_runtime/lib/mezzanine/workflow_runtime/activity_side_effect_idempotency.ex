@@ -64,6 +64,25 @@ defmodule Mezzanine.WorkflowRuntime.ActivitySideEffectIdempotency do
     :temporalex_struct,
     :task_token
   ]
+  @normalizable_keys @required_activity_fields ++
+                       @lease_required_fields ++
+                       @routing_fact_fields ++
+                       @raw_payload_fields ++
+                       [
+                         :activity_type,
+                         :args,
+                         :contract_name,
+                         :deadline,
+                         :execution_intent_ref,
+                         :intent_id,
+                         :lower_submission_ref,
+                         :owner_repo,
+                         :result,
+                         :routing_facts,
+                         :semantic_ref,
+                         :submission_dedupe_key
+                       ]
+  @key_lookup Map.new(@normalizable_keys, &{Atom.to_string(&1), &1})
 
   @doc "M29 activity boundary registry consumed by Temporalex worker registration."
   @spec contract() :: map()
@@ -335,10 +354,8 @@ defmodule Mezzanine.WorkflowRuntime.ActivitySideEffectIdempotency do
 
   defp normalize(attrs) when is_map(attrs) do
     Map.new(attrs, fn
-      {key, value} when is_binary(key) -> {String.to_existing_atom(key), value}
+      {key, value} when is_binary(key) -> {Map.get(@key_lookup, key, key), value}
       pair -> pair
     end)
-  rescue
-    ArgumentError -> attrs
   end
 end

@@ -30,6 +30,8 @@ defmodule Mezzanine.ConfigRegistry.ClusterInvalidation do
     metadata: %{}
   ]
 
+  @commit_hlc_key_lookup %{"l" => :l, "n" => :n, "w" => :w}
+
   @type t :: %__MODULE__{
           invalidation_id: String.t(),
           tenant_ref: String.t(),
@@ -291,6 +293,9 @@ defmodule Mezzanine.ConfigRegistry.ClusterInvalidation do
   end
 
   defp fetch(map, key), do: Map.get(map, key) || Map.get(map, to_string(key))
-  defp map_get(map, key), do: Map.get(map, key) || Map.get(map, String.to_atom(key))
+
+  defp map_get(map, key) when is_binary(key),
+    do: Map.get(map, key) || Map.get(map, Map.get(@commit_hlc_key_lookup, key))
+
   defp field(key), do: "cluster_invalidation.#{key}"
 end

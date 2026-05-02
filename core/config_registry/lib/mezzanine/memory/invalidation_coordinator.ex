@@ -29,6 +29,28 @@ defmodule Mezzanine.Memory.InvalidationCoordinator do
     :invalidate_policy_ref
   ]
   @ordering_fields [:source_node_ref, :commit_lsn, :commit_hlc]
+  @normalizable_keys @required_string_fields ++
+                       @ordering_fields ++
+                       [
+                         :access_projection_hash,
+                         :applied_policies,
+                         :authority_ref,
+                         :effective_at,
+                         :effective_at_epoch,
+                         :evidence_refs,
+                         :fragment_id,
+                         :installation_ref,
+                         :kind,
+                         :parent_fragment_id,
+                         :policy_id,
+                         :reason,
+                         :reason_string,
+                         :tenant_ref,
+                         :tier,
+                         :trace_id,
+                         :version
+                       ]
+  @key_lookup Map.new(@normalizable_keys, &{Atom.to_string(&1), &1})
 
   @type callback_opts :: keyword()
   @type invalidation_result :: %{
@@ -481,9 +503,7 @@ defmodule Mezzanine.Memory.InvalidationCoordinator do
   defp normalize_key(key) when is_atom(key), do: key
 
   defp normalize_key(key) when is_binary(key) do
-    String.to_existing_atom(key)
-  rescue
-    ArgumentError -> key
+    Map.get(@key_lookup, key, key)
   end
 
   defp fetch(map, key) when is_map(map),

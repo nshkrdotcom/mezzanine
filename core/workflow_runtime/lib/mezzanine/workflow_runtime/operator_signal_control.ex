@@ -17,6 +17,46 @@ defmodule Mezzanine.WorkflowRuntime.OperatorSignalControl do
   alias Mezzanine.WorkflowSignalReceipt
 
   @release_manifest_ref "phase4-v6-milestone28-decision-timer-operator-signal-control"
+  @normalizable_keys [
+    :acknowledged_at,
+    :authority_packet_ref,
+    :command_id,
+    :correlation_id,
+    :dispatch_attempt_count,
+    :dispatch_state,
+    :idempotency_key,
+    :incident_bundle_ref,
+    :installation_ref,
+    :last_error_class,
+    :last_projection_event_ref,
+    :last_signal_sequence,
+    :operator_message,
+    :operator_ref,
+    :permission_decision_ref,
+    :projection_state,
+    :raw_history_event,
+    :raw_temporalex_result,
+    :release_manifest_ref,
+    :resource_ref,
+    :retry_after_ms,
+    :seen_signal_keys,
+    :signal_effect,
+    :signal_id,
+    :signal_name,
+    :signal_sequence,
+    :staleness_started_at,
+    :status,
+    :task_token,
+    :temporalex_struct,
+    :tenant_ref,
+    :trace_id,
+    :workflow_effect_state,
+    :workflow_event_ref,
+    :workflow_id,
+    :workflow_mode,
+    :workflow_ref
+  ]
+  @key_lookup Map.new(@normalizable_keys, &{Atom.to_string(&1), &1})
 
   @operator_signal_registry [
     %{
@@ -538,7 +578,7 @@ defmodule Mezzanine.WorkflowRuntime.OperatorSignalControl do
   end
 
   defp normalize_key(key) when is_atom(key), do: key
-  defp normalize_key(key) when is_binary(key), do: String.to_existing_atom(key)
+  defp normalize_key(key) when is_binary(key), do: Map.get(@key_lookup, key, key)
 
   defp missing_required(attrs, required), do: Enum.reject(required, &present?(Map.get(attrs, &1)))
 
@@ -559,6 +599,8 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowSignalOutboxWorker do
   use Oban.Worker, queue: :workflow_signal_outbox, max_attempts: 20
 
   alias Mezzanine.WorkflowRuntime.{OperatorSignalControl, OutboxPersistence}
+  @normalizable_keys [:idempotency_key, :signal_id, :workflow_id]
+  @key_lookup Map.new(@normalizable_keys, &{Atom.to_string(&1), &1})
 
   @impl true
   def perform(%Oban.Job{args: args}) do
@@ -592,7 +634,7 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowSignalOutboxWorker do
   end
 
   defp normalize_key(key) when is_atom(key), do: key
-  defp normalize_key(key) when is_binary(key), do: String.to_atom(key)
+  defp normalize_key(key) when is_binary(key), do: Map.get(@key_lookup, key, key)
 
   defp persist_signal_outcome(args, row, worker_result) do
     case OutboxPersistence.record_signal_outcome(args, row) do

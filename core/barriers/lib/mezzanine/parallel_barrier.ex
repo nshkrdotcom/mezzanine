@@ -35,6 +35,7 @@ defmodule Mezzanine.ParallelBarrier do
         }
 
   @status_values [:open, :ready, :closed]
+  @status_lookup Map.new(@status_values, &{Atom.to_string(&1), &1})
 
   @advance_barrier_sql """
   UPDATE parallel_barriers
@@ -400,7 +401,7 @@ defmodule Mezzanine.ParallelBarrier do
   end
 
   defp normalize_status(value) when is_atom(value), do: value
-  defp normalize_status(value) when is_binary(value), do: String.to_existing_atom(value)
+  defp normalize_status(value) when is_binary(value), do: Map.get(@status_lookup, value, value)
 
   defp fetch_key!(attrs, key) do
     case Map.fetch(attrs, key) do

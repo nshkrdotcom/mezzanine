@@ -82,6 +82,48 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowStarterOutbox do
     :terminal_invalid_workflow_start,
     :terminal_conflicting_duplicate_start
   ]
+  @workflow_name_lookup %{
+    "agent_loop" => :agent_loop,
+    "agent_run" => :agent_run,
+    "execution_attempt" => :execution_attempt,
+    "decision_review" => :decision_review,
+    "join_barrier" => :join_barrier,
+    "incident_reconstruction" => :incident_reconstruction,
+    "agent_loop_wake_and_pin" => :agent_loop_wake_and_pin,
+    "agent_loop_recall" => :agent_loop_recall,
+    "agent_loop_assemble_context" => :agent_loop_assemble_context,
+    "agent_loop_reflect" => :agent_loop_reflect,
+    "agent_loop_govern" => :agent_loop_govern,
+    "agent_loop_submit_lower_run" => :agent_loop_submit_lower_run,
+    "agent_loop_await_execution_outcome" => :agent_loop_await_execution_outcome,
+    "agent_loop_semanticize_outcome" => :agent_loop_semanticize_outcome,
+    "agent_loop_commit_private_memory" => :agent_loop_commit_private_memory,
+    "agent_loop_advance_turn" => :agent_loop_advance_turn,
+    "start_lower_execution" => :start_lower_execution,
+    "record_evidence" => :record_evidence,
+    "request_decision" => :request_decision,
+    "call_outer_brain" => :call_outer_brain,
+    "reconcile_lower_run" => :reconcile_lower_run,
+    "submit_jido_lower_activity" => :submit_jido_lower_activity,
+    "execution_side_effect_activity" => :execution_side_effect_activity,
+    "semantic_payload_boundary_activity" => :semantic_payload_boundary_activity,
+    "compensate_cancelled_run" => :compensate_cancelled_run,
+    "cleanup_workspace" => :cleanup_workspace,
+    "publish_source" => :publish_source,
+    "materialize_evidence" => :materialize_evidence,
+    "create_review" => :create_review
+  }
+  @normalizable_keys @required_fields ++
+                       @correlation_fields ++
+                       @operator_projection_fields ++
+                       [
+                         :last_error_class,
+                         :payload_ref,
+                         :retry_count,
+                         :workflow_run_id,
+                         :oban_job_ref
+                       ]
+  @key_lookup Map.new(@normalizable_keys, &{Atom.to_string(&1), &1})
 
   @doc "Static resource shape required by Scenario 91 and Scenario 92."
   @spec schema_contract() :: map()
@@ -409,9 +451,7 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowStarterOutbox do
   defp workflow_name(workflow_type) when is_binary(workflow_type) do
     workflow_type
     |> String.replace("-", "_")
-    |> String.to_existing_atom()
-  rescue
-    ArgumentError -> :agent_run
+    |> then(&Map.get(@workflow_name_lookup, &1, :agent_run))
   end
 
   defp normalize(attrs) when is_list(attrs), do: attrs |> Map.new() |> normalize_keys()
@@ -425,7 +465,7 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowStarterOutbox do
   end
 
   defp normalize_key(key) when is_atom(key), do: key
-  defp normalize_key(key) when is_binary(key), do: String.to_existing_atom(key)
+  defp normalize_key(key) when is_binary(key), do: Map.get(@key_lookup, key, key)
 
   defp missing_required(row), do: Enum.reject(@required_fields, &present?(Map.get(row, &1)))
 

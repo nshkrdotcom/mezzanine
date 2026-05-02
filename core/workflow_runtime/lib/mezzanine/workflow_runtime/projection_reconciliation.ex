@@ -58,6 +58,35 @@ defmodule Mezzanine.WorkflowRuntime.ProjectionReconciliation do
     :safe_operator_action,
     :release_manifest_ref
   ]
+  @normalizable_keys @profile_fields ++
+                       [
+                         :dispatch_attempt_count,
+                         :failure_class,
+                         :last_dispatch_error_kind,
+                         :last_dispatch_error_payload,
+                         :last_reconcile_wave_id,
+                         :next_dispatch_at,
+                         :postgres_state,
+                         :projection_state,
+                         :state_ref,
+                         :status,
+                         :submission_ref,
+                         :summary,
+                         :temporal_event_or_lifecycle_ahead_of_postgres_projection,
+                         :temporal_state_unknown,
+                         :temporal_terminal_event_ref,
+                         :temporal_terminal_status,
+                         :terminal_event_ref,
+                         :trace_id,
+                         :workflow_id,
+                         :workflow_input_version,
+                         :workflow_ref,
+                         :workflow_run_id,
+                         :workflow_state,
+                         :workflow_type,
+                         :workflow_version
+                       ]
+  @key_lookup Map.new(@normalizable_keys, &{Atom.to_string(&1), &1})
 
   @row_classifications [
     %{
@@ -421,7 +450,7 @@ defmodule Mezzanine.WorkflowRuntime.ProjectionReconciliation do
     do: Map.new(attrs, fn {k, v} -> {normalize_key(k), v} end)
 
   defp normalize_key(key) when is_atom(key), do: key
-  defp normalize_key(key) when is_binary(key), do: String.to_existing_atom(key)
+  defp normalize_key(key) when is_binary(key), do: Map.get(@key_lookup, key, key)
 
   defp normalize_nested(attrs) when is_list(attrs), do: attrs |> Map.new() |> normalize_nested()
   defp normalize_nested(%_{} = struct), do: struct |> Map.from_struct() |> normalize_nested()

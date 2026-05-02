@@ -25,6 +25,87 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     "operator.replan",
     "operator.rework"
   ]
+  @normalizable_keys [
+    :actor_ref,
+    :allowed_operations,
+    :allowed_tools,
+    :authority_packet_ref,
+    :boundary_class,
+    :capability,
+    :citadel_authority,
+    :command_id,
+    :command_receipt_ref,
+    :correlation_id,
+    :decision_hash,
+    :dispatch_state,
+    :downstream_scope,
+    :evidence_artifact_refs,
+    :evidence_ref,
+    :execution_id,
+    :expected_installation_revision,
+    :failure,
+    :id,
+    :installation_id,
+    :installation_revision,
+    :intent_id,
+    :last_receipt_ref,
+    :lower_attempt_ref,
+    :lower_event_ref,
+    :lower_receipt_ref,
+    :lower_run_ref,
+    :lower_submission_ref,
+    :max_turns,
+    :permission_decision_ref,
+    :policy_epoch,
+    :policy_pack_id,
+    :policy_refs,
+    :policy_version,
+    :program_id,
+    :provider_object_refs,
+    :raw_history_event,
+    :raw_temporalex_result,
+    :receipt_state,
+    :release_manifest_ref,
+    :required_evidence,
+    :resource_ref,
+    :review_ref,
+    :review_required,
+    :risk_hints,
+    :routing_facts,
+    :routing_tags,
+    :runtime_class,
+    :scope_kind,
+    :seen_signal_keys,
+    :service_id,
+    :signal_id,
+    :signal_state,
+    :source_publish_ref,
+    :source_state,
+    :source_terminal,
+    :stall_timeout_ms,
+    :status,
+    :subject_id,
+    :subject_ref,
+    :substrate_trace_id,
+    :target_id,
+    :target_kind,
+    :task_token,
+    :temporalex_struct,
+    :tenant_ref,
+    :terminal_event_ref,
+    :terminal_state,
+    :trace_id,
+    :turn_count,
+    :workflow_id,
+    :workflow_run_id,
+    :workflow_state,
+    :workspace_cleanup_policy,
+    :workspace_mutability,
+    :workspace_ref,
+    :workspace_root
+  ]
+  @key_lookup Map.new(@normalizable_keys, &{Atom.to_string(&1), &1})
+  @routing_atom_lookup %{"session" => :session, "workflow" => :workflow}
 
   @activity_sequence [
     :compile_citadel_authority,
@@ -852,7 +933,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     routing
     |> normalize()
     |> Map.new(fn
-      {key, value} when is_binary(key) -> {String.to_atom(key), value}
+      {key, value} when is_binary(key) -> {Map.get(@key_lookup, key, key), value}
       pair -> pair
     end)
   end
@@ -895,7 +976,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
   defp routing_atom(routing, key, default) do
     case Map.get(routing, key, default) do
       value when is_atom(value) -> value
-      value when is_binary(value) -> String.to_atom(value)
+      value when is_binary(value) -> Map.get(@routing_atom_lookup, value, default)
       _other -> default
     end
   end
@@ -911,7 +992,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
   end
 
   defp normalize_key(key) when is_atom(key), do: key
-  defp normalize_key(key) when is_binary(key), do: String.to_existing_atom(key)
+  defp normalize_key(key) when is_binary(key), do: Map.get(@key_lookup, key, key)
 
   defp missing_required(attrs, required), do: Enum.reject(required, &present?(Map.get(attrs, &1)))
 

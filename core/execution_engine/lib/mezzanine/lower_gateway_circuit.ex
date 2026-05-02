@@ -9,6 +9,7 @@ defmodule Mezzanine.LowerGatewayCircuit do
   alias Mezzanine.Telemetry
 
   @states [:closed, :open, :half_open]
+  @state_lookup Map.new(@states, &{Atom.to_string(&1), &1})
   @cache_ttl_ms 1_000
   @failure_threshold 5
   @failure_window_seconds 30
@@ -460,10 +461,7 @@ defmodule Mezzanine.LowerGatewayCircuit do
   defp load_state(value) when is_atom(value) and value in @states, do: value
 
   defp load_state(value) when is_binary(value) do
-    value
-    |> String.to_existing_atom()
-  rescue
-    ArgumentError -> :closed
+    Map.get(@state_lookup, value, :closed)
   end
 
   defp normalize_datetime(nil), do: nil

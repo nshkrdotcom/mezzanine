@@ -12,6 +12,7 @@ defmodule Mezzanine.Execution.CompensationEvidence do
 
   @event_kinds [:retry_scheduled, :dead_lettered, :operator_action]
   @event_kind_by_string Map.new(@event_kinds, &{Atom.to_string(&1), &1})
+  @metadata_key_lookup %{"compensation_evidence" => :compensation_evidence}
 
   @common_required_fields [
     :compensation_ref,
@@ -261,7 +262,7 @@ defmodule Mezzanine.Execution.CompensationEvidence do
     do: Map.get(attrs, field) || Map.get(attrs, Atom.to_string(field))
 
   defp metadata_value(metadata, field),
-    do: Map.get(metadata, field) || Map.get(metadata, String.to_atom(field))
+    do: Map.get(metadata, field) || Map.get(metadata, Map.get(@metadata_key_lookup, field))
 
   defp present?(value) when is_binary(value), do: String.trim(value) != ""
   defp present?(value) when is_map(value), do: map_size(value) > 0

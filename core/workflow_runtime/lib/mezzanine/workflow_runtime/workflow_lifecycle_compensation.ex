@@ -39,6 +39,17 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowLifecycleCompensation do
 
   @forbidden_target_kinds ["owner_command", "local_mutation", "lifecycle_continuation_handler"]
   @required_target_fields ["workflow_id", "idempotency_key"]
+  @target_key_lookup %{
+    "activity" => :activity,
+    "idempotency_key" => :idempotency_key,
+    "kind" => :kind,
+    "signal" => :signal,
+    "signal_id" => :signal_id,
+    "signal_payload_hash" => :signal_payload_hash,
+    "signal_payload_ref" => :signal_payload_ref,
+    "workflow_id" => :workflow_id,
+    "workflow_run_id" => :workflow_run_id
+  }
 
   @spec profile() :: map()
   def profile do
@@ -271,7 +282,7 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowLifecycleCompensation do
     do: Map.get(attrs, field) || Map.get(attrs, Atom.to_string(field))
 
   defp target_value(target, field) when is_binary(field),
-    do: Map.get(target, field) || Map.get(target, String.to_atom(field))
+    do: Map.get(target, field) || Map.get(target, Map.get(@target_key_lookup, field))
 
   defp sanitize_runtime_receipt(receipt) do
     receipt

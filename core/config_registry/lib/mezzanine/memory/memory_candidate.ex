@@ -61,6 +61,7 @@ defmodule Mezzanine.Memory.MemoryCandidate.V1 do
     :quarantined?,
     :metadata
   ]
+  @field_lookup Map.new(@fields, &{Atom.to_string(&1), &1})
 
   @enforce_keys @fields
   defstruct @fields
@@ -170,12 +171,7 @@ defmodule Mezzanine.Memory.MemoryCandidate.V1 do
   defp normalize_key(key) when is_atom(key), do: key
 
   defp normalize_key(key) when is_binary(key) do
-    case key do
-      "quarantined?" -> :quarantined?
-      _other -> String.to_existing_atom(key)
-    end
-  rescue
-    ArgumentError -> key
+    Map.get(@field_lookup, key, key)
   end
 
   defp ordering_string(attrs, field) do

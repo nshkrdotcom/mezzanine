@@ -12,6 +12,8 @@ defmodule Mezzanine.ControlRoom.IncidentExportBundle do
 
   @redaction_statuses [:redacted, :redacted_with_omissions]
   @export_formats [:json, :ndjson, :zip]
+  @redaction_status_lookup Map.new(@redaction_statuses, &{Atom.to_string(&1), &1})
+  @export_format_lookup Map.new(@export_formats, &{Atom.to_string(&1), &1})
 
   @required_binary_fields [
     :tenant_ref,
@@ -50,6 +52,18 @@ defmodule Mezzanine.ControlRoom.IncidentExportBundle do
     :provider_secret,
     :unredacted_payload
   ]
+  @normalizable_fields @required_binary_fields ++
+                         @optional_binary_fields ++
+                         @forbidden_raw_fields ++
+                         [
+                           :artifact_refs,
+                           :included_ref_set,
+                           :metadata,
+                           :omitted_field_refs,
+                           :export_format,
+                           :redaction_status
+                         ]
+  @field_lookup Map.new(@normalizable_fields, &{Atom.to_string(&1), &1})
 
   @enforce_keys [
     :contract_name,
@@ -250,7 +264,7 @@ defmodule Mezzanine.ControlRoom.IncidentExportBundle do
 
   defp normalize_attrs(attrs) do
     Map.new(attrs, fn
-      {key, value} when is_binary(key) -> {String.to_atom(key), value}
+      {key, value} when is_binary(key) -> {Map.get(@field_lookup, key, key), value}
       {key, value} -> {key, value}
     end)
   end
@@ -264,11 +278,16 @@ defmodule Mezzanine.ControlRoom.IncidentExportBundle do
   end
 
   defp normalize_enum(value, allowed) when is_binary(value) do
-    value
-    |> String.to_existing_atom()
-    |> normalize_enum(allowed)
-  rescue
-    ArgumentError -> {:error, {:invalid_enum, value, allowed}}
+    lookup =
+      cond do
+        allowed == @redaction_statuses -> @redaction_status_lookup
+        allowed == @export_formats -> @export_format_lookup
+      end
+
+    case Map.fetch(lookup, value) do
+      {:ok, normalized} -> {:ok, normalized}
+      :error -> {:error, {:invalid_enum, value, allowed}}
+    end
   end
 
   defp normalize_enum(value, allowed), do: {:error, {:invalid_enum, value, allowed}}

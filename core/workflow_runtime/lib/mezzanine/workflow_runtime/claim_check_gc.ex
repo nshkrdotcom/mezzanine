@@ -8,6 +8,16 @@ defmodule Mezzanine.WorkflowRuntime.ClaimCheckGc do
 
   @queue :claim_check_gc
   @contract "Mezzanine.ClaimCheckGcLocalJob.v1"
+  @normalizable_keys [
+    :correlation_id,
+    :installation_ref,
+    :release_manifest_ref,
+    :retention_policy_ref,
+    :sweep_ref,
+    :tenant_ref,
+    :trace_id
+  ]
+  @key_lookup Map.new(@normalizable_keys, &{Atom.to_string(&1), &1})
 
   @doc "Static retained-local-job contract."
   @spec contract() :: map()
@@ -74,7 +84,7 @@ defmodule Mezzanine.WorkflowRuntime.ClaimCheckGc do
   defp normalize(attrs) when is_list(attrs), do: attrs |> Map.new() |> normalize()
 
   defp normalize_key(key) when is_atom(key), do: key
-  defp normalize_key(key) when is_binary(key), do: String.to_atom(key)
+  defp normalize_key(key) when is_binary(key), do: Map.get(@key_lookup, key, key)
 
   defp missing(attrs, required), do: Enum.reject(required, &present?(attrs, &1))
 

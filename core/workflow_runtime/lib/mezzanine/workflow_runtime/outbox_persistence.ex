@@ -69,6 +69,17 @@ defmodule Mezzanine.WorkflowRuntime.OutboxPersistence.SQL do
     updated_at = now()
   WHERE outbox_id = $1
   """
+  @normalizable_keys [
+    :dispatch_attempt_count,
+    :dispatch_state,
+    :last_error_class,
+    :outbox_id,
+    :projection_state,
+    :retry_count,
+    :workflow_effect_state,
+    :workflow_run_id
+  ]
+  @key_lookup Map.new(@normalizable_keys, &{Atom.to_string(&1), &1})
 
   @impl true
   def record_start_outcome(original_row, outcome_row) do
@@ -129,7 +140,7 @@ defmodule Mezzanine.WorkflowRuntime.OutboxPersistence.SQL do
   end
 
   defp normalize_key(key) when is_atom(key), do: key
-  defp normalize_key(key) when is_binary(key), do: String.to_existing_atom(key)
+  defp normalize_key(key) when is_binary(key), do: Map.get(@key_lookup, key, key)
 
   defp fetch!(map, key) do
     case Map.fetch(map, key) do

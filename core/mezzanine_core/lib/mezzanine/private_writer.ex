@@ -25,11 +25,9 @@ defmodule Mezzanine.PrivateWriter.CommitRequest do
   @redaction_classes [
     :claim_checked,
     :public_summary,
-    :redacted,
-    "claim_checked",
-    "public_summary",
-    "redacted"
+    :redacted
   ]
+  @redaction_class_lookup Map.new(@redaction_classes, &{Atom.to_string(&1), &1})
 
   @enforce_keys @required
   defstruct @fields
@@ -49,7 +47,7 @@ defmodule Mezzanine.PrivateWriter.CommitRequest do
          true <- non_empty_list_of_refs?(Support.required(attrs, :source_observation_refs)),
          true <- non_empty_list_of_refs?(Support.required(attrs, :claim_check_refs)),
          true <- present_string?(Support.required(attrs, :idempotency_key)),
-         redaction_class <- Support.required(attrs, :redaction_class),
+         redaction_class <- normalize_atom(Support.required(attrs, :redaction_class)),
          true <- redaction_class in @redaction_classes,
          candidate_facts <- Support.optional(attrs, :candidate_facts, []),
          :ok <- AcceptancePolicy.validate_candidate_facts(candidate_facts) do
@@ -58,7 +56,7 @@ defmodule Mezzanine.PrivateWriter.CommitRequest do
          __MODULE__,
          attrs
          |> values(@fields)
-         |> Map.put(:redaction_class, normalize_atom(redaction_class))
+         |> Map.put(:redaction_class, redaction_class)
          |> Map.put(:candidate_facts, candidate_facts)
        )}
     else
@@ -93,7 +91,10 @@ defmodule Mezzanine.PrivateWriter.CommitRequest do
     do: is_list(values) and values != [] and Enum.all?(values, &Support.safe_ref?/1)
 
   defp present_string?(value), do: is_binary(value) and String.trim(value) != ""
-  defp normalize_atom(value) when is_binary(value), do: String.to_existing_atom(value)
+
+  defp normalize_atom(value) when is_binary(value),
+    do: Map.get(@redaction_class_lookup, value, value)
+
   defp normalize_atom(value), do: value
   defp values(attrs, fields), do: Map.new(fields, &{&1, Support.optional(attrs, &1)})
   defp bang({:ok, value}), do: value

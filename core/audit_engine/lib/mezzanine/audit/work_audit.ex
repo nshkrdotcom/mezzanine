@@ -7,6 +7,7 @@ defmodule Mezzanine.Audit.WorkAudit do
   require Ash.Query
 
   alias Mezzanine.Evidence.{AuditEvent, EvidenceBundle, TimelineProjection}
+  @presence_lookup %{"missing" => :missing, "present" => :present}
 
   @type timeline_row :: %{
           event_id: String.t(),
@@ -388,7 +389,10 @@ defmodule Mezzanine.Audit.WorkAudit do
   end
 
   defp normalize_presence(value) when is_atom(value), do: value
-  defp normalize_presence(value) when is_binary(value), do: String.to_existing_atom(value)
+
+  defp normalize_presence(value) when is_binary(value),
+    do: Map.get(@presence_lookup, value, value)
+
   defp normalize_presence(value), do: value
 
   defp maybe_stringify(nil), do: nil

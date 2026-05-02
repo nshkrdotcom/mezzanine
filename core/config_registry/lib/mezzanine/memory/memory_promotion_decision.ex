@@ -24,6 +24,7 @@ defmodule Mezzanine.Memory.MemoryPromotionDecision.V1 do
     :decided_at,
     :metadata
   ]
+  @field_lookup Map.new(@fields, &{Atom.to_string(&1), &1})
 
   @enforce_keys @fields
   defstruct @fields
@@ -125,9 +126,7 @@ defmodule Mezzanine.Memory.MemoryPromotionDecision.V1 do
   defp normalize_key(key) when is_atom(key), do: key
 
   defp normalize_key(key) when is_binary(key) do
-    String.to_existing_atom(key)
-  rescue
-    ArgumentError -> key
+    Map.get(@field_lookup, key, key)
   end
 
   defp normalize_decision(decision) when decision in @decisions, do: {:ok, decision}

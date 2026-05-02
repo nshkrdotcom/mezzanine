@@ -42,6 +42,11 @@ defmodule Mezzanine.ControlRoom.ForensicReplay do
     :provider_secret,
     :unredacted_payload
   ]
+  @normalizable_fields @required_binary_fields ++
+                         @actor_fields ++
+                         @forbidden_raw_fields ++
+                         [:ordered_event_refs, :missing_ref_set, :evidence_refs, :metadata]
+  @field_lookup Map.new(@normalizable_fields, &{Atom.to_string(&1), &1})
 
   @enforce_keys [
     :contract_name,
@@ -216,7 +221,7 @@ defmodule Mezzanine.ControlRoom.ForensicReplay do
 
   defp normalize_attrs(attrs) do
     Map.new(attrs, fn
-      {key, value} when is_binary(key) -> {String.to_atom(key), value}
+      {key, value} when is_binary(key) -> {Map.get(@field_lookup, key, key), value}
       {key, value} -> {key, value}
     end)
   end

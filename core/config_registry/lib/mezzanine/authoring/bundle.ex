@@ -216,7 +216,7 @@ defmodule Mezzanine.Authoring.Bundle do
       canonicalize(value) != canonicalize(manifest_value) ->
         [
           issue(
-            :"#{field}_mismatch",
+            echo_mismatch_kind(field),
             [field],
             "bundle field must match the serialized pack manifest"
           )
@@ -364,6 +364,10 @@ defmodule Mezzanine.Authoring.Bundle do
       | issues
     ]
   end
+
+  defp echo_mismatch_kind("lifecycle_specs"), do: :lifecycle_specs_mismatch
+  defp echo_mismatch_kind("decision_specs"), do: :decision_specs_mismatch
+  defp echo_mismatch_kind(_field), do: :manifest_echo_mismatch
 
   defp validate_observer_descriptors(issues, attrs) do
     descriptors = attrs["observer_descriptors"]

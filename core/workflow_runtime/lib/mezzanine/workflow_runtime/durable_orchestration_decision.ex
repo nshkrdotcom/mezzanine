@@ -402,7 +402,6 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
     :terminal_class,
     :next_step
   ]
-
   @operator_signal_registry [
     %{
       signal_name: "operator.cancel",
@@ -996,6 +995,45 @@ end
 defmodule Mezzanine.Workflows.Support do
   @moduledoc false
 
+  @payload_keys [
+    :tenant_ref,
+    :command_id,
+    :workflow_id,
+    :resource_ref,
+    :trace_id,
+    :activity_result_refs,
+    :lower_refs,
+    :semantic_refs,
+    :review_refs,
+    :projection_refs,
+    :routing_facts,
+    :status_summary,
+    :raw_prompt,
+    :raw_provider_body,
+    :raw_context_pack,
+    :raw_artifact,
+    :raw_lower_log,
+    :authority_packet_body,
+    :claim_check_body,
+    :temporal_protobuf,
+    :temporalex_struct,
+    :nif_resource,
+    :task_token,
+    :raw_history_event,
+    :review_required,
+    :semantic_score,
+    :confidence_band,
+    :risk_band,
+    :schema_validation_state,
+    :normalization_warning_count,
+    :semantic_retry_class,
+    :terminal_class,
+    :next_step,
+    :status,
+    :state_ref
+  ]
+  @payload_key_lookup Map.new(@payload_keys, &{Atom.to_string(&1), &1})
+
   @spec compact_result(atom(), term()) :: map()
   @spec compact_result(atom(), term(), map()) :: map()
   def compact_result(workflow_type, input, extra \\ %{}) do
@@ -1025,11 +1063,9 @@ defmodule Mezzanine.Workflows.Support do
 
   def normalize_payload(payload) when is_map(payload) do
     Map.new(payload, fn
-      {key, value} when is_binary(key) -> {String.to_existing_atom(key), value}
+      {key, value} when is_binary(key) -> {Map.get(@payload_key_lookup, key, key), value}
       pair -> pair
     end)
-  rescue
-    ArgumentError -> payload
   end
 
   defp map_value(input, key, default \\ nil)

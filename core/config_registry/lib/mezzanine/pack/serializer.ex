@@ -35,6 +35,22 @@ defmodule Mezzanine.Pack.Serializer do
     "memory_profile_ref" => :memory_profile_ref,
     "projection_profile_ref" => :projection_profile_ref
   }
+  @serialized_map_key_lookup %{
+    "amount_cents" => :amount_cents,
+    "backoff" => :backoff,
+    "cleanup" => :cleanup,
+    "max_attempts" => :max_attempts,
+    "receipt_required" => :receipt_required,
+    "rekey_on" => :rekey_on,
+    "reuse" => :reuse,
+    "root_ref" => :root_ref,
+    "strategy" => :strategy,
+    "tools" => :tools
+  }
+  @hook_stage_lookup %{
+    "after_turn" => :after_turn,
+    "prepare_workspace" => :prepare_workspace
+  }
 
   @spec version() :: pos_integer()
   def version, do: @format_version
@@ -339,7 +355,7 @@ defmodule Mezzanine.Pack.Serializer do
       sandbox_policy_ref: payload["sandbox_policy_ref"],
       prompt_refs: payload_list(payload, "prompt_refs"),
       dynamic_tool_manifest: deserialize_map(payload_map(payload, "dynamic_tool_manifest")),
-      hook_stages: payload |> payload_list("hook_stages") |> deserialize_existing_atom_list(),
+      hook_stages: payload |> payload_list("hook_stages") |> deserialize_hook_stages(),
       max_turns: payload["max_turns"],
       stall_timeout_ms: payload["stall_timeout_ms"],
       dispatch_ref_requirements:
@@ -459,9 +475,11 @@ defmodule Mezzanine.Pack.Serializer do
   defp deserialize_guard(nil), do: nil
 
   defp deserialize_guard(payload) do
+    module = deserialize_module(payload["module"])
+
     %{
-      module: deserialize_module(payload["module"]),
-      function: String.to_existing_atom(payload["function"])
+      module: module,
+      function: deserialize_function(module, payload["function"])
     }
   end
 
@@ -718,10 +736,24 @@ defmodule Mezzanine.Pack.Serializer do
   defp deserialize_module(nil), do: nil
 
   defp deserialize_module(module_name) when is_binary(module_name) do
-    String.to_existing_atom(module_name)
+    Module.safe_concat([module_name])
   rescue
     ArgumentError -> nil
   end
+
+  defp deserialize_function(module, function_name)
+       when is_atom(module) and is_binary(function_name) do
+    module.__info__(:functions)
+    |> Keyword.keys()
+    |> Enum.find(&(Atom.to_string(&1) == function_name))
+    |> case do
+      nil -> raise ArgumentError, "unexpected function value: #{function_name}"
+      function -> function
+    end
+  end
+
+  defp deserialize_function(_module, function_name) when is_binary(function_name),
+    do: raise(ArgumentError, "unexpected function value: #{function_name}")
 
   defp payload_map(payload, key) do
     case Map.get(payload, key) do
@@ -801,9 +833,7 @@ defmodule Mezzanine.Pack.Serializer do
   defp serialize_map_key(key), do: key
 
   defp deserialize_map_key(key) when is_binary(key) do
-    String.to_existing_atom(key)
-  rescue
-    ArgumentError -> key
+    Map.get(@serialized_map_key_lookup, key, key)
   end
 
   defp deserialize_map_key(key), do: key
@@ -853,10 +883,16 @@ defmodule Mezzanine.Pack.Serializer do
     ])
   end
 
-  defp deserialize_existing_atom_list(values) when is_list(values) do
+  defp deserialize_hook_stages(values) when is_list(values) do
     Enum.map(values, fn
-      value when is_atom(value) -> value
-      value when is_binary(value) -> String.to_existing_atom(value)
+      value when is_atom(value) ->
+        value
+
+      value when is_binary(value) ->
+        case Map.fetch(@hook_stage_lookup, value) do
+          {:ok, hook_stage} -> hook_stage
+          :error -> raise ArgumentError, "unexpected hook stage value: #{value}"
+        end
     end)
   end
 

@@ -18,6 +18,47 @@ defmodule Mezzanine.WorkflowRuntime.TemporalexAdapter do
   alias Mezzanine.WorkflowStartReceipt
 
   @default_timeout_ms 10_000
+  @normalizable_keys [
+    :args,
+    :authority_packet_ref,
+    :command_id,
+    :connection,
+    :correlation_id,
+    :id,
+    :idempotency_key,
+    :memo,
+    :operation,
+    :permission_decision_ref,
+    :query_name,
+    :raw_history_event,
+    :raw_temporalex_result,
+    :reason,
+    :release_manifest_ref,
+    :resource_ref,
+    :retry_policy,
+    :run_id,
+    :search_attributes,
+    :signal_id,
+    :signal_name,
+    :signal_payload_hash,
+    :signal_payload_ref,
+    :signal_version,
+    :state_ref,
+    :status,
+    :task_queue,
+    :task_token,
+    :temporal_connection,
+    :temporalex_struct,
+    :tenant_ref,
+    :timeout_ms,
+    :trace_id,
+    :workflow_id,
+    :workflow_module,
+    :workflow_run_id,
+    :workflow_type,
+    :workflow_version
+  ]
+  @key_lookup Map.new(@normalizable_keys, &{Atom.to_string(&1), &1})
 
   @impl true
   def start_workflow(request) do
@@ -312,7 +353,7 @@ defmodule Mezzanine.WorkflowRuntime.TemporalexAdapter do
   end
 
   defp normalize_key(key) when is_atom(key), do: key
-  defp normalize_key(key) when is_binary(key), do: String.to_atom(key)
+  defp normalize_key(key) when is_binary(key), do: Map.get(@key_lookup, key, key)
 
   defp normalize_error({:temporalex, reason}, request), do: normalize_error(reason, request)
 

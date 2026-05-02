@@ -518,12 +518,17 @@ defmodule MezzanineConfigRegistryTest do
     pack_slug = Keyword.get(opts, :pack_slug, :expense_approval)
     version = Keyword.get(opts, :version, "1.0.0")
     subject_kind = Keyword.get(opts, :subject_kind, :expense_request)
-    source_kind = Keyword.get(opts, :source_kind, :"#{subject_kind}_linear")
-    source_binding_ref = Keyword.get(opts, :source_binding_ref, :"#{subject_kind}_linear_primary")
-    source_publish_ref = Keyword.get(opts, :source_publish_ref, :"#{subject_kind}_progress")
-    recipe_ref = Keyword.get(opts, :recipe_ref, :"#{subject_kind}_capture")
-    terminal_state = Keyword.get(opts, :terminal_state, :"#{subject_kind}_done")
-    projection_name = Keyword.get(opts, :projection_name, :"active_#{subject_kind}")
+    source_kind = Keyword.get(opts, :source_kind, fixture_ref(subject_kind, "linear"))
+
+    source_binding_ref =
+      Keyword.get(opts, :source_binding_ref, fixture_ref(subject_kind, "linear_primary"))
+
+    source_publish_ref =
+      Keyword.get(opts, :source_publish_ref, fixture_ref(subject_kind, "progress"))
+
+    recipe_ref = Keyword.get(opts, :recipe_ref, fixture_ref(subject_kind, "capture"))
+    terminal_state = Keyword.get(opts, :terminal_state, fixture_ref(subject_kind, "done"))
+    projection_name = Keyword.get(opts, :projection_name, active_fixture_ref(subject_kind))
     required_lifecycle_hints = Keyword.get(opts, :required_lifecycle_hints, [])
 
     manifest = %Manifest{
@@ -630,6 +635,22 @@ defmodule MezzanineConfigRegistryTest do
       {:error, errors} -> raise "failed to compile registry fixture pack: #{inspect(errors)}"
     end
   end
+
+  defp fixture_ref(:expense_request, "linear"), do: :expense_request_linear
+  defp fixture_ref(:expense_request, "linear_primary"), do: :expense_request_linear_primary
+  defp fixture_ref(:expense_request, "progress"), do: :expense_request_progress
+  defp fixture_ref(:expense_request, "capture"), do: :expense_request_capture
+  defp fixture_ref(:expense_request, "done"), do: :expense_request_done
+  defp fixture_ref(:invoice_request, "linear"), do: :invoice_request_linear
+  defp fixture_ref(:invoice_request, "linear_primary"), do: :invoice_request_linear_primary
+  defp fixture_ref(:invoice_request, "progress"), do: :invoice_request_progress
+  defp fixture_ref(:invoice_request, "capture"), do: :invoice_request_capture
+  defp fixture_ref(:invoice_request, "done"), do: :invoice_request_done
+  defp fixture_ref(subject_kind, suffix), do: "#{subject_kind}_#{suffix}"
+
+  defp active_fixture_ref(:expense_request), do: :active_expense_request
+  defp active_fixture_ref(:invoice_request), do: :active_invoice_request
+  defp active_fixture_ref(subject_kind), do: "active_#{subject_kind}"
 
   defp governance_ref(id) do
     subject = %{

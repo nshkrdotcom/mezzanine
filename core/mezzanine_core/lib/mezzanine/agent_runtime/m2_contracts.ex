@@ -157,6 +157,7 @@ defmodule Mezzanine.AgentRuntime.AgentTurnState do
     :cancelled
   ]
   @terminal_states [:completed, :blocked, :failed, :cancelled]
+  @state_lookup Map.new(@states, &{Atom.to_string(&1), &1})
   @required [:turn_ref, :run_ref, :subject_ref, :turn_index, :state, :started_at, :trace_id]
   @fields @required ++
             [
@@ -255,7 +256,7 @@ defmodule Mezzanine.AgentRuntime.AgentTurnState do
   end
 
   defp state_index(state), do: Enum.find_index(@states, &(&1 == state)) || -1
-  defp normalize_atom(value) when is_binary(value), do: String.to_existing_atom(value)
+  defp normalize_atom(value) when is_binary(value), do: Map.get(@state_lookup, value, value)
   defp normalize_atom(value), do: value
 
   defp required_refs?(attrs, keys),
@@ -372,13 +373,9 @@ defmodule Mezzanine.AgentRuntime.ToolActionReceipt do
     :failed,
     :denied,
     :approval_required,
-    :skipped,
-    "succeeded",
-    "failed",
-    "denied",
-    "approval_required",
-    "skipped"
+    :skipped
   ]
+  @status_lookup Map.new(@statuses, &{Atom.to_string(&1), &1})
   @required [:receipt_ref, :action_ref, :turn_ref, :status, :trace_id]
   @fields @required ++
             [
@@ -399,7 +396,7 @@ defmodule Mezzanine.AgentRuntime.ToolActionReceipt do
          :ok <- reject_unknown(attrs, @fields),
          :ok <- Support.reject_unsafe(attrs, :invalid_tool_action_receipt),
          true <- required_refs?(attrs, [:receipt_ref, :action_ref, :turn_ref, :trace_id]),
-         status <- Support.required(attrs, :status),
+         status <- normalize_atom(Support.required(attrs, :status)),
          true <- status in @statuses,
          true <- optional_refs?(attrs, [:lower_receipt_ref, :redaction_ref]),
          output_artifact_refs <- Support.optional(attrs, :output_artifact_refs, []),
@@ -411,7 +408,7 @@ defmodule Mezzanine.AgentRuntime.ToolActionReceipt do
          __MODULE__,
          attrs
          |> values(@fields)
-         |> Map.put(:status, normalize_atom(status))
+         |> Map.put(:status, status)
          |> Map.put(:output_artifact_refs, output_artifact_refs)
          |> Map.put(:evidence_refs, evidence_refs)
        )}
@@ -433,7 +430,7 @@ defmodule Mezzanine.AgentRuntime.ToolActionReceipt do
   defp optional_ref?(nil), do: true
   defp optional_ref?(value), do: Support.safe_ref?(value)
   defp list_of_refs?(values), do: is_list(values) and Enum.all?(values, &Support.safe_ref?/1)
-  defp normalize_atom(value) when is_binary(value), do: String.to_existing_atom(value)
+  defp normalize_atom(value) when is_binary(value), do: Map.get(@status_lookup, value, value)
   defp normalize_atom(value), do: value
   defp values(attrs, fields), do: Map.new(fields, &{&1, Support.optional(attrs, &1)})
   defp bang({:ok, value}), do: value
@@ -462,14 +459,9 @@ defmodule Mezzanine.AgentRuntime.AgentLoopCommand do
     :submit_turn,
     :cancel,
     :replan,
-    :rework,
-    "approve",
-    "deny",
-    "submit_turn",
-    "cancel",
-    "replan",
-    "rework"
+    :rework
   ]
+  @kind_lookup Map.new(@kinds, &{Atom.to_string(&1), &1})
   @fields [
     :command_ref,
     :command_kind,
@@ -490,7 +482,7 @@ defmodule Mezzanine.AgentRuntime.AgentLoopCommand do
          :ok <- Support.reject_unsafe(attrs, :invalid_agent_loop_command),
          true <-
            required_refs?(attrs, [:command_ref, :run_ref, :actor_ref, :payload_ref, :trace_id]),
-         command_kind <- Support.required(attrs, :command_kind),
+         command_kind <- normalize_atom(Support.required(attrs, :command_kind)),
          true <- command_kind in @kinds,
          idempotency_key <- Support.required(attrs, :idempotency_key),
          true <- is_binary(idempotency_key) and String.trim(idempotency_key) != "" do
@@ -511,7 +503,7 @@ defmodule Mezzanine.AgentRuntime.AgentLoopCommand do
   defp required_refs?(attrs, keys),
     do: Enum.all?(keys, &(Support.required(attrs, &1) |> Support.safe_ref?()))
 
-  defp normalize_atom(value) when is_binary(value), do: String.to_existing_atom(value)
+  defp normalize_atom(value) when is_binary(value), do: Map.get(@kind_lookup, value, value)
   defp normalize_atom(value), do: value
   defp values(attrs, fields), do: Map.new(fields, &{&1, Support.optional(attrs, &1)})
   defp bang({:ok, value}), do: value
