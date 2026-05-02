@@ -37,7 +37,8 @@ The pre-activation gates reject:
 - observer descriptors without valid subscriber metadata
 - pack-authored platform migrations
 - checksum mismatch
-- signature mismatch when a signing key is configured
+- signing/signature verification is not a v1 release claim unless Phase 1
+  source-verifies signing modules and tests or Phase 7 implements signing
 - stale installation revision before runtime reload
 
 Bundle import does not load connector or context-adapter code and does not grant
@@ -45,11 +46,10 @@ pack authors any platform-table migration rights.
 
 ## Phase 4 Supply-Chain Evidence
 
-`ExtensionPackSignature` and `ExtensionPackBundle` are the Phase 4 formal
-evidence contracts for `Platform.ExtensionPackSignature.v1` and
-`Platform.ExtensionPackBundle.v1`. They require tenant, installation,
-workspace, project, environment, authority, idempotency, trace,
-release-manifest, pack, signature/schema, hash, rejection, and declared-resource
-scope before a pack authoring/import result can be counted in the release
-manifest. They are validation contracts only; they do not introduce a second
-pack model or load connector code.
+`ExtensionPackSignature` and `ExtensionPackBundle` are Phase 4 formal evidence
+contract candidates for `Platform.ExtensionPackSignature.v1` and
+`Platform.ExtensionPackBundle.v1`. Until the owning executable proofs are green,
+the v1 verified posture is checksum/schema validation. Signature verification
+remains a post-v1/new-contract candidate unless Phase 1 source-verifies signing
+modules and tests or Phase 7 implements signing. These contracts do not
+introduce a second pack model or load connector code.

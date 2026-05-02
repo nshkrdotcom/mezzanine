@@ -119,10 +119,13 @@ Current posture:
   workflow history, lower payloads, provider bodies, prompts, artifacts, or
   tenant-sensitive secrets
 - internal/operator pack authoring enters through deterministic
-  `Mezzanine.Authoring.Bundle` imports; the config registry validates checksum,
-  configured signature, policy refs, binding descriptors, lifecycle hints,
+  `Mezzanine.Authoring.Bundle` imports; the config registry validates
+  checksum/schema posture, policy refs, binding descriptors, lifecycle hints,
   trusted context adapter descriptors, and stale installation revision before
-  runtime activation
+  runtime activation. Authoring bundles are verified by checksum/schema
+  validation in v1 unless Phase 1 source-verifies signing/signature-verification
+  modules and tests or Phase 7 implements signing. Signature verification is a
+  post-v1/new-contract candidate until then.
 - the remaining `ops_*` packages are explicit semantic-host carryovers, not a
   reusable extension surface
 
@@ -137,9 +140,9 @@ mix ci
 
 ## Temporal developer environment
 
-Temporal CLI is expected to be available as `temporal` on this developer workstation for local durable-workflow development. Current provisioning is machine-level dotfiles setup, not a repo-local dependency.
-
-TODO: make Temporal ergonomics explicit for developers by adding repo-local setup scripts, version expectations, and fallback instructions so the tool is not silently assumed from the workstation.
+Temporal runtime development is managed from this repository through the
+repo-owned `just` workflow. Do not start ad hoc Temporal processes or rely on
+the `temporal` CLI as the implementation runbook.
 
 ## Native Temporal development substrate
 
