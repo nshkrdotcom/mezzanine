@@ -56,4 +56,23 @@ defmodule Mezzanine.WorkspaceEngine.WorkspaceRecord do
           safety_status: atom(),
           reuse?: boolean()
         }
+
+  @spec public_ref(t()) :: map()
+  def public_ref(%__MODULE__{} = record) do
+    %{
+      id: "workspace://#{record.workspace_id}",
+      workspace_id: record.workspace_id,
+      logical_ref: record.logical_ref,
+      display_label: record.subject_ref || record.subject_id,
+      path_redacted?: true,
+      metadata: %{
+        cleanup_policy: record.cleanup_policy,
+        placement_kind: record.placement_kind,
+        reuse?: record.reuse?,
+        safety_hash: record.safety_hash,
+        safety_status: record.safety_status,
+        status: record.status
+      }
+    }
+  end
 end

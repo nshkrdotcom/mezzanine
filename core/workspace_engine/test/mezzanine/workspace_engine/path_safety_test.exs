@@ -30,6 +30,29 @@ defmodule Mezzanine.WorkspaceEngine.PathSafetyTest do
     assert second.reuse? == true
   end
 
+  test "projects opaque workspace refs without concrete paths" do
+    root = tmp_dir()
+
+    assert {:ok, record} =
+             Allocator.reserve(%{
+               installation_id: "installation-1",
+               subject_id: "subject-1",
+               subject_ref: "linear:LIN-101",
+               workspace_root: root,
+               cleanup_policy: :on_terminal
+             })
+
+    public_ref = WorkspaceRecord.public_ref(record)
+
+    assert public_ref.id == "workspace://#{record.workspace_id}"
+    assert public_ref.path_redacted? == true
+    assert public_ref.metadata.safety_hash == record.safety_hash
+    assert public_ref.metadata.cleanup_policy == :on_terminal
+    refute Map.has_key?(public_ref, :concrete_path)
+    refute Map.has_key?(public_ref, :concrete_root)
+    refute inspect(public_ref) =~ root
+  end
+
   test "replaces a stale non-directory target under the workspace root" do
     root = tmp_dir()
     stale = Path.join(root, "linear_LIN-101")
