@@ -217,6 +217,49 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
     assert Repo.aggregate(Oban.Job, :count, :id) == 0
   end
 
+  test "advance/1 treats delayed retry executions as active after restart" do
+    installation = active_installation_fixture()
+
+    retry_due_at =
+      DateTime.utc_now() |> DateTime.add(120, :second) |> DateTime.truncate(:microsecond)
+
+    subject =
+      subject_fixture(%{
+        installation_id: installation.id,
+        source_ref: "expense:request:delayed-retry-active",
+        subject_kind: "expense_request",
+        lifecycle_state: "submitted",
+        payload: %{"amount_cents" => 12_500},
+        trace_id: "trace-delayed-retry-active",
+        causation_id: "cause-delayed-retry-active"
+      })
+
+    existing_execution =
+      active_delayed_execution_fixture(subject, installation, "trace-delayed-retry-active", %{
+        next_dispatch_at: retry_due_at,
+        submission_dedupe_key: "delayed-retry-active"
+      })
+
+    assert {:ok, result} =
+             LifecycleEvaluator.advance(
+               subject.id,
+               now: DateTime.utc_now() |> DateTime.truncate(:microsecond),
+               causation_id: "cause-delayed-retry-active:restart"
+             )
+
+    assert result.action == :noop
+    assert result.reason == :active_execution_present
+    assert result.subject_id == subject.id
+    assert execution_count(subject.id) == 1
+    assert workflow_start_outbox_count() == 0
+    assert Repo.aggregate(Oban.Job, :count, :id) == 0
+    assert %{lifecycle_state: "submitted"} = fetch_subject(subject.id)
+
+    assert {:ok, reloaded_execution} = Ash.get(ExecutionRecord, existing_execution.id)
+    assert reloaded_execution.dispatch_state == :in_flight
+    assert reloaded_execution.next_dispatch_at == retry_due_at
+  end
+
   test "advance/1 rejects missing Phase 2 opaque refs before execution and workflow effects" do
     [
       {default_execution_binding([]) |> Map.delete("authority_decision_ref"),
@@ -1001,6 +1044,73 @@ defmodule Mezzanine.LifecycleEvaluatorTest do
       )
 
     Enum.map(rows, fn [fact_kind] -> fact_kind end)
+  end
+
+  defp active_delayed_execution_fixture(subject, installation, trace_id, attrs) do
+    now = DateTime.utc_now() |> DateTime.truncate(:microsecond)
+    execution_id = Ecto.UUID.generate()
+
+    Repo.query!(
+      """
+      INSERT INTO execution_records (
+        id,
+        tenant_id,
+        installation_id,
+        subject_id,
+        recipe_ref,
+        compiled_pack_revision,
+        binding_snapshot,
+        dispatch_envelope,
+        intent_snapshot,
+        submission_dedupe_key,
+        trace_id,
+        causation_id,
+        dispatch_state,
+        dispatch_attempt_count,
+        next_dispatch_at,
+        submission_ref,
+        lower_receipt,
+        last_dispatch_error_kind,
+        last_dispatch_error_payload,
+        failure_kind,
+        supersedes_execution_id,
+        supersession_reason,
+        supersession_depth,
+        row_version,
+        inserted_at,
+        updated_at
+      )
+      VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'in_flight', 1, $13, $14,
+        $15, $16, $17, NULL, NULL, NULL, 0, 1, $18, $18
+      )
+      """,
+      [
+        dump_uuid!(execution_id),
+        "tenant-lifecycle-engine",
+        installation.id,
+        dump_uuid!(subject.id),
+        "expense_capture",
+        installation.compiled_pack_revision,
+        %{"placement_ref" => "local_runner"},
+        %{"recipe_ref" => "expense_capture"},
+        %{"recipe_ref" => "expense_capture"},
+        Map.fetch!(attrs, :submission_dedupe_key),
+        trace_id,
+        "cause:#{Map.fetch!(attrs, :submission_dedupe_key)}",
+        Map.fetch!(attrs, :next_dispatch_at),
+        %{},
+        %{},
+        "worker_crash",
+        %{"error" => %{"kind" => "worker_crash"}},
+        now
+      ]
+    )
+
+    %{
+      id: execution_id,
+      submission_dedupe_key: Map.fetch!(attrs, :submission_dedupe_key)
+    }
   end
 
   defp failed_execution_fixture(subject, installation, trace_id, attrs) do
