@@ -3,6 +3,8 @@ defmodule Mezzanine.LowerGateway do
   Execution-facing lower-gateway seam for durable dispatch and dedupe lookup.
   """
 
+  alias Mezzanine.GovernedRuntimeConfig
+
   @type dispatch_claim :: %{
           execution_id: Ecto.UUID.t(),
           tenant_id: String.t(),
@@ -61,29 +63,33 @@ defmodule Mezzanine.LowerGateway do
   @callback request_cancel(map(), String.t(), map()) :: cancel_result()
 
   @spec dispatch(dispatch_claim()) :: dispatch_result()
-  def dispatch(claim), do: implementation().dispatch(claim)
+  def dispatch(claim), do: implementation(claim, governed_default?: true).dispatch(claim)
 
   @spec lookup_submission(String.t(), String.t()) :: lookup_result()
   def lookup_submission(submission_dedupe_key, tenant_id) do
-    implementation().lookup_submission(submission_dedupe_key, tenant_id)
+    implementation(%{}).lookup_submission(submission_dedupe_key, tenant_id)
   end
 
   @spec fetch_execution_outcome(execution_lookup(), String.t()) :: outcome_result()
   def fetch_execution_outcome(execution_lookup, tenant_id)
       when is_map(execution_lookup) and is_binary(tenant_id) do
-    implementation().fetch_execution_outcome(execution_lookup, tenant_id)
+    implementation = implementation(execution_lookup, governed_default?: true)
+    implementation.fetch_execution_outcome(execution_lookup, tenant_id)
   end
 
   @spec request_cancel(map(), String.t(), map()) :: cancel_result()
   def request_cancel(submission_ref, tenant_id, reason) do
-    implementation().request_cancel(submission_ref, tenant_id, reason)
+    implementation = implementation(submission_ref, governed_default?: true)
+    implementation.request_cancel(submission_ref, tenant_id, reason)
   end
 
-  defp implementation do
-    Application.get_env(
+  defp implementation(attrs, opts \\ []) do
+    GovernedRuntimeConfig.module(
+      attrs,
       :mezzanine_execution_engine,
       :lower_gateway_impl,
-      Mezzanine.LowerGateway.Unconfigured
+      Mezzanine.LowerGateway.Unconfigured,
+      opts
     )
   end
 end

@@ -8,6 +8,7 @@ defmodule Mezzanine.WorkflowRuntime.TemporalexAdapter do
 
   @behaviour Mezzanine.WorkflowRuntime
 
+  alias Mezzanine.GovernedRuntimeConfig
   alias Mezzanine.WorkflowCancelReceipt
   alias Mezzanine.WorkflowDescription
   alias Mezzanine.WorkflowHistoryRef
@@ -47,6 +48,7 @@ defmodule Mezzanine.WorkflowRuntime.TemporalexAdapter do
     :status,
     :task_queue,
     :task_token,
+    :temporalex_boundary,
     :temporal_connection,
     :temporalex_struct,
     :tenant_ref,
@@ -69,7 +71,7 @@ defmodule Mezzanine.WorkflowRuntime.TemporalexAdapter do
          {:ok, task_queue} <- required(request, :task_queue),
          {:ok, args} <- required(request, :args),
          {:ok, handle} <-
-           boundary().start_workflow(
+           boundary(request).start_workflow(
              connection_for(request),
              workflow_module,
              args,
@@ -89,7 +91,7 @@ defmodule Mezzanine.WorkflowRuntime.TemporalexAdapter do
          {:ok, signal_name} <- required(request, :signal_name),
          {:ok, _receipt} <-
            normalize_ok(
-             boundary().signal_workflow(
+             boundary(request).signal_workflow(
                connection_for(request),
                workflow_id,
                signal_name,
@@ -116,7 +118,7 @@ defmodule Mezzanine.WorkflowRuntime.TemporalexAdapter do
     with {:ok, workflow_id} <- required(request, :workflow_id),
          {:ok, query_name} <- required(request, :query_name),
          {:ok, result} <-
-           boundary().query_workflow(
+           boundary(request).query_workflow(
              connection_for(request),
              workflow_id,
              query_name,
@@ -144,7 +146,11 @@ defmodule Mezzanine.WorkflowRuntime.TemporalexAdapter do
     with {:ok, workflow_id} <- required(request, :workflow_id),
          {:ok, _receipt} <-
            normalize_ok(
-             boundary().cancel_workflow(connection_for(request), workflow_id, call_opts(request))
+             boundary(request).cancel_workflow(
+               connection_for(request),
+               workflow_id,
+               call_opts(request)
+             )
            ) do
       {:ok,
        %WorkflowCancelReceipt{
@@ -164,7 +170,11 @@ defmodule Mezzanine.WorkflowRuntime.TemporalexAdapter do
 
     with {:ok, workflow_id} <- required(request, :workflow_id),
          {:ok, info} <-
-           boundary().describe_workflow(connection_for(request), workflow_id, call_opts(request)) do
+           boundary(request).describe_workflow(
+             connection_for(request),
+             workflow_id,
+             call_opts(request)
+           ) do
       {:ok,
        %WorkflowDescription{
          workflow_ref: workflow_ref(workflow_id, description_run_id(info, request)),
@@ -198,8 +208,14 @@ defmodule Mezzanine.WorkflowRuntime.TemporalexAdapter do
     end
   end
 
-  defp boundary do
-    Application.get_env(:mezzanine_workflow_runtime, :temporalex_boundary, TemporalexBoundary)
+  defp boundary(request) do
+    GovernedRuntimeConfig.module(
+      request,
+      :mezzanine_workflow_runtime,
+      :temporalex_boundary,
+      TemporalexBoundary,
+      governed_default?: true
+    )
   end
 
   defp connection_for(request) do

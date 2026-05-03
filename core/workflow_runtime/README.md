@@ -82,6 +82,12 @@ dev-logs`, `just temporal-ui`, and `just dev-down` from the Mezzanine root.
 Do not run raw `temporal server start-dev`, and do not run
 `just temporal-reset-confirm` without explicit approval.
 
+Application config for Temporal workers is a boot boundary. Governed workflow
+requests and activities must carry explicit runtime module overrides when they
+need non-default bridges, reducers, or Temporalex boundaries; otherwise the
+compiled Mezzanine defaults are used and runtime application config cannot
+redirect provider dispatch, receipt reduction, or Temporal client calls.
+
 ## Execution Lifecycle Workflow
 
 `Mezzanine.Workflows.ExecutionAttempt` is the durable execution-attempt

@@ -7,6 +7,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
   domain truth stays in the owning repositories.
   """
 
+  alias Mezzanine.GovernedRuntimeConfig
   alias Mezzanine.Intent.RunIntent
   alias Mezzanine.WorkflowExecutionLifecycleInput
   alias Mezzanine.WorkflowReceiptSignal
@@ -96,6 +97,12 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     :terminal_state,
     :trace_id,
     :turn_count,
+    :citadel_bridge,
+    :integration_bridge,
+    :receipt_reducer,
+    :runtime_modules,
+    :workflow_runtime_impl,
+    :workflow_runtime_modules,
     :workflow_id,
     :workflow_run_id,
     :workflow_state,
@@ -152,11 +159,15 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
   @doc "Run the deterministic execution-attempt workflow to the receipt wait point."
   @spec run(map() | keyword()) :: {:ok, map()} | {:error, term()}
   def run(attrs) do
+    attrs = normalize(attrs)
+
     with {:ok, input} <- new_input(attrs),
-         {:ok, authority} <- compile_citadel_authority_activity(input),
+         {:ok, authority} <- compile_citadel_authority_activity(attrs),
          {:ok, lower} <-
            submit_jido_lower_run_activity(
-             Map.put(Map.from_struct(input), :citadel_authority, authority)
+             attrs
+             |> Map.merge(Map.from_struct(input))
+             |> Map.put(:citadel_authority, authority)
            ) do
       {:ok, runtime_result(input, authority, lower)}
     end
@@ -210,11 +221,13 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
   @doc "Citadel authority compilation activity result."
   @spec compile_citadel_authority_activity(map() | struct()) :: {:ok, map()} | {:error, term()}
   def compile_citadel_authority_activity(attrs) do
+    attrs = normalize(attrs)
+
     with {:ok, input} <- new_input(attrs),
          {:ok, run_intent} <- citadel_run_intent(input),
          {:ok, compile_attrs} <- citadel_compile_attrs(input),
          {:ok, compiled} <-
-           compile_citadel_submission(run_intent, compile_attrs, policy_packs(input)) do
+           compile_citadel_submission(run_intent, compile_attrs, policy_packs(input), attrs) do
       {:ok,
        %{
          activity: :compile_citadel_authority,
@@ -240,7 +253,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     with {:ok, input} <- new_input(attrs),
          {:ok, invocation} <-
            authorized_lower_invocation(input, Map.get(attrs, :citadel_authority)),
-         {:ok, dispatched} <- invoke_authorized_lower(invocation) do
+         {:ok, dispatched} <- invoke_authorized_lower(invocation, attrs) do
       {:ok,
        %{
          activity: :submit_jido_lower_run,
@@ -434,7 +447,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     normalized = attrs |> with_release_ref()
 
     with {:ok, signal} <- WorkflowReceiptSignal.new(normalized),
-         request <- receipt_signal_request(signal),
+         request <- receipt_signal_request(signal, normalized),
          {:ok, runtime_receipt} <- Mezzanine.WorkflowRuntime.signal_workflow(request),
          {:ok, signal_receipt} <- local_signal_receipt(signal, normalized, runtime_receipt) do
       {:ok,
@@ -498,14 +511,16 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
   def query_operator_state(attrs) do
     attrs = normalize(attrs)
 
-    request = %{
-      workflow_id: attrs.workflow_id,
-      query_name: "operator_state.v1",
-      tenant_ref: attrs.tenant_ref,
-      resource_ref: attrs.resource_ref,
-      trace_id: attrs.trace_id,
-      release_manifest_ref: Map.get(attrs, :release_manifest_ref, @release_manifest_ref)
-    }
+    request =
+      %{
+        workflow_id: attrs.workflow_id,
+        query_name: "operator_state.v1",
+        tenant_ref: attrs.tenant_ref,
+        resource_ref: attrs.resource_ref,
+        trace_id: attrs.trace_id,
+        release_manifest_ref: Map.get(attrs, :release_manifest_ref, @release_manifest_ref)
+      }
+      |> maybe_put_runtime_module(attrs, :workflow_runtime_impl)
 
     with {:ok, query} <- Mezzanine.WorkflowRuntime.query_workflow(request) do
       {:ok,
@@ -611,7 +626,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     end
   end
 
-  defp receipt_signal_request(%WorkflowReceiptSignal{} = signal) do
+  defp receipt_signal_request(%WorkflowReceiptSignal{} = signal, attrs) do
     %{
       workflow_id: signal.workflow_id,
       workflow_run_id: signal.workflow_run_id,
@@ -628,6 +643,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
       correlation_id: signal.correlation_id,
       release_manifest_ref: signal.release_manifest_ref
     }
+    |> maybe_put_runtime_module(attrs, :workflow_runtime_impl)
   end
 
   defp local_signal_receipt(%WorkflowReceiptSignal{} = signal, attrs, runtime_receipt) do
@@ -668,10 +684,12 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
 
   defp reduce_terminal_receipt(attrs, lower_receipt) do
     reducer =
-      Application.get_env(
+      GovernedRuntimeConfig.module(
+        attrs,
         :mezzanine_workflow_runtime,
         :receipt_reducer,
-        Module.concat([Mezzanine, Projections, ReceiptReducer])
+        Module.concat([Mezzanine, Projections, ReceiptReducer]),
+        governed_default?: true
       )
 
     reducer_attrs =
@@ -827,9 +845,15 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     error in ArgumentError -> {:error, Exception.message(error)}
   end
 
-  defp compile_citadel_submission(%RunIntent{} = run_intent, attrs, policy_packs) do
+  defp compile_citadel_submission(%RunIntent{} = run_intent, attrs, policy_packs, runtime_attrs) do
     bridge =
-      Application.get_env(:mezzanine_workflow_runtime, :citadel_bridge, Mezzanine.CitadelBridge)
+      GovernedRuntimeConfig.module(
+        runtime_attrs,
+        :mezzanine_workflow_runtime,
+        :citadel_bridge,
+        Mezzanine.CitadelBridge,
+        governed_default?: true
+      )
 
     case bridge.compile_submission(run_intent, attrs, policy_packs, []) do
       {:ok, %{rejection_classification: nil} = compiled} ->
@@ -868,15 +892,30 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     end
   end
 
-  defp invoke_authorized_lower(invocation) do
+  defp invoke_authorized_lower(invocation, attrs) do
     bridge =
-      Application.get_env(
+      GovernedRuntimeConfig.module(
+        attrs,
         :mezzanine_workflow_runtime,
         :integration_bridge,
-        Mezzanine.IntegrationBridge
+        Mezzanine.IntegrationBridge,
+        governed_default?: true
       )
 
     bridge.invoke_run_intent(invocation, [])
+  end
+
+  defp maybe_put_runtime_module(request, attrs, key) do
+    case runtime_module(attrs, key) do
+      module when is_atom(module) -> Map.put(request, key, module)
+      _other -> request
+    end
+  end
+
+  defp runtime_module(attrs, key) do
+    Map.get(attrs, key) ||
+      get_in(attrs, [:runtime_modules, key]) ||
+      get_in(attrs, [:workflow_runtime_modules, key])
   end
 
   defp build_authorized_invocation(attrs) do

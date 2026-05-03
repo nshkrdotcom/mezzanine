@@ -19,9 +19,17 @@ defmodule Mezzanine.WorkflowRuntime.TemporalSupervisor do
   @doc "Returns normalized Temporal runtime config."
   @spec runtime_config(keyword()) :: runtime_config()
   def runtime_config(overrides \\ []) do
-    :mezzanine_workflow_runtime
-    |> Application.get_env(:temporal, [])
-    |> Keyword.merge(overrides)
+    overrides = Keyword.new(overrides)
+
+    base_config =
+      if Keyword.get(overrides, :governed?, false) do
+        []
+      else
+        Application.get_env(:mezzanine_workflow_runtime, :temporal, [])
+      end
+
+    base_config
+    |> Keyword.merge(Keyword.delete(overrides, :governed?))
     |> Keyword.put_new(:enabled?, false)
     |> Keyword.put_new(:address, @default_address)
     |> Keyword.put_new(:namespace, @default_namespace)

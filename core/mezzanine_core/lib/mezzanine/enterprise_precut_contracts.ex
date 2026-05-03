@@ -1256,6 +1256,8 @@ defmodule Mezzanine.WorkflowRuntime do
   Behaviour for the only Mezzanine-owned Temporal client boundary.
   """
 
+  alias Mezzanine.GovernedRuntimeConfig
+
   @callback start_workflow(term()) :: {:ok, Mezzanine.WorkflowStartReceipt.t()} | {:error, term()}
   @callback signal_workflow(term()) ::
               {:ok, Mezzanine.WorkflowSignalReceiptResult.t()} | {:error, term()}
@@ -1268,30 +1270,31 @@ defmodule Mezzanine.WorkflowRuntime do
               {:ok, Mezzanine.WorkflowHistoryRef.t()} | {:error, term()}
 
   @spec start_workflow(term()) :: {:ok, Mezzanine.WorkflowStartReceipt.t()} | {:error, term()}
-  def start_workflow(request), do: implementation().start_workflow(request)
+  def start_workflow(request), do: implementation(request).start_workflow(request)
 
   @spec signal_workflow(term()) ::
           {:ok, Mezzanine.WorkflowSignalReceiptResult.t()} | {:error, term()}
-  def signal_workflow(request), do: implementation().signal_workflow(request)
+  def signal_workflow(request), do: implementation(request).signal_workflow(request)
 
   @spec query_workflow(term()) :: {:ok, Mezzanine.WorkflowQueryResult.t()} | {:error, term()}
-  def query_workflow(request), do: implementation().query_workflow(request)
+  def query_workflow(request), do: implementation(request).query_workflow(request)
 
   @spec cancel_workflow(term()) ::
           {:ok, Mezzanine.WorkflowCancelReceipt.t()} | {:error, term()}
-  def cancel_workflow(request), do: implementation().cancel_workflow(request)
+  def cancel_workflow(request), do: implementation(request).cancel_workflow(request)
 
   @spec describe_workflow(term()) ::
           {:ok, Mezzanine.WorkflowDescription.t()} | {:error, term()}
-  def describe_workflow(request), do: implementation().describe_workflow(request)
+  def describe_workflow(request), do: implementation(request).describe_workflow(request)
 
   @spec fetch_workflow_history_ref(term()) ::
           {:ok, Mezzanine.WorkflowHistoryRef.t()} | {:error, term()}
   def fetch_workflow_history_ref(request),
-    do: implementation().fetch_workflow_history_ref(request)
+    do: implementation(request).fetch_workflow_history_ref(request)
 
-  defp implementation do
-    Application.get_env(
+  defp implementation(request) do
+    GovernedRuntimeConfig.module(
+      request,
       :mezzanine_core,
       :workflow_runtime_impl,
       Mezzanine.WorkflowRuntime.Unconfigured

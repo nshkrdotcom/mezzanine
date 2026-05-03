@@ -46,21 +46,6 @@ defmodule Mezzanine.WorkflowRuntime.TemporalexAdapterTest do
     def start_workflow(_conn, _workflow_module, _args, _opts), do: {:error, :timeout}
   end
 
-  setup do
-    previous_boundary =
-      Application.get_env(:mezzanine_workflow_runtime, :temporalex_boundary)
-
-    Application.put_env(:mezzanine_workflow_runtime, :temporalex_boundary, FakeBoundary)
-
-    on_exit(fn ->
-      if previous_boundary do
-        Application.put_env(:mezzanine_workflow_runtime, :temporalex_boundary, previous_boundary)
-      else
-        Application.delete_env(:mezzanine_workflow_runtime, :temporalex_boundary)
-      end
-    end)
-  end
-
   test "starts workflows through TemporalexBoundary and returns a Mezzanine DTO" do
     assert {:ok, receipt} = TemporalexAdapter.start_workflow(start_request())
 
@@ -110,15 +95,32 @@ defmodule Mezzanine.WorkflowRuntime.TemporalexAdapterTest do
   end
 
   test "normalizes Temporalex errors before they cross the facade" do
+    assert {:error, {:temporal_unavailable, :timeout}} =
+             TemporalexAdapter.start_workflow(
+               Map.put(start_request(), :temporalex_boundary, ErrorBoundary)
+             )
+  end
+
+  test "governed Temporal requests use explicit boundary instead of application config" do
+    previous_boundary = Application.get_env(:mezzanine_workflow_runtime, :temporalex_boundary)
     Application.put_env(:mezzanine_workflow_runtime, :temporalex_boundary, ErrorBoundary)
 
-    assert {:error, {:temporal_unavailable, :timeout}} =
-             TemporalexAdapter.start_workflow(start_request())
+    on_exit(fn ->
+      if previous_boundary do
+        Application.put_env(:mezzanine_workflow_runtime, :temporalex_boundary, previous_boundary)
+      else
+        Application.delete_env(:mezzanine_workflow_runtime, :temporalex_boundary)
+      end
+    end)
+
+    assert {:ok, receipt} = TemporalexAdapter.start_workflow(start_request())
+    assert receipt.workflow_run_id == "run-temporal-001"
   end
 
   defp start_request do
     %{
       connection: Mezzanine.WorkflowRuntime.TestTemporal.Connection,
+      temporalex_boundary: FakeBoundary,
       workflow_id: "wf-001",
       workflow_type: "agent_run",
       workflow_version: "agent-run.v1",
@@ -141,6 +143,7 @@ defmodule Mezzanine.WorkflowRuntime.TemporalexAdapterTest do
   defp signal_request do
     %{
       connection: Mezzanine.WorkflowRuntime.TestTemporal.Connection,
+      temporalex_boundary: FakeBoundary,
       workflow_id: "wf-001",
       workflow_run_id: "run-temporal-001",
       signal_id: "sig-001",
@@ -156,6 +159,7 @@ defmodule Mezzanine.WorkflowRuntime.TemporalexAdapterTest do
   defp query_request do
     %{
       connection: Mezzanine.WorkflowRuntime.TestTemporal.Connection,
+      temporalex_boundary: FakeBoundary,
       workflow_id: "wf-001",
       workflow_run_id: "run-temporal-001",
       query_name: "operator_state.v1",
@@ -166,6 +170,7 @@ defmodule Mezzanine.WorkflowRuntime.TemporalexAdapterTest do
   defp cancel_request do
     %{
       connection: Mezzanine.WorkflowRuntime.TestTemporal.Connection,
+      temporalex_boundary: FakeBoundary,
       workflow_id: "wf-001",
       workflow_run_id: "run-temporal-001",
       reason: "operator_cancel",
@@ -176,6 +181,7 @@ defmodule Mezzanine.WorkflowRuntime.TemporalexAdapterTest do
   defp describe_request do
     %{
       connection: Mezzanine.WorkflowRuntime.TestTemporal.Connection,
+      temporalex_boundary: FakeBoundary,
       workflow_id: "wf-001",
       workflow_run_id: "run-temporal-001",
       trace_id: "trace-001"

@@ -1,5 +1,5 @@
 defmodule Mezzanine.WorkflowRuntime.TemporalSupervisorTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Mezzanine.WorkflowRuntime.TemporalSupervisor
 
@@ -67,5 +67,31 @@ defmodule Mezzanine.WorkflowRuntime.TemporalSupervisorTest do
              Mezzanine.WorkflowRuntime.TestTemporal.MezzanineReview,
              Mezzanine.WorkflowRuntime.TestTemporal.MezzanineSemantic
            ]
+  end
+
+  test "governed runtime config ignores application-configured Temporal credentials" do
+    previous = Application.get_env(:mezzanine_workflow_runtime, :temporal)
+
+    Application.put_env(:mezzanine_workflow_runtime, :temporal,
+      enabled?: true,
+      address: "temporal.example.internal:7233",
+      namespace: "env-selected",
+      api_key: "env-token"
+    )
+
+    on_exit(fn ->
+      if previous do
+        Application.put_env(:mezzanine_workflow_runtime, :temporal, previous)
+      else
+        Application.delete_env(:mezzanine_workflow_runtime, :temporal)
+      end
+    end)
+
+    config = TemporalSupervisor.runtime_config(governed?: true, namespace: "explicit")
+
+    refute Keyword.has_key?(config, :api_key)
+    assert Keyword.fetch!(config, :enabled?) == false
+    assert Keyword.fetch!(config, :namespace) == "explicit"
+    assert Keyword.fetch!(config, :address) == "127.0.0.1:7233"
   end
 end

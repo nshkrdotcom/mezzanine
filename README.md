@@ -32,9 +32,12 @@ mezzanine/
   core/pack_compiler   # neutral pack compilation and validation
   core/lifecycle_engine # durable lifecycle coordinator over explicit execution requests
   core/config_registry # deployment/install registry seam
+  core/source_engine   # neutral source admission and dedupe contracts
   core/object_engine   # subject/object lifecycle engine scaffold
+  core/workspace_engine # neutral workspace lease, hook, cleanup, and path-safety contracts
   core/execution_engine
   core/runtime_scheduler
+  core/workflow_runtime
   core/decision_engine
   core/evidence_engine
   core/projection_engine

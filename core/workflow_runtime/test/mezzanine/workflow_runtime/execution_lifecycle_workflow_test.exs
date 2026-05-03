@@ -67,46 +67,12 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     end
   end
 
-  setup do
-    previous = Application.get_env(:mezzanine_core, :workflow_runtime_impl)
-    previous_citadel = Application.get_env(:mezzanine_workflow_runtime, :citadel_bridge)
-    previous_integration = Application.get_env(:mezzanine_workflow_runtime, :integration_bridge)
-    previous_reducer = Application.get_env(:mezzanine_workflow_runtime, :receipt_reducer)
+  defmodule EnvConfiguredIntegrationBridge do
+    def invoke_run_intent(_invocation, _opts), do: {:error, :application_env_bridge_used}
+  end
 
-    Application.put_env(:mezzanine_core, :workflow_runtime_impl, QueryRuntime)
-    Application.put_env(:mezzanine_workflow_runtime, :citadel_bridge, Mezzanine.CitadelBridge)
-    Application.put_env(:mezzanine_workflow_runtime, :integration_bridge, FakeIntegrationBridge)
-    Application.put_env(:mezzanine_workflow_runtime, :receipt_reducer, FakeReceiptReducer)
-
-    on_exit(fn ->
-      if previous do
-        Application.put_env(:mezzanine_core, :workflow_runtime_impl, previous)
-      else
-        Application.delete_env(:mezzanine_core, :workflow_runtime_impl)
-      end
-
-      if previous_citadel do
-        Application.put_env(:mezzanine_workflow_runtime, :citadel_bridge, previous_citadel)
-      else
-        Application.delete_env(:mezzanine_workflow_runtime, :citadel_bridge)
-      end
-
-      if previous_integration do
-        Application.put_env(
-          :mezzanine_workflow_runtime,
-          :integration_bridge,
-          previous_integration
-        )
-      else
-        Application.delete_env(:mezzanine_workflow_runtime, :integration_bridge)
-      end
-
-      if previous_reducer do
-        Application.put_env(:mezzanine_workflow_runtime, :receipt_reducer, previous_reducer)
-      else
-        Application.delete_env(:mezzanine_workflow_runtime, :receipt_reducer)
-      end
-    end)
+  defmodule EnvConfiguredReceiptReducer do
+    def reduce(_attrs), do: {:error, :application_env_reducer_used}
   end
 
   test "defines lifecycle contract and consumes the enterprise pre-cut envelope" do
@@ -295,10 +261,54 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
   end
 
   test "Citadel activity fails closed on explicit rejection" do
-    Application.put_env(:mezzanine_workflow_runtime, :citadel_bridge, RejectingCitadelBridge)
+    attrs = put_in(lifecycle_attrs(), [:runtime_modules, :citadel_bridge], RejectingCitadelBridge)
 
     assert {:error, {:citadel_rejected, %{decision: :deny, reason: :policy_denied}}} =
-             ExecutionLifecycleWorkflow.compile_citadel_authority_activity(lifecycle_attrs())
+             ExecutionLifecycleWorkflow.compile_citadel_authority_activity(attrs)
+  end
+
+  test "governed activity dispatch ignores application-configured bridges and reducers" do
+    previous_integration = Application.get_env(:mezzanine_workflow_runtime, :integration_bridge)
+    previous_reducer = Application.get_env(:mezzanine_workflow_runtime, :receipt_reducer)
+
+    Application.put_env(
+      :mezzanine_workflow_runtime,
+      :integration_bridge,
+      EnvConfiguredIntegrationBridge
+    )
+
+    Application.put_env(
+      :mezzanine_workflow_runtime,
+      :receipt_reducer,
+      EnvConfiguredReceiptReducer
+    )
+
+    on_exit(fn ->
+      restore_app_env(:mezzanine_workflow_runtime, :integration_bridge, previous_integration)
+      restore_app_env(:mezzanine_workflow_runtime, :receipt_reducer, previous_reducer)
+    end)
+
+    attrs = lifecycle_attrs()
+    assert {:ok, authority} = ExecutionLifecycleWorkflow.compile_citadel_authority_activity(attrs)
+
+    assert {:ok, lower} =
+             attrs
+             |> Map.put(:citadel_authority, authority)
+             |> ExecutionLifecycleWorkflow.submit_jido_lower_run_activity()
+
+    assert lower.provider_submission.authority_present?
+
+    assert {:ok, persisted} =
+             ExecutionLifecycleWorkflow.persist_terminal_receipt_activity(
+               Map.merge(attrs, %{
+                 terminal_state: "completed",
+                 terminal_event_ref: "workflow-event-terminal",
+                 lower_receipt_ref: "lower-receipt-env-governance"
+               })
+             )
+
+    assert persisted.projection_result.projection_name == "operator_subject_runtime"
+    refute persisted.projection_result[:reducer_error] == :application_env_reducer_used
   end
 
   test "Citadel activity rejects missing or stale installation revision" do
@@ -457,6 +467,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
       release_manifest_ref: "phase4-v6-milestone27-execution-lifecycle-workflow",
       retry_policy: %{max_attempts: 3},
       terminal_policy: "quarantine_late_receipts",
+      runtime_modules: runtime_modules(),
       routing_facts: %{
         review_required: false,
         risk_band: "low",
@@ -509,6 +520,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
       release_manifest_ref: "phase4-v6-milestone27-execution-lifecycle-workflow",
       receipt_state: "completed",
       terminal?: true,
+      workflow_runtime_impl: QueryRuntime,
       routing_facts: %{
         terminal_class: "completed",
         subject_id: "subject-093",
@@ -518,4 +530,16 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
       }
     }
   end
+
+  defp runtime_modules do
+    %{
+      citadel_bridge: Mezzanine.CitadelBridge,
+      integration_bridge: FakeIntegrationBridge,
+      receipt_reducer: FakeReceiptReducer,
+      workflow_runtime_impl: QueryRuntime
+    }
+  end
+
+  defp restore_app_env(app, key, nil), do: Application.delete_env(app, key)
+  defp restore_app_env(app, key, value), do: Application.put_env(app, key, value)
 end

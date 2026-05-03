@@ -55,6 +55,13 @@ This package now owns the Phase `2.4.4` durable execution slice:
   local mutations owned by a bounded context; unclassified refs, callbacks,
   raw SQL writes, old Oban saga jobs, and lower-cancel workers fail closed
 
+Governed lower dispatch does not resolve the lower gateway implementation from
+application config. Dispatch claims that carry binding snapshots and dispatch
+envelopes either carry an explicit `:lower_gateway_impl` selected before the
+governed effect or fail closed to the unconfigured lower gateway fallback;
+standalone compatibility can still use application config outside governed
+dispatch.
+
 Primary modules:
 
 - `Mezzanine.Execution`
