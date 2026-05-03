@@ -39,10 +39,19 @@ defmodule Mezzanine.Audit.RetrospectiveAuditTest do
     assert report.snapshot_epoch == @historical_epoch
     assert report.admitted_fragment_ids == ["fragment-a"]
     assert report.source_proof_token.proof_id == "proof-retro-clean"
-    assert report.audit_artifact.signature =~ ~r/^sha256:[a-f0-9]{64}$/
+    assert sha256_ref?(report.audit_artifact.signature)
 
     assert_received {:retrospective_audit_artifact,
                      %{mode: :verify_as_of_recall, proof_id: "proof-retro-clean"}}
+  end
+
+  defp sha256_ref?(<<"sha256:", digest::binary-size(64)>>), do: lower_hex?(digest)
+  defp sha256_ref?(_value), do: false
+
+  defp lower_hex?(value) do
+    value
+    |> :binary.bin_to_list()
+    |> Enum.all?(fn byte -> byte in ?a..?f or byte in ?0..?9 end)
   end
 
   test "re_evaluate_under_current recomputes current accessibility and flags denied fragments" do

@@ -14,11 +14,17 @@ defmodule Mezzanine.ProjectedArtifactFidelityTest do
     assert Enum.all?(ProjectedArtifactFidelity.required_fields(), &Map.has_key?(profile, &1))
     assert profile.release_manifest_ref == "mezzanine_projected_artifact_fidelity_profiles[0]"
     assert profile.weld_manifest_ref == "build_support/weld.exs"
-    assert profile.weld_manifest_hash =~ ~r/\Asha256:[0-9a-f]{64}\z/
-    assert profile.workspace_contract_ref =~ ~r/build_support\/workspace_contract\.exs:sha256:/
+    assert sha256_ref?(profile.weld_manifest_hash)
 
-    assert profile.internal_modularity_contract_ref =~
-             ~r/build_support\/internal_modularity_contract\.exs:sha256:/
+    assert String.contains?(
+             profile.workspace_contract_ref,
+             "build_support/workspace_contract.exs:sha256:"
+           )
+
+    assert String.contains?(
+             profile.internal_modularity_contract_ref,
+             "build_support/internal_modularity_contract.exs:sha256:"
+           )
 
     assert profile.weld_verify_or_packaging_test_ref ==
              "mix weld.verify -> packaging/weld/mezzanine_core/test"
@@ -30,7 +36,7 @@ defmodule Mezzanine.ProjectedArtifactFidelityTest do
              Keyword.fetch!(WeldContract.artifact(), :roots)
 
     assert Enum.all?(profile.source_root_ref_set, fn root_ref ->
-             root_ref.hash_ref =~ ~r/\Asha256:[0-9a-f]{64}\z/
+             sha256_ref?(root_ref.hash_ref)
            end)
   end
 
@@ -53,5 +59,14 @@ defmodule Mezzanine.ProjectedArtifactFidelityTest do
 
     assert {:owner_approval_required_for_manual_patch,
             "owner_approved_emergency_patch_with_backport"} in errors
+  end
+
+  defp sha256_ref?(<<"sha256:", digest::binary-size(64)>>), do: lower_hex?(digest)
+  defp sha256_ref?(_value), do: false
+
+  defp lower_hex?(value) do
+    value
+    |> :binary.bin_to_list()
+    |> Enum.all?(fn byte -> byte in ?0..?9 or byte in ?a..?f end)
   end
 end

@@ -125,13 +125,42 @@ defmodule Mezzanine.Build.InternalModularityContract do
 
     mix_file
     |> File.read!()
-    |> then(fn contents ->
-      Regex.scan(~r/\{\s*:[a-z0-9_]+\s*,\s*path:\s*"([^"]+)"/, contents, capture: :all_but_first)
-    end)
-    |> Enum.map(fn [relative_path] -> normalize_internal_dep(package_root, relative_path) end)
+    |> internal_dep_paths()
+    |> Enum.map(fn relative_path -> normalize_internal_dep(package_root, relative_path) end)
     |> Enum.reject(&is_nil/1)
     |> Enum.uniq()
     |> Enum.sort()
+  end
+
+  defp internal_dep_paths(contents) do
+    contents
+    |> String.split("{:")
+    |> Enum.drop(1)
+    |> Enum.flat_map(&path_option_from_dep_segment/1)
+  end
+
+  defp path_option_from_dep_segment(segment) do
+    if String.contains?(segment, "path:") do
+      segment
+      |> String.split("path:", parts: 2)
+      |> List.last()
+      |> quoted_prefix()
+      |> List.wrap()
+      |> Enum.reject(&is_nil/1)
+    else
+      []
+    end
+  end
+
+  defp quoted_prefix(value) do
+    value = String.trim_leading(value)
+
+    if String.starts_with?(value, "\"") do
+      value
+      |> String.replace_prefix("\"", "")
+      |> String.split("\"", parts: 2)
+      |> List.first()
+    end
   end
 
   defp normalize_internal_dep(package_root, relative_path) do

@@ -226,7 +226,6 @@ defmodule Mezzanine.Archival.ArchivalManifest do
     attribute :status, :string do
       allow_nil?(false)
       default("staging")
-      constraints(match: ~r/^(staging|verified|archived|failed)$/)
       public?(true)
     end
 

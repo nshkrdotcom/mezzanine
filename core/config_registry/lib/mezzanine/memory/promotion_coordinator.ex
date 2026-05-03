@@ -18,8 +18,6 @@ defmodule Mezzanine.Memory.PromotionCoordinator do
   @workflow_type "memory_promotion"
   @workflow_version "memory-promotion.v1"
   @workflow_input_version "memory-promotion-input.v1"
-  @typed_queue_regex ~r/\Amez\.(?:promotion|workflow_runtime)\.([a-z2-7]{20})\z/
-  @node_shortname_regex ~r/\A[A-Za-z0-9_.-]+\z/
   @normalizable_keys [
     :candidate_id,
     :decision,
@@ -206,7 +204,7 @@ defmodule Mezzanine.Memory.PromotionCoordinator do
   end
 
   defp valid_node_shortname(value) when is_binary(value) and value != "" do
-    if Regex.match?(@node_shortname_regex, value) do
+    if node_shortname?(value) do
       {:ok, value}
     else
       {:error, :invalid_node_shortname}
@@ -227,7 +225,7 @@ defmodule Mezzanine.Memory.PromotionCoordinator do
   end
 
   defp valid_worker_role(value) when is_binary(value) and value != "" do
-    if Regex.match?(@node_shortname_regex, value) do
+    if node_shortname?(value) do
       {:ok, value}
     else
       {:error, :invalid_worker_role}
@@ -243,14 +241,33 @@ defmodule Mezzanine.Memory.PromotionCoordinator do
   defp valid_task_queue_hash(_value), do: {:error, :invalid_task_queue}
 
   defp task_queue_hash(queue) do
-    case Regex.run(@typed_queue_regex, queue) do
-      [_, hash] -> hash
-      nil -> hash_segment(queue)
-    end
+    typed_queue_hash(queue) || hash_segment(queue)
   end
 
   defp ensure_worker_identity_size(identity) when byte_size(identity) <= 96, do: {:ok, identity}
   defp ensure_worker_identity_size(_identity), do: {:error, :worker_identity_too_long}
+
+  defp typed_queue_hash("mez.promotion." <> segment), do: valid_queue_hash_segment(segment)
+  defp typed_queue_hash("mez.workflow_runtime." <> segment), do: valid_queue_hash_segment(segment)
+  defp typed_queue_hash(_queue), do: nil
+
+  defp valid_queue_hash_segment(segment) do
+    if byte_size(segment) == @segment_size and base32lower?(segment), do: segment, else: nil
+  end
+
+  defp base32lower?(value) do
+    value
+    |> :binary.bin_to_list()
+    |> Enum.all?(fn byte -> byte in ?a..?z or byte in ?2..?7 end)
+  end
+
+  defp node_shortname?(value) do
+    value
+    |> :binary.bin_to_list()
+    |> Enum.all?(fn byte ->
+      byte in ?A..?Z or byte in ?a..?z or byte in ?0..?9 or byte in [?_, ?., ?-]
+    end)
+  end
 
   defp workflow_id(candidate, policy) do
     [

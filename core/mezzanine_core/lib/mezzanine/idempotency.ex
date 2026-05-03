@@ -413,7 +413,7 @@ defmodule Mezzanine.Idempotency do
     do: scope |> Atom.to_string() |> normalize_scope()
 
   defp normalize_scope(scope) when is_binary(scope) do
-    if Regex.match?(~r/^[a-z0-9][a-z0-9_.-]*$/, scope) do
+    if scope_name?(scope) do
       {:ok, scope}
     else
       {:error, {:invalid_child_idempotency_scope, scope}}
@@ -421,6 +421,17 @@ defmodule Mezzanine.Idempotency do
   end
 
   defp normalize_scope(scope), do: {:error, {:invalid_child_idempotency_scope, scope}}
+
+  defp scope_name?(<<first, rest::binary>>) do
+    lower_alnum?(first) and
+      rest
+      |> :binary.bin_to_list()
+      |> Enum.all?(fn byte -> lower_alnum?(byte) or byte in [?_, ?., ?-] end)
+  end
+
+  defp scope_name?(_scope), do: false
+
+  defp lower_alnum?(byte), do: byte in ?a..?z or byte in ?0..?9
 
   defp normalize_stable_ref(stable_ref) do
     stable_ref = canonical_value(normalize_value(stable_ref))

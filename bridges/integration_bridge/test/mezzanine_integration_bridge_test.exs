@@ -170,12 +170,12 @@ defmodule Mezzanine.IntegrationBridgeTest do
       IntegrationBridge.dispatch_effect(intent, invoke_fun: invoke_fun)
     end
 
-    assert_raise ArgumentError, ~r/not present in Citadel authority/, fn ->
+    assert_error_contains("not present in Citadel authority", fn ->
       IntegrationBridge.dispatch_effect(authorized_invocation(),
         invoke_fun: invoke_fun,
         capability_id: "github.pr.merge"
       )
-    end
+    end)
   end
 
   test "authorized invocation requires mock-valid authority and governance packets" do
@@ -183,9 +183,9 @@ defmodule Mezzanine.IntegrationBridgeTest do
       authorized_invocation_attrs()
       |> put_in([:invocation_request, :authority_packet], %{})
 
-    assert_raise ArgumentError, ~r/missing required field :contract_version/, fn ->
+    assert_error_contains("missing required field :contract_version", fn ->
       AuthorizedInvocation.new!(attrs)
-    end
+    end)
   end
 
   test "authorized invocation rejects stale installation revision when caller supplies one" do
@@ -194,11 +194,11 @@ defmodule Mezzanine.IntegrationBridgeTest do
                Map.put(authorized_invocation_attrs(), :expected_installation_revision, 3)
              )
 
-    assert_raise ArgumentError, ~r/stale installation_revision/, fn ->
+    assert_error_contains("stale installation_revision", fn ->
       authorized_invocation_attrs()
       |> Map.put(:expected_installation_revision, 2)
       |> AuthorizedInvocation.new!()
-    end
+    end)
   end
 
   test "authorized invocation binds M2 lower submission to the Citadel for_action_ref" do
@@ -217,19 +217,25 @@ defmodule Mezzanine.IntegrationBridgeTest do
 
     assert input.authority.for_action_ref == "action://agent-loop/turn-1"
 
-    assert_raise ArgumentError, ~r/action_ref mismatch/, fn ->
+    assert_error_contains("action_ref mismatch", fn ->
       attrs
       |> Map.put(:action_ref, "action://agent-loop/other")
       |> AuthorizedInvocation.new!()
-    end
+    end)
 
-    assert_raise ArgumentError, ~r/for_action_ref mismatch/, fn ->
+    assert_error_contains("for_action_ref mismatch", fn ->
       attrs
       |> put_in([:invocation_request, :execution_governance, :extensions, "citadel"], %{
         "for_action_ref" => "action://agent-loop/other"
       })
       |> AuthorizedInvocation.new!()
-    end
+    end)
+  end
+
+  defp assert_error_contains(fragment, fun) do
+    error = assert_raise(ArgumentError, fun)
+
+    assert Exception.message(error) |> String.contains?(fragment)
   end
 
   test "authorized invocation preserves the older M1 per-execution authority path" do

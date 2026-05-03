@@ -24,9 +24,16 @@ defmodule Mezzanine.ConfigRegistry.ClusterInvalidationTest do
              "memory.policy.#{ClusterInvalidation.hash_segment("tenant://alpha")}.#{ClusterInvalidation.hash_segment("installation://app-a")}.read.#{ClusterInvalidation.hash_segment("policy://read/default")}.7"
 
     for segment <- String.split(topic, ".") do
-      assert segment =~ ~r/\A[a-z0-9_-]+\z/
+      assert topic_segment?(segment)
       refute String.contains?(segment, "://")
     end
+  end
+
+  defp topic_segment?(segment) do
+    segment != "" and
+      segment
+      |> :binary.bin_to_list()
+      |> Enum.all?(fn byte -> byte in ?a..?z or byte in ?0..?9 or byte in [?_, ?-] end)
   end
 
   test "builds message with ordering evidence and rejects invalid topics" do

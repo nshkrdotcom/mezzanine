@@ -7,13 +7,26 @@ defmodule Mezzanine.WorkspaceEngine.PathSafety do
   def slug(value) do
     value
     |> to_string()
-    |> String.replace(~r/[^A-Za-z0-9._-]/, "_")
+    |> safe_slug_chars()
     |> case do
       "" -> "unidentified"
       "." -> "unidentified"
       ".." -> "unidentified"
       slug -> slug
     end
+  end
+
+  defp safe_slug_chars(value) do
+    value
+    |> :binary.bin_to_list()
+    |> Enum.map(fn byte ->
+      if byte in ?A..?Z or byte in ?a..?z or byte in ?0..?9 or byte in [?., ?_, ?-] do
+        byte
+      else
+        ?_
+      end
+    end)
+    |> List.to_string()
   end
 
   @spec prepare_directory(String.t(), String.t()) :: :ok | {:error, atom()}

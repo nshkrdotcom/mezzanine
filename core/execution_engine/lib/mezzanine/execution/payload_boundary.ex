@@ -9,7 +9,6 @@ defmodule Mezzanine.Execution.PayloadBoundary do
 
   @small_inline_max_bytes 64 * 1024
   @reject_or_stream_min_bytes 5 * 1024 * 1024
-  @sha256_regex ~r/\Asha256:[0-9a-f]{64}\z/
 
   @artifact_ref_fields [
     "artifact_id",
@@ -239,7 +238,7 @@ defmodule Mezzanine.Execution.PayloadBoundary do
           safe_action: :reject_before_durable_write
         })
 
-      not (is_binary(hash) and Regex.match?(@sha256_regex, hash)) ->
+      not sha256_ref?(hash) ->
         boundary_error(column, :invalid_primary_hash, %{
           field: hash_field,
           classification: :ref_required,
@@ -358,6 +357,15 @@ defmodule Mezzanine.Execution.PayloadBoundary do
   defp present?(map, field), do: not blank?(field_value(map, field))
 
   defp blank?(value), do: is_nil(value) or value == "" or value == []
+
+  defp sha256_ref?(<<"sha256:", digest::binary-size(64)>>), do: lower_hex?(digest)
+  defp sha256_ref?(_hash), do: false
+
+  defp lower_hex?(value) do
+    value
+    |> :binary.bin_to_list()
+    |> Enum.all?(fn byte -> byte in ?0..?9 or byte in ?a..?f end)
+  end
 
   defp field_value(map, field) when is_binary(field),
     do: Map.get(map, field) || Map.get(map, Map.get(@artifact_ref_field_lookup, field))

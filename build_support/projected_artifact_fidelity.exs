@@ -292,7 +292,12 @@ defmodule Mezzanine.Build.ProjectedArtifactFidelity do
   defp ref_has_sha256?(ref) when is_binary(ref), do: String.contains?(ref, "sha256:")
   defp ref_has_sha256?(_other), do: false
 
-  defp hex?(hash), do: String.match?(hash, ~r/\A[0-9a-f]{64}\z/)
+  defp hex?(hash) do
+    byte_size(hash) == 64 and
+      hash
+      |> :binary.bin_to_list()
+      |> Enum.all?(fn byte -> byte in ?0..?9 or byte in ?a..?f end)
+  end
 
   defp default_root, do: Path.expand("..", __DIR__)
 end

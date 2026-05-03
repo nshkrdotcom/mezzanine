@@ -20,10 +20,13 @@ defmodule Mix.Tasks.Pack.LintTest do
   end
 
   test "raises when the requested pack module is missing" do
-    assert_raise Mix.Error, ~r/pack lint failed/, fn ->
-      capture_io(fn ->
-        PackLint.run(["Mezzanine.TestPacks.DoesNotExist"])
-      end)
-    end
+    error =
+      assert_raise Mix.Error, fn ->
+        capture_io(fn ->
+          PackLint.run(["Mezzanine.TestPacks.DoesNotExist"])
+        end)
+      end
+
+    assert String.contains?(Exception.message(error), "pack lint failed")
   end
 end

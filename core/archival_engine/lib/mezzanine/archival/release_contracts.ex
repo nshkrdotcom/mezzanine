@@ -17,7 +17,6 @@ defmodule Mezzanine.Archival.ReleaseContractSupport do
   ]
 
   @optional_actor_fields [:principal_ref, :system_actor_ref]
-  @sha256_regex ~r/\Asha256:[0-9a-f]{64}\z/
 
   @spec base_required_binary_fields() :: [atom()]
   def base_required_binary_fields, do: @base_required_binary_fields
@@ -86,7 +85,14 @@ defmodule Mezzanine.Archival.ReleaseContractSupport do
   def non_neg_integer?(value), do: is_integer(value) and value >= 0
 
   @spec sha256?(term()) :: boolean()
-  def sha256?(value), do: is_binary(value) and Regex.match?(@sha256_regex, value)
+  def sha256?(<<"sha256:", digest::binary-size(64)>>), do: lower_hex?(digest)
+  def sha256?(_value), do: false
+
+  defp lower_hex?(value) do
+    value
+    |> :binary.bin_to_list()
+    |> Enum.all?(fn byte -> byte in ?0..?9 or byte in ?a..?f end)
+  end
 
   @spec actor_fields(map()) :: %{
           principal_ref: String.t() | nil,

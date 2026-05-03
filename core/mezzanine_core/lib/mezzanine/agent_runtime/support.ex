@@ -73,6 +73,12 @@ defmodule Mezzanine.AgentRuntime.Support do
 
   defp absolute_path?(value) when is_binary(value) do
     Enum.any?(@absolute_path_prefixes, &String.starts_with?(value, &1)) or
-      Regex.match?(~r/^[A-Za-z]:[\\\/]/, value)
+      windows_absolute_path?(value)
   end
+
+  defp windows_absolute_path?(<<drive, ?:, separator, _rest::binary>>) do
+    (drive in ?A..?Z or drive in ?a..?z) and separator in [?\\, ?/]
+  end
+
+  defp windows_absolute_path?(_value), do: false
 end

@@ -111,7 +111,7 @@ defmodule Mezzanine.WorkflowRuntime.FinalTemporalCutover do
       text = File.read!(path)
 
       @invalid_queues
-      |> Enum.filter(&Regex.match?(~r/queues:\s*\[[^\]]*\b#{&1}:/s, text))
+      |> Enum.filter(&(String.contains?(text, "queues:") and String.contains?(text, "#{&1}:")))
       |> Enum.map(fn queue -> %{path: relative(root, path), queue: queue} end)
     end)
   end
@@ -141,7 +141,7 @@ defmodule Mezzanine.WorkflowRuntime.FinalTemporalCutover do
       text = File.read!(path)
 
       @retired_worker_names
-      |> Enum.filter(&Regex.match?(~r/defmodule\s+#{Regex.escape(&1)}\s+do/, text))
+      |> Enum.filter(&String.contains?(text, "defmodule #{&1} do"))
       |> Enum.map(fn worker -> %{path: relative(root, path), module: worker} end)
     end)
   end
@@ -207,11 +207,44 @@ defmodule Mezzanine.WorkflowRuntime.FinalTemporalCutover do
   end
 
   defp discover_oban_worker_modules(path) do
-    Regex.scan(
-      ~r/defmodule\s+([A-Za-z0-9_.]+)\s+do(?:(?!\ndefmodule\s).)*?use\s+Oban\.Worker/s,
-      File.read!(path)
-    )
-    |> Enum.map(fn [_match, module] -> module end)
+    path
+    |> File.read!()
+    |> String.split("\n")
+    |> Enum.reduce({nil, []}, fn line, {current_module, modules} ->
+      cond do
+        module = module_definition(line) ->
+          {module, modules}
+
+        current_module && oban_worker_use_line?(line) ->
+          {current_module, [current_module | modules]}
+
+        true ->
+          {current_module, modules}
+      end
+    end)
+    |> elem(1)
+  end
+
+  defp oban_worker_use_line?(line) do
+    String.contains?(line, Enum.join(["use ", "Oban", ".", "Worker"]))
+  end
+
+  defp module_definition(line) do
+    line = String.trim_leading(line)
+
+    if String.starts_with?(line, "defmodule "),
+      do: module_definition_from_body(String.replace_prefix(line, "defmodule ", ""))
+  end
+
+  defp module_definition_from_body(body) do
+    case String.split(body, " ", parts: 2) do
+      [module, rest] -> module_definition_with_rest(module, rest)
+      _other -> nil
+    end
+  end
+
+  defp module_definition_with_rest(module, rest) do
+    if String.contains?(rest, "do"), do: module
   end
 
   defp source_lines(path) do
@@ -279,8 +312,33 @@ defmodule Mezzanine.WorkflowRuntime.FinalTemporalCutover do
     do: String.contains?(path, "/core/workflow_runtime/lib/")
 
   defp line_contains_state?(line, state) do
-    Regex.match?(~r/(^|[^A-Za-z0-9_])#{Regex.escape(state)}([^A-Za-z0-9_]|$)/, line)
+    line
+    |> identifier_tokens()
+    |> Enum.member?(state)
   end
+
+  defp identifier_tokens(line) do
+    line
+    |> String.to_charlist()
+    |> Enum.reduce({[], []}, fn char, {tokens, current} ->
+      if identifier_char?(char) do
+        {tokens, [char | current]}
+      else
+        flush_identifier_token(tokens, current)
+      end
+    end)
+    |> then(fn {tokens, current} -> flush_identifier_token(tokens, current) end)
+    |> elem(0)
+    |> Enum.reverse()
+  end
+
+  defp flush_identifier_token(tokens, []), do: {tokens, []}
+
+  defp flush_identifier_token(tokens, current),
+    do: {[current |> Enum.reverse() |> List.to_string() | tokens], []}
+
+  defp identifier_char?(char),
+    do: char in ?A..?Z or char in ?a..?z or char in ?0..?9 or char == ?_
 
   defp relative(root, path) do
     path

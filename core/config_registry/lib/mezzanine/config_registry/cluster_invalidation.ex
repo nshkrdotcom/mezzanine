@@ -3,8 +3,6 @@ defmodule Mezzanine.ConfigRegistry.ClusterInvalidation do
   Minimum cluster invalidation message contract for policy/cache fanout.
   """
 
-  @topic_segment_regex ~r/\A[a-z0-9_-]+\z/
-  @topic_regex ~r/\A[a-z0-9_-]+(\.[a-z0-9_-]+)*\z/
   @global_tenant_ref "tenant://global"
   @global_installation_ref "installation://global"
   @cache_fanout_topic "memory.cache_invalidation"
@@ -192,7 +190,7 @@ defmodule Mezzanine.ConfigRegistry.ClusterInvalidation do
   end
 
   defp topic!(topic, key) when is_binary(topic) do
-    if Regex.match?(@topic_regex, topic) do
+    if topic_name?(topic) do
       topic
     else
       raise ArgumentError, "#{field(key)} must use lowercase ASCII topic segments"
@@ -206,7 +204,7 @@ defmodule Mezzanine.ConfigRegistry.ClusterInvalidation do
   defp segment!(segment) do
     segment = required_string(segment, :topic_segment)
 
-    if Regex.match?(@topic_segment_regex, segment) do
+    if topic_segment?(segment) do
       segment
     else
       raise ArgumentError, "#{field(:topic_segment)} is invalid: #{inspect(segment)}"
@@ -242,6 +240,19 @@ defmodule Mezzanine.ConfigRegistry.ClusterInvalidation do
 
   defp commit_hlc!(value) do
     raise ArgumentError, "#{field(:commit_hlc)} must be an HLC map, got: #{inspect(value)}"
+  end
+
+  defp topic_name?(topic) do
+    topic
+    |> String.split(".")
+    |> then(fn segments -> segments != [] and Enum.all?(segments, &topic_segment?/1) end)
+  end
+
+  defp topic_segment?(segment) do
+    segment != "" and
+      segment
+      |> :binary.bin_to_list()
+      |> Enum.all?(fn byte -> byte in ?a..?z or byte in ?0..?9 or byte in [?_, ?-] end)
   end
 
   defp datetime!(%DateTime{} = value, _key), do: value

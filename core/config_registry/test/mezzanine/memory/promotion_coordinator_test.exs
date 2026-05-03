@@ -63,7 +63,12 @@ defmodule Mezzanine.Memory.PromotionCoordinatorTest do
     assert plan.idempotency_key =~ candidate.candidate_id
     assert plan.idempotency_key =~ candidate.promotion_policy_ref
     assert plan.task_queue == TemporalQueueRouting.promotion_queue(@installation_ref)
-    assert plan.worker_identity =~ ~r/\Amez-a\/12345678\/promotion_worker\/[a-z2-7]{20}\z/
+
+    assert ["mez-a", "12345678", "promotion_worker", queue_segment] =
+             String.split(plan.worker_identity, "/")
+
+    assert byte_size(queue_segment) == 20
+    assert b32lower_segment?(queue_segment)
     refute plan.worker_identity =~ @installation_ref
     refute plan.worker_identity =~ "PID"
     assert plan.signal_name == "memory.promotion.decision"
@@ -97,6 +102,12 @@ defmodule Mezzanine.Memory.PromotionCoordinatorTest do
     assert proof_token.commit_hlc == @commit_hlc
     assert proof_token.governance_decision_ref["decision"] == "approved"
     assert proof_token.metadata["promotion_status"] == "approved"
+  end
+
+  defp b32lower_segment?(segment) do
+    segment
+    |> :binary.bin_to_list()
+    |> Enum.all?(fn byte -> byte in ?a..?z or byte in ?2..?7 end)
   end
 
   test "review-gated promotion waits for quorum decision before governed write" do

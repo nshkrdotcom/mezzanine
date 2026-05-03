@@ -11,13 +11,19 @@ defmodule Mezzanine.Audit.TemporalQueueRoutingTest do
     segment = TemporalQueueRouting.hash_segment(@installation_ref)
 
     assert byte_size(segment) == 20
-    assert segment =~ ~r/\A[a-z2-7]+\z/
+    assert b32lower_segment?(segment)
 
     assert TemporalQueueRouting.promotion_queue(@installation_ref) ==
              "mez.promotion.#{segment}"
 
     assert TemporalQueueRouting.workflow_runtime_queue(@tenant_ref) ==
              "mez.workflow_runtime.#{TemporalQueueRouting.hash_segment(@tenant_ref)}"
+  end
+
+  defp b32lower_segment?(segment) do
+    segment
+    |> :binary.bin_to_list()
+    |> Enum.all?(fn byte -> byte in ?a..?z or byte in ?2..?7 end)
   end
 
   test "declares canonical static queues" do

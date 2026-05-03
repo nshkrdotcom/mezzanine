@@ -211,7 +211,7 @@ defmodule Mezzanine.Audit.AuditInclusionProof do
   end
 
   defp validate_hash(value, field) when is_binary(value) and byte_size(value) == 64 do
-    if String.match?(value, ~r/^[0-9a-f]+$/) do
+    if lower_hex?(value) do
       :ok
     else
       {:error, {:invalid_hash, field}}
@@ -222,6 +222,12 @@ defmodule Mezzanine.Audit.AuditInclusionProof do
 
   defp validate_optional_hash(nil), do: :ok
   defp validate_optional_hash(value), do: validate_hash(value, :previous_checkpoint_hash)
+
+  defp lower_hex?(value) do
+    value
+    |> :binary.bin_to_list()
+    |> Enum.all?(fn byte -> byte in ?0..?9 or byte in ?a..?f end)
+  end
 
   defp validate_merkle_fields(attrs) do
     case map_value(attrs, :proof_type) do

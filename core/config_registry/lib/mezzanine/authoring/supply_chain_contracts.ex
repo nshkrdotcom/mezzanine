@@ -17,7 +17,6 @@ defmodule Mezzanine.Authoring.SupplyChainSupport do
     :pack_ref
   ]
   @optional_actor_fields [:principal_ref, :system_actor_ref]
-  @sha256_regex ~r/\Asha256:[0-9a-f]{64}\z/
 
   @spec base_required_binary_fields() :: [atom()]
   def base_required_binary_fields, do: @base_required_binary_fields
@@ -71,7 +70,14 @@ defmodule Mezzanine.Authoring.SupplyChainSupport do
   def present_binary?(value), do: is_binary(value) and byte_size(String.trim(value)) > 0
 
   @spec sha256?(term()) :: boolean()
-  def sha256?(value), do: is_binary(value) and Regex.match?(@sha256_regex, value)
+  def sha256?(<<"sha256:", digest::binary-size(64)>>), do: lower_hex?(digest)
+  def sha256?(_value), do: false
+
+  defp lower_hex?(value) do
+    value
+    |> :binary.bin_to_list()
+    |> Enum.all?(fn byte -> byte in ?0..?9 or byte in ?a..?f end)
+  end
 
   @spec non_empty_binary_list?(term()) :: boolean()
   def non_empty_binary_list?(values) when is_list(values) do

@@ -487,7 +487,7 @@ defmodule Mezzanine.Audit.MemoryProofToken do
   defp normalize_hash(hash) when is_binary(hash) do
     normalized_hash = String.downcase(String.trim(hash))
 
-    if byte_size(normalized_hash) == 64 and String.match?(normalized_hash, ~r/\A[0-9a-f]{64}\z/) do
+    if byte_size(normalized_hash) == 64 and lower_hex?(normalized_hash) do
       {:ok, normalized_hash}
     else
       :error
@@ -495,6 +495,12 @@ defmodule Mezzanine.Audit.MemoryProofToken do
   end
 
   defp normalize_hash(_hash), do: :error
+
+  defp lower_hex?(value) do
+    value
+    |> :binary.bin_to_list()
+    |> Enum.all?(fn byte -> byte in ?0..?9 or byte in ?a..?f end)
+  end
 
   defp missing_required_field?(:policy_refs, []), do: true
   defp missing_required_field?(:commit_hlc, value) when value == %{}, do: true

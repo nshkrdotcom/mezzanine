@@ -33,7 +33,21 @@ defmodule Mezzanine.Audit.TemporalQueueReverseLookupRecord do
     record
     |> cast(attrs, [:hash_segment, :typed_ref, :ref_kind, :queue])
     |> validate_required([:hash_segment, :typed_ref, :ref_kind, :queue])
-    |> validate_format(:hash_segment, ~r/\A[a-z2-7]{20}\z/)
+    |> validate_change(:hash_segment, fn :hash_segment, value ->
+      if hash_segment?(value) do
+        []
+      else
+        [hash_segment: "must be a 20 character b32lower segment"]
+      end
+    end)
     |> unique_constraint(:hash_segment)
   end
+
+  defp hash_segment?(value) when is_binary(value) and byte_size(value) == 20 do
+    value
+    |> :binary.bin_to_list()
+    |> Enum.all?(fn byte -> byte in ?a..?z or byte in ?2..?7 end)
+  end
+
+  defp hash_segment?(_value), do: false
 end

@@ -9,8 +9,6 @@ defmodule Mezzanine.Audit.TemporalQueueRouting do
   """
 
   @segment_size 20
-  @typed_queue_regex ~r/\Amez\.(?:promotion|workflow_runtime)\.([a-z2-7]{20})\z/
-  @node_shortname_regex ~r/\A[A-Za-z0-9_.-]+\z/
 
   @type reverse_lookup_entry :: %{
           hash_segment: String.t(),
@@ -119,7 +117,7 @@ defmodule Mezzanine.Audit.TemporalQueueRouting do
   defp fetch_valid_node_shortname(opts) do
     case Keyword.get(opts, :node_shortname) do
       value when is_binary(value) and value != "" ->
-        if Regex.match?(@node_shortname_regex, value) do
+        if node_shortname?(value) do
           {:ok, value}
         else
           {:error, :invalid_node_shortname}
@@ -142,14 +140,14 @@ defmodule Mezzanine.Audit.TemporalQueueRouting do
       value when is_atom(value) ->
         role = Atom.to_string(value)
 
-        if Regex.match?(@node_shortname_regex, role) do
+        if node_shortname?(role) do
           {:ok, role}
         else
           {:error, :invalid_worker_role}
         end
 
       value when is_binary(value) and value != "" ->
-        if Regex.match?(@node_shortname_regex, value) do
+        if node_shortname?(value) do
           {:ok, value}
         else
           {:error, :invalid_worker_role}
@@ -168,12 +166,31 @@ defmodule Mezzanine.Audit.TemporalQueueRouting do
   end
 
   defp task_queue_hash(queue) do
-    case Regex.run(@typed_queue_regex, queue) do
-      [_, hash] -> hash
-      nil -> hash_segment(queue)
-    end
+    typed_queue_hash(queue) || hash_segment(queue)
   end
 
   defp ensure_identity_size(identity) when byte_size(identity) <= 96, do: identity
   defp ensure_identity_size(_identity), do: {:error, :worker_identity_too_long}
+
+  defp typed_queue_hash("mez.promotion." <> segment), do: valid_queue_hash_segment(segment)
+  defp typed_queue_hash("mez.workflow_runtime." <> segment), do: valid_queue_hash_segment(segment)
+  defp typed_queue_hash(_queue), do: nil
+
+  defp valid_queue_hash_segment(segment) do
+    if byte_size(segment) == @segment_size and base32lower?(segment), do: segment, else: nil
+  end
+
+  defp base32lower?(value) do
+    value
+    |> :binary.bin_to_list()
+    |> Enum.all?(fn byte -> byte in ?a..?z or byte in ?2..?7 end)
+  end
+
+  defp node_shortname?(value) do
+    value
+    |> :binary.bin_to_list()
+    |> Enum.all?(fn byte ->
+      byte in ?A..?Z or byte in ?a..?z or byte in ?0..?9 or byte in [?_, ?., ?-]
+    end)
+  end
 end

@@ -647,11 +647,32 @@ defmodule Mezzanine.WorkflowRuntime.AgentLoop do
 
   defp ref_suffix(ref) when is_binary(ref) do
     ref
-    |> String.replace(~r/[^A-Za-z0-9]+/, "-")
+    |> ascii_alnum_dash()
     |> String.trim("-")
   end
 
   defp ref_suffix(ref), do: ref |> to_string() |> ref_suffix()
+
+  defp ascii_alnum_dash(value) do
+    value
+    |> :binary.bin_to_list()
+    |> Enum.reduce({[], false}, &append_ascii_suffix_char/2)
+    |> elem(0)
+    |> Enum.reverse()
+    |> List.to_string()
+  end
+
+  defp append_ascii_suffix_char(byte, {chars, _previous_dash?}) when byte in ?A..?Z,
+    do: {[byte | chars], false}
+
+  defp append_ascii_suffix_char(byte, {chars, _previous_dash?}) when byte in ?a..?z,
+    do: {[byte | chars], false}
+
+  defp append_ascii_suffix_char(byte, {chars, _previous_dash?}) when byte in ?0..?9,
+    do: {[byte | chars], false}
+
+  defp append_ascii_suffix_char(_byte, {chars, true}), do: {chars, true}
+  defp append_ascii_suffix_char(_byte, {chars, false}), do: {[?- | chars], true}
 
   defp normalize(input) do
     case Support.normalize_attrs(input) do
