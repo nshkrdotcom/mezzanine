@@ -20,6 +20,7 @@ defmodule Mezzanine.WorkflowRuntime.AgentLoop do
   }
 
   alias Mezzanine.PrivateWriter
+  alias Mezzanine.WorkflowRuntime.AuthorityAdmission
 
   @timestamp ~U[2026-04-27 00:00:00Z]
   @activity_sequence [
@@ -248,18 +249,37 @@ defmodule Mezzanine.WorkflowRuntime.AgentLoop do
      |> put_event(event_kind, String.replace(event_kind, ".", " "))}
   end
 
-  @spec submit_lower_run_activity(map()) :: {:ok, map()}
+  @spec submit_lower_run_activity(map()) :: {:ok, map()} | {:error, term()}
   def submit_lower_run_activity(%{authority_decision: %{decision: :approved}} = state) do
-    submission_ref = "lower-submission://agent-loop/#{ref_suffix(state.turn_ref)}"
+    with {:ok, handoff} <- maybe_authorize_provider_handoff(state) do
+      submission_ref = "lower-submission://agent-loop/#{ref_suffix(state.turn_ref)}"
 
-    {:ok,
-     state
-     |> Map.put(:lower_submission_ref, submission_ref)
-     |> Map.put(:submission_dedupe_key, "agent-run:lower:#{ref_suffix(state.turn_ref)}:decision")
-     |> put_event("action.submitted", "action submitted")}
+      {:ok,
+       state
+       |> Map.put(:lower_authority_handoff, handoff)
+       |> Map.put(:lower_submission_ref, submission_ref)
+       |> Map.put(
+         :submission_dedupe_key,
+         "agent-run:lower:#{ref_suffix(state.turn_ref)}:decision"
+       )
+       |> put_event("action.submitted", "action submitted")}
+    end
   end
 
   def submit_lower_run_activity(state), do: {:ok, state}
+
+  defp maybe_authorize_provider_handoff(state) do
+    if provider_effect?(state) do
+      AuthorityAdmission.authorize_provider_dispatch(state)
+    else
+      {:ok, nil}
+    end
+  end
+
+  defp provider_effect?(state) do
+    present?(map_value(state, :provider_family)) or
+      present?(map_value(state, :provider_account_ref))
+  end
 
   @spec await_execution_outcome_activity(map()) :: {:ok, map()} | {:error, term()}
   def await_execution_outcome_activity(%{authority_decision: %{decision: :approved}} = state) do
