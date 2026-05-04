@@ -21,6 +21,8 @@ defmodule Mezzanine.WorkflowRuntime.AuthorityAdmissionTest do
     assert :system_authorization_ref in missing
     assert :authority_packet_ref in missing
     assert :attach_grant_ref in missing
+    assert :target_auth_posture_ref in missing
+    assert :workspace_ref in missing
   end
 
   test "provider dispatch rejects raw material before provider effects" do
@@ -35,11 +37,29 @@ defmodule Mezzanine.WorkflowRuntime.AuthorityAdmissionTest do
     assert :provider_payload in forbidden
   end
 
+  test "provider dispatch rejects raw target material before lower handoff" do
+    assert {:error, {:forbidden_authority_material, forbidden}} =
+             AuthorityAdmission.authorize_provider_dispatch(
+               valid_attrs()
+               |> Map.put(:target_credential, "secret-target-token")
+               |> Map.put(:target_path, "/tmp/tenant-1/token")
+               |> Map.put(:workspace_secret, "workspace-secret")
+               |> Map.put(:token_file, "/home/operator/.token")
+             )
+
+    assert :target_credential in forbidden
+    assert :target_path in forbidden
+    assert :workspace_secret in forbidden
+    assert :token_file in forbidden
+  end
+
   test "provider dispatch emits redacted handoff with idempotency lineage" do
     assert {:ok, handoff} = AuthorityAdmission.authorize_provider_dispatch(valid_attrs())
 
     assert handoff.provider_family == "claude"
     assert handoff.authority_packet_ref == "authority-packet://tenant-1/packet-1"
+    assert handoff.target_auth_posture_ref == "target-posture://tenant-1/local-process/1"
+    assert handoff.workspace_ref == "workspace://tenant-1/runtime"
     assert handoff.idempotency_key == "idem-authority-admission-1"
     assert handoff.handoff_ref == "workflow-authority-handoff://idem-authority-admission-1"
     assert handoff.raw_material_present? == false
@@ -78,6 +98,12 @@ defmodule Mezzanine.WorkflowRuntime.AuthorityAdmissionTest do
       credential_lease_ref: "credential-lease://tenant-1/claude/lease-1",
       target_ref: "target://tenant-1/local-process/1",
       attach_grant_ref: "attach-grant://tenant-1/local-process/1",
+      target_auth_posture_ref: "target-posture://tenant-1/local-process/1",
+      boundary_session_id: "boundary-session-1",
+      workspace_ref: "workspace://tenant-1/runtime",
+      no_egress_posture_ref: "no-egress-posture://tenant-1/deny-external",
+      process_target_identity_ref: "process-target-identity://tenant-1/local-process/1",
+      stream_target_identity_ref: "stream-target-identity://tenant-1/stdout/1",
       operation_policy_ref: "operation-policy://tenant-1/claude/chat",
       policy_revision_ref: "policy-revision://tenant-1/rev-1",
       idempotency_key: "idem-authority-admission-1",

@@ -17,6 +17,12 @@ defmodule Mezzanine.WorkflowRuntime.AuthorityAdmission do
     :credential_lease_ref,
     :target_ref,
     :attach_grant_ref,
+    :target_auth_posture_ref,
+    :boundary_session_id,
+    :workspace_ref,
+    :no_egress_posture_ref,
+    :process_target_identity_ref,
+    :stream_target_identity_ref,
     :operation_policy_ref,
     :policy_revision_ref,
     :idempotency_key
@@ -34,7 +40,12 @@ defmodule Mezzanine.WorkflowRuntime.AuthorityAdmission do
     :raw_secret,
     :raw_token,
     :singleton_client,
-    :token
+    :target_credential,
+    :target_path,
+    :token,
+    :token_file,
+    :unmanaged_target_config,
+    :workspace_secret
   ]
 
   @handoff_fields @required_refs ++ [:trace_id, :authority_decision_ref]
