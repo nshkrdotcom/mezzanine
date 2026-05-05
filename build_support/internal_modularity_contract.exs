@@ -71,18 +71,7 @@ defmodule Mezzanine.Build.InternalModularityContract do
     },
     %{
       path: "core/headless_coding_ops",
-      allowed_internal_deps: [
-        "core/audit_engine",
-        "core/execution_engine",
-        "core/leasing",
-        "core/lifecycle_engine",
-        "core/m1_m2_runtime",
-        "core/mezzanine_core",
-        "core/ops_domain",
-        "core/ops_model",
-        "core/runtime_scheduler",
-        "core/workflow_runtime"
-      ]
+      allowed_internal_deps: []
     },
     %{
       path: "core/workspace_build_model",

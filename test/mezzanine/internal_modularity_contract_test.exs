@@ -41,4 +41,11 @@ defmodule Mezzanine.InternalModularityContractTest do
              """
     end)
   end
+
+  test "keeps headless coding ops outside the lower runtime dependency graph" do
+    spec = InternalModularityContract.spec_for("core/headless_coding_ops")
+
+    assert spec.allowed_internal_deps == []
+    assert InternalModularityContract.declared_internal_deps("core/headless_coding_ops") == []
+  end
 end

@@ -2,6 +2,30 @@ defmodule Mezzanine.HeadlessCodingOpsTest do
   use ExUnit.Case, async: true
 
   alias Mezzanine.HeadlessCodingOps
+  alias MezzanineHeadlessCodingOps.MixProject
+
+  test "package stays ref-only and does not declare lower runtime packages" do
+    deps = MixProject.project()[:deps]
+
+    lower_runtime_apps = [
+      :mezzanine_audit_engine,
+      :mezzanine_core,
+      :mezzanine_execution_engine,
+      :mezzanine_leasing,
+      :mezzanine_lifecycle_engine,
+      :mezzanine_m1_m2_runtime,
+      :mezzanine_ops_domain,
+      :mezzanine_ops_model,
+      :mezzanine_runtime_scheduler,
+      :mezzanine_workflow_runtime
+    ]
+
+    refute Enum.any?(deps, fn
+             {app, _opts} -> app in lower_runtime_apps
+             {app, _requirement, _opts} -> app in lower_runtime_apps
+             _other -> false
+           end)
+  end
 
   test "accepts headless intake with provider, target, session, and authority refs" do
     assert {:ok, work_item} = HeadlessCodingOps.intake(valid_intake())
