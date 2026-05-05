@@ -8,6 +8,12 @@ The package is ref-only. It accepts authority refs and operator commands, and
 it never accepts raw provider credentials, target credentials, local auth
 files, or unmanaged runtime config.
 
+Phase 14 handoff and resume proof uses `resume_handoff/1`. It preserves
+tenant, session, provider account, connector binding, credential handle,
+credential lease, native-auth assertion, target, attach grant, operation
+policy, trace, idempotency, and active execution refs, and rejects raw
+material or duplicate active execution before resuming.
+
 QC:
 
 ```bash

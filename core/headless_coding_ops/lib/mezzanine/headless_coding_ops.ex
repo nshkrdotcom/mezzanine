@@ -99,6 +99,61 @@ defmodule Mezzanine.HeadlessCodingOps do
     defstruct [:action, :actor_ref, :work_item_ref, :authority_refs, :idempotency_key]
   end
 
+  defmodule HandoffResume do
+    @moduledoc """
+    Ref-only handoff and resume proof for a headless coding session.
+    """
+
+    @type t :: %__MODULE__{
+            handoff_ref: String.t(),
+            tenant_ref: String.t(),
+            session_ref: String.t(),
+            work_item_ref: String.t(),
+            provider_account_ref: String.t(),
+            connector_binding_ref: String.t(),
+            credential_handle_ref: String.t(),
+            credential_lease_ref: String.t(),
+            native_auth_assertion_ref: String.t(),
+            target_ref: String.t(),
+            attach_grant_ref: String.t(),
+            operation_policy_ref: String.t(),
+            trace_ref: String.t(),
+            idempotency_key: String.t(),
+            active_execution_ref: String.t(),
+            current_execution_ref: String.t(),
+            restart_event:
+              :target_detach
+              | :sandbox_restart
+              | :process_crash
+              | :stream_reconnect
+              | :workflow_resume,
+            receipt_ref: String.t(),
+            redacted?: true
+          }
+
+    defstruct [
+      :handoff_ref,
+      :tenant_ref,
+      :session_ref,
+      :work_item_ref,
+      :provider_account_ref,
+      :connector_binding_ref,
+      :credential_handle_ref,
+      :credential_lease_ref,
+      :native_auth_assertion_ref,
+      :target_ref,
+      :attach_grant_ref,
+      :operation_policy_ref,
+      :trace_ref,
+      :idempotency_key,
+      :active_execution_ref,
+      :current_execution_ref,
+      :restart_event,
+      :receipt_ref,
+      redacted?: true
+    ]
+  end
+
   @required_intake_refs [
     :tenant_ref,
     :request_ref,
@@ -123,6 +178,33 @@ defmodule Mezzanine.HeadlessCodingOps do
     :token_file,
     :workspace_secret
   ]
+  @required_resume_refs [
+    :handoff_ref,
+    :tenant_ref,
+    :session_ref,
+    :work_item_ref,
+    :provider_account_ref,
+    :connector_binding_ref,
+    :credential_handle_ref,
+    :credential_lease_ref,
+    :native_auth_assertion_ref,
+    :target_ref,
+    :attach_grant_ref,
+    :operation_policy_ref,
+    :trace_ref,
+    :idempotency_key,
+    :active_execution_ref,
+    :current_execution_ref,
+    :restart_event
+  ]
+  @restart_events [
+    :target_detach,
+    :sandbox_restart,
+    :process_crash,
+    :stream_reconnect,
+    :workflow_resume
+  ]
+  @restart_event_lookup Map.new(@restart_events, &{Atom.to_string(&1), &1})
 
   @states [
     :completed,
@@ -166,7 +248,14 @@ defmodule Mezzanine.HeadlessCodingOps do
                     :authority_refs,
                     :receipt_ref,
                     :action,
-                    :actor_ref
+                    :actor_ref,
+                    :handoff_ref,
+                    :credential_handle_ref,
+                    :native_auth_assertion_ref,
+                    :attach_grant_ref,
+                    :active_execution_ref,
+                    :current_execution_ref,
+                    :restart_event
                   ]
 
   @spec intake(map() | keyword()) ::
@@ -232,6 +321,57 @@ defmodule Mezzanine.HeadlessCodingOps do
     end
   end
 
+  @spec resume_handoff(map() | keyword()) ::
+          {:ok, HandoffResume.t()}
+          | {:error, {:missing_headless_resume_refs, [atom()]}}
+          | {:error, {:forbidden_headless_material, [atom()]}}
+          | {:error, {:duplicate_active_execution_after_restart, map()}}
+          | {:error, {:unsupported_restart_event, term()}}
+  def resume_handoff(attrs) when is_map(attrs) or is_list(attrs) do
+    attrs = normalize(attrs)
+
+    with [] <- forbidden_material(attrs),
+         [] <- missing_refs(attrs, @required_resume_refs),
+         {:ok, restart_event} <- normalize_restart_event(Map.get(attrs, :restart_event)),
+         :ok <- ensure_single_active_execution(attrs) do
+      receipt_ref = "headless-coding-ops-resume://tenant-1/#{Map.fetch!(attrs, :idempotency_key)}"
+
+      {:ok,
+       %HandoffResume{
+         handoff_ref: Map.fetch!(attrs, :handoff_ref),
+         tenant_ref: Map.fetch!(attrs, :tenant_ref),
+         session_ref: Map.fetch!(attrs, :session_ref),
+         work_item_ref: Map.fetch!(attrs, :work_item_ref),
+         provider_account_ref: Map.fetch!(attrs, :provider_account_ref),
+         connector_binding_ref: Map.fetch!(attrs, :connector_binding_ref),
+         credential_handle_ref: Map.fetch!(attrs, :credential_handle_ref),
+         credential_lease_ref: Map.fetch!(attrs, :credential_lease_ref),
+         native_auth_assertion_ref: Map.fetch!(attrs, :native_auth_assertion_ref),
+         target_ref: Map.fetch!(attrs, :target_ref),
+         attach_grant_ref: Map.fetch!(attrs, :attach_grant_ref),
+         operation_policy_ref: Map.fetch!(attrs, :operation_policy_ref),
+         trace_ref: Map.fetch!(attrs, :trace_ref),
+         idempotency_key: Map.fetch!(attrs, :idempotency_key),
+         active_execution_ref: Map.fetch!(attrs, :active_execution_ref),
+         current_execution_ref: Map.fetch!(attrs, :current_execution_ref),
+         restart_event: restart_event,
+         receipt_ref: receipt_ref
+       }}
+    else
+      forbidden when is_list(forbidden) and forbidden != [] ->
+        {:error, {:forbidden_headless_material, forbidden}}
+
+      missing when is_list(missing) and missing != [] ->
+        {:error, {:missing_headless_resume_refs, missing}}
+
+      {:error, {:unsupported_restart_event, event}} ->
+        {:error, {:unsupported_restart_event, event}}
+
+      {:error, {:duplicate_active_execution_after_restart, details}} ->
+        {:error, {:duplicate_active_execution_after_restart, details}}
+    end
+  end
+
   defp work_item(attrs) do
     %WorkItem{
       tenant_ref: Map.fetch!(attrs, :tenant_ref),
@@ -266,6 +406,34 @@ defmodule Mezzanine.HeadlessCodingOps do
 
   defp normalize_action(value) when is_binary(value), do: Map.fetch(@action_lookup, value)
   defp normalize_action(_value), do: :error
+
+  defp normalize_restart_event(value) when is_atom(value) do
+    if value in @restart_events,
+      do: {:ok, value},
+      else: {:error, {:unsupported_restart_event, value}}
+  end
+
+  defp normalize_restart_event(value) when is_binary(value) do
+    case Map.fetch(@restart_event_lookup, value) do
+      {:ok, event} -> {:ok, event}
+      :error -> {:error, {:unsupported_restart_event, value}}
+    end
+  end
+
+  defp normalize_restart_event(value), do: {:error, {:unsupported_restart_event, value}}
+
+  defp ensure_single_active_execution(attrs) do
+    active = Map.get(attrs, :active_execution_ref)
+    current = Map.get(attrs, :current_execution_ref)
+
+    if active == current do
+      :ok
+    else
+      {:error,
+       {:duplicate_active_execution_after_restart,
+        %{active_execution_ref: active, current_execution_ref: current, redacted?: true}}}
+    end
+  end
 
   defp normalize(attrs) when is_list(attrs), do: attrs |> Map.new() |> normalize()
 

@@ -3,6 +3,47 @@ Code.require_file("workspace_contract.exs", __DIR__)
 defmodule Mezzanine.Build.WeldContract do
   @moduledoc false
 
+  @repo_root Path.expand("..", __DIR__)
+  @citadel_repo_path Path.expand("../citadel", @repo_root)
+  @execution_plane_repo_path Path.expand("../execution_plane", @repo_root)
+  @temporalex_repo_path Path.expand("../temporalex", @repo_root)
+
+  @dependencies [
+    citadel_governance: [
+      opts:
+        if File.dir?(@citadel_repo_path) do
+          [git: @citadel_repo_path, subdir: "core/citadel_governance"]
+        else
+          [
+            github: "nshkrdotcom/citadel",
+            branch: "main",
+            subdir: "core/citadel_governance"
+          ]
+        end
+    ],
+    execution_plane: [
+      opts:
+        if File.dir?(@execution_plane_repo_path) do
+          [git: @execution_plane_repo_path, subdir: "core/execution_plane", override: true]
+        else
+          [
+            github: "nshkrdotcom/execution_plane",
+            branch: "main",
+            subdir: "core/execution_plane",
+            override: true
+          ]
+        end
+    ],
+    temporalex: [
+      opts:
+        if File.dir?(@temporalex_repo_path) do
+          [git: @temporalex_repo_path]
+        else
+          [github: "nshkrdotcom/temporalex", branch: "main"]
+        end
+    ]
+  ]
+
   @artifact_docs [
     "README.md",
     "core/mezzanine_core/README.md",
@@ -39,6 +80,7 @@ defmodule Mezzanine.Build.WeldContract do
       publication: [
         internal_only: ["."]
       ],
+      dependencies: @dependencies,
       artifacts: [
         mezzanine_core: artifact()
       ]
