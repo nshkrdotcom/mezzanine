@@ -69,6 +69,39 @@ defmodule Mezzanine.WorkflowRuntime.TemporalSupervisorTest do
            ]
   end
 
+  test "rejects unknown Temporal instance bases before module construction" do
+    assert_raise ArgumentError,
+                 "unknown Temporal instance base: Mezzanine.WorkflowRuntime.RuntimeConfiguredBase",
+                 fn ->
+                   TemporalSupervisor.instance_name("mezzanine.hazmat",
+                     enabled?: true,
+                     instance_base: Mezzanine.WorkflowRuntime.RuntimeConfiguredBase
+                   )
+                 end
+  end
+
+  test "rejects unknown Temporal task queues before module construction" do
+    assert_raise ArgumentError, "unknown Temporal task queue: \"provider.selected.queue\"", fn ->
+      TemporalSupervisor.instance_name("provider.selected.queue",
+        enabled?: true,
+        instance_base: Mezzanine.WorkflowRuntime.TestTemporal
+      )
+    end
+  end
+
+  test "uses source-owned Temporal instance registry without runtime module concatenation" do
+    source =
+      Path.expand("../../../lib/mezzanine/workflow_runtime/temporal_supervisor.ex", __DIR__)
+      |> File.read!()
+
+    refute String.contains?(source, "Module" <> ".concat")
+
+    assert TemporalSupervisor.instance_name("mezzanine.semantic",
+             enabled?: true,
+             instance_base: Mezzanine.WorkflowRuntime.Phase6Temporal
+           ) == Mezzanine.WorkflowRuntime.Phase6Temporal.MezzanineSemantic
+  end
+
   test "governed runtime config ignores application-configured Temporal credentials" do
     previous = Application.get_env(:mezzanine_workflow_runtime, :temporal)
 

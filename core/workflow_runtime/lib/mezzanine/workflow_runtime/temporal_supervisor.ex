@@ -13,6 +13,42 @@ defmodule Mezzanine.WorkflowRuntime.TemporalSupervisor do
   @default_address "127.0.0.1:7233"
   @default_namespace "default"
   @default_instance_base Mezzanine.WorkflowRuntime.Temporal
+  @task_queue_instance_modules [
+    {Mezzanine.WorkflowRuntime.Temporal, "mezzanine.agentic",
+     Mezzanine.WorkflowRuntime.Temporal.MezzanineAgentic},
+    {Mezzanine.WorkflowRuntime.Temporal, "mezzanine.hazmat",
+     Mezzanine.WorkflowRuntime.Temporal.MezzanineHazmat},
+    {Mezzanine.WorkflowRuntime.Temporal, "mezzanine.review",
+     Mezzanine.WorkflowRuntime.Temporal.MezzanineReview},
+    {Mezzanine.WorkflowRuntime.Temporal, "mezzanine.semantic",
+     Mezzanine.WorkflowRuntime.Temporal.MezzanineSemantic},
+    {Mezzanine.WorkflowRuntime.TestTemporal, "mezzanine.agentic",
+     Mezzanine.WorkflowRuntime.TestTemporal.MezzanineAgentic},
+    {Mezzanine.WorkflowRuntime.TestTemporal, "mezzanine.hazmat",
+     Mezzanine.WorkflowRuntime.TestTemporal.MezzanineHazmat},
+    {Mezzanine.WorkflowRuntime.TestTemporal, "mezzanine.review",
+     Mezzanine.WorkflowRuntime.TestTemporal.MezzanineReview},
+    {Mezzanine.WorkflowRuntime.TestTemporal, "mezzanine.semantic",
+     Mezzanine.WorkflowRuntime.TestTemporal.MezzanineSemantic},
+    {Mezzanine.WorkflowRuntime.Phase6Temporal, "mezzanine.agentic",
+     Mezzanine.WorkflowRuntime.Phase6Temporal.MezzanineAgentic},
+    {Mezzanine.WorkflowRuntime.Phase6Temporal, "mezzanine.hazmat",
+     Mezzanine.WorkflowRuntime.Phase6Temporal.MezzanineHazmat},
+    {Mezzanine.WorkflowRuntime.Phase6Temporal, "mezzanine.review",
+     Mezzanine.WorkflowRuntime.Phase6Temporal.MezzanineReview},
+    {Mezzanine.WorkflowRuntime.Phase6Temporal, "mezzanine.semantic",
+     Mezzanine.WorkflowRuntime.Phase6Temporal.MezzanineSemantic}
+  ]
+  @instance_module_registry Enum.reduce(@task_queue_instance_modules, %{}, fn {base, queue,
+                                                                               module},
+                                                                              registry ->
+                              Map.update(
+                                registry,
+                                base,
+                                %{queue => module},
+                                &Map.put(&1, queue, module)
+                              )
+                            end)
 
   @type runtime_config :: keyword()
 
@@ -65,7 +101,22 @@ defmodule Mezzanine.WorkflowRuntime.TemporalSupervisor do
   @doc "Returns the configured Temporalex instance module for a task queue."
   @spec instance_name(String.t(), runtime_config()) :: module()
   def instance_name(task_queue, config \\ runtime_config()) do
-    Module.concat(Keyword.fetch!(config, :instance_base), task_queue_suffix(task_queue))
+    config = runtime_config(config)
+    instance_base = Keyword.fetch!(config, :instance_base)
+
+    case Map.fetch(@instance_module_registry, instance_base) do
+      {:ok, task_queue_modules} ->
+        case Map.fetch(task_queue_modules, task_queue) do
+          {:ok, module} ->
+            module
+
+          :error ->
+            raise ArgumentError, "unknown Temporal task queue: #{inspect(task_queue)}"
+        end
+
+      :error ->
+        raise ArgumentError, "unknown Temporal instance base: #{inspect(instance_base)}"
+    end
   end
 
   @doc "Returns the Temporalex connection name for a task queue."
@@ -123,26 +174,6 @@ defmodule Mezzanine.WorkflowRuntime.TemporalSupervisor do
   defp temporalex_address("http://" <> _rest = address), do: address
   defp temporalex_address("https://" <> _rest = address), do: address
   defp temporalex_address(address), do: "http://" <> address
-
-  defp task_queue_suffix(task_queue) do
-    task_queue
-    |> ascii_alnum_underscore()
-    |> String.trim("_")
-    |> Macro.camelize()
-  end
-
-  defp ascii_alnum_underscore(value) do
-    value
-    |> :binary.bin_to_list()
-    |> Enum.map(fn byte ->
-      if byte in ?A..?Z or byte in ?a..?z or byte in ?0..?9 do
-        byte
-      else
-        ?_
-      end
-    end)
-    |> List.to_string()
-  end
 
   defp maybe_put(opts, _key, nil), do: opts
   defp maybe_put(opts, _key, []), do: opts
