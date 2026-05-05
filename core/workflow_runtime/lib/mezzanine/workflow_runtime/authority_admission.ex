@@ -13,6 +13,7 @@ defmodule Mezzanine.WorkflowRuntime.AuthorityAdmission do
     :provider_family,
     :provider_account_ref,
     :connector_instance_ref,
+    :connector_binding_ref,
     :credential_handle_ref,
     :credential_lease_ref,
     :target_ref,
@@ -23,6 +24,7 @@ defmodule Mezzanine.WorkflowRuntime.AuthorityAdmission do
     :no_egress_posture_ref,
     :process_target_identity_ref,
     :stream_target_identity_ref,
+    :operation_scope_ref,
     :operation_policy_ref,
     :policy_revision_ref,
     :idempotency_key

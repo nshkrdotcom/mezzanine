@@ -193,17 +193,53 @@ defmodule Mezzanine.WorkflowRuntime.FinalTemporalCutover do
 
   defp source_files(root, extension) do
     root = Path.expand(root)
+    suffix = String.replace_prefix(extension, "*", "")
 
     [
-      Path.join([root, "core", "**", extension]),
-      Path.join([root, "apps", "**", extension]),
-      Path.join([root, "bridges", "**", extension]),
-      Path.join([root, "config", extension])
+      {Path.join(root, "core"), :recursive},
+      {Path.join(root, "apps"), :recursive},
+      {Path.join(root, "bridges"), :recursive},
+      {Path.join(root, "config"), :flat}
     ]
-    |> Enum.flat_map(&Path.wildcard/1)
+    |> Enum.flat_map(fn {path, mode} -> collect_source_files(path, suffix, mode) end)
     |> Enum.uniq()
-    |> Enum.reject(&(String.contains?(&1, "/deps/") or String.contains?(&1, "/_build/")))
     |> Enum.sort()
+  end
+
+  defp collect_source_files(path, suffix, :flat) do
+    path
+    |> list_dir()
+    |> Enum.map(&Path.join(path, &1))
+    |> Enum.filter(&(File.regular?(&1) and String.ends_with?(&1, suffix)))
+  end
+
+  defp collect_source_files(path, suffix, :recursive) do
+    cond do
+      generated_source_dir?(path) ->
+        []
+
+      File.dir?(path) ->
+        path
+        |> list_dir()
+        |> Enum.flat_map(&collect_source_files(Path.join(path, &1), suffix, :recursive))
+
+      File.regular?(path) and String.ends_with?(path, suffix) ->
+        [path]
+
+      true ->
+        []
+    end
+  end
+
+  defp generated_source_dir?(path) do
+    Path.basename(path) in ["_build", "deps"]
+  end
+
+  defp list_dir(path) do
+    case File.ls(path) do
+      {:ok, entries} -> entries
+      {:error, _reason} -> []
+    end
   end
 
   defp discover_oban_worker_modules(path) do

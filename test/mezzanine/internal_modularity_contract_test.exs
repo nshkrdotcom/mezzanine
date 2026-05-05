@@ -12,8 +12,10 @@ defmodule Mezzanine.InternalModularityContractTest do
              "core/decision_engine",
              "core/evidence_engine",
              "core/execution_engine",
+             "core/headless_coding_ops",
              "core/leasing",
              "core/lifecycle_engine",
+             "core/m1_m2_runtime",
              "core/mezzanine_core",
              "core/object_engine",
              "core/operator_engine",
@@ -23,7 +25,8 @@ defmodule Mezzanine.InternalModularityContractTest do
              "core/pack_model",
              "core/projection_engine",
              "core/runtime_scheduler",
-             "core/workflow_runtime"
+             "core/workflow_runtime",
+             "core/workspace_build_model"
            ]
   end
 

@@ -58,7 +58,9 @@ defmodule Mezzanine.WorkflowRuntime.AuthorityAdmissionTest do
 
     assert handoff.provider_family == "claude"
     assert handoff.authority_packet_ref == "authority-packet://tenant-1/packet-1"
+    assert handoff.connector_binding_ref == "connector-binding://tenant-1/claude/default"
     assert handoff.target_auth_posture_ref == "target-posture://tenant-1/local-process/1"
+    assert handoff.operation_scope_ref == "operation-scope://tenant-1/claude/chat"
     assert handoff.workspace_ref == "workspace://tenant-1/runtime"
     assert handoff.idempotency_key == "idem-authority-admission-1"
     assert handoff.handoff_ref == "workflow-authority-handoff://idem-authority-admission-1"
@@ -67,6 +69,17 @@ defmodule Mezzanine.WorkflowRuntime.AuthorityAdmissionTest do
     refute inspect(handoff) =~ "secret"
     refute Map.has_key?(handoff, :raw_token)
     refute Map.has_key?(handoff, :provider_payload)
+  end
+
+  test "provider dispatch requires connector binding and operation scope refs" do
+    assert {:error, {:missing_required_authority_refs, missing}} =
+             valid_attrs()
+             |> Map.delete(:connector_binding_ref)
+             |> Map.delete(:operation_scope_ref)
+             |> AuthorityAdmission.authorize_provider_dispatch()
+
+    assert :connector_binding_ref in missing
+    assert :operation_scope_ref in missing
   end
 
   test "workflow admission keeps ReqLlmNext and another provider authority refs distinct" do
@@ -129,6 +142,7 @@ defmodule Mezzanine.WorkflowRuntime.AuthorityAdmissionTest do
       provider_family: "claude",
       provider_account_ref: "provider-account://tenant-1/claude/main",
       connector_instance_ref: "connector-instance://tenant-1/claude/default",
+      connector_binding_ref: "connector-binding://tenant-1/claude/default",
       credential_handle_ref: "credential-handle://tenant-1/claude/handle-1",
       credential_lease_ref: "credential-lease://tenant-1/claude/lease-1",
       target_ref: "target://tenant-1/local-process/1",
@@ -139,6 +153,7 @@ defmodule Mezzanine.WorkflowRuntime.AuthorityAdmissionTest do
       no_egress_posture_ref: "no-egress-posture://tenant-1/deny-external",
       process_target_identity_ref: "process-target-identity://tenant-1/local-process/1",
       stream_target_identity_ref: "stream-target-identity://tenant-1/stdout/1",
+      operation_scope_ref: "operation-scope://tenant-1/claude/chat",
       operation_policy_ref: "operation-policy://tenant-1/claude/chat",
       policy_revision_ref: "policy-revision://tenant-1/rev-1",
       idempotency_key: "idem-authority-admission-1",
