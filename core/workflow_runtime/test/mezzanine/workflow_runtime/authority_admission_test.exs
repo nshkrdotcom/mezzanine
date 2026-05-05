@@ -69,6 +69,41 @@ defmodule Mezzanine.WorkflowRuntime.AuthorityAdmissionTest do
     refute Map.has_key?(handoff, :provider_payload)
   end
 
+  test "workflow admission keeps ReqLlmNext and another provider authority refs distinct" do
+    reqllm_attrs =
+      valid_attrs()
+      |> Map.merge(%{
+        provider_family: "reqllm_next",
+        provider_account_ref: "provider-account://tenant-1/reqllm/openai",
+        connector_instance_ref: "connector-instance://tenant-1/reqllm/openai",
+        credential_handle_ref: "credential-handle://tenant-1/reqllm/openai-key",
+        credential_lease_ref: "credential-lease://tenant-1/reqllm/openai-key",
+        target_ref: "target://tenant-1/llm-http/1",
+        attach_grant_ref: "attach-grant://tenant-1/llm-http/1",
+        target_auth_posture_ref: "target-posture://tenant-1/llm-http/1",
+        operation_policy_ref: "operation-policy://tenant-1/reqllm/responses",
+        idempotency_key: "idem-authority-admission-reqllm",
+        trace_id: "trace-authority-admission-reqllm"
+      })
+
+    claude_attrs = valid_attrs()
+
+    assert {:ok, reqllm_handoff} =
+             AuthorityAdmission.authorize_provider_dispatch(reqllm_attrs)
+
+    assert {:ok, claude_handoff} =
+             AuthorityAdmission.authorize_provider_dispatch(claude_attrs)
+
+    assert reqllm_handoff.provider_family == "reqllm_next"
+    assert claude_handoff.provider_family == "claude"
+    refute reqllm_handoff.provider_account_ref == claude_handoff.provider_account_ref
+    refute reqllm_handoff.credential_lease_ref == claude_handoff.credential_lease_ref
+    refute reqllm_handoff.target_ref == claude_handoff.target_ref
+    refute reqllm_handoff.operation_policy_ref == claude_handoff.operation_policy_ref
+    refute inspect(reqllm_handoff) =~ "secret"
+    refute inspect(claude_handoff) =~ "secret"
+  end
+
   test "agent loop refuses provider lower submission without provider authority refs" do
     state = %{
       authority_decision: %{decision: :approved},
