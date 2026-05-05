@@ -44,6 +44,30 @@ defmodule Mezzanine.HeadlessCodingOpsTest do
   end
 
   test "operator controls are bounded and authority-ref only" do
+    required_authority_actions = [
+      :revoke_authority,
+      :rotate_authority,
+      :renew_authority,
+      :rebind_authority,
+      :detach_authority,
+      :transfer_authority,
+      :inspect_authority,
+      :invalidate_authority
+    ]
+
+    assert Enum.all?(required_authority_actions, &(&1 in HeadlessCodingOps.actions()))
+
+    Enum.each(required_authority_actions, fn action ->
+      assert {:ok, %HeadlessCodingOps.OperatorCommand{action: ^action}} =
+               HeadlessCodingOps.operator_action(%{
+                 action: action,
+                 actor_ref: "actor://tenant-1/operator/1",
+                 work_item_ref: "work-item://tenant-1/headless/1",
+                 authority_refs: ["authority://tenant-1/#{action}/1"],
+                 idempotency_key: "operator-#{action}"
+               })
+    end)
+
     assert {:ok, command} =
              HeadlessCodingOps.operator_action(%{
                action: :rotate_lease,

@@ -79,8 +79,16 @@ defmodule Mezzanine.HeadlessCodingOps do
               | :reassign_provider
               | :reassign_target
               | :request_human_input
+              | :revoke_authority
+              | :rotate_authority
               | :rotate_lease
+              | :renew_authority
+              | :rebind_authority
+              | :detach_authority
               | :detach_target
+              | :transfer_authority
+              | :inspect_authority
+              | :invalidate_authority
               | :resume_session,
             actor_ref: String.t() | nil,
             work_item_ref: String.t() | nil,
@@ -135,8 +143,16 @@ defmodule Mezzanine.HeadlessCodingOps do
     :reassign_provider,
     :reassign_target,
     :request_human_input,
+    :revoke_authority,
+    :rotate_authority,
     :rotate_lease,
+    :renew_authority,
+    :rebind_authority,
+    :detach_authority,
     :detach_target,
+    :transfer_authority,
+    :inspect_authority,
+    :invalidate_authority,
     :resume_session
   ]
   @action_lookup Map.new(@actions, &{Atom.to_string(&1), &1})
@@ -171,6 +187,9 @@ defmodule Mezzanine.HeadlessCodingOps do
         {:error, {:forbidden_headless_material, forbidden}}
     end
   end
+
+  @spec actions() :: [atom()]
+  def actions, do: @actions
 
   @spec readback_state(map() | keyword()) ::
           {:ok, ReadbackState.t()} | {:error, {:invalid_headless_state, term()}}
