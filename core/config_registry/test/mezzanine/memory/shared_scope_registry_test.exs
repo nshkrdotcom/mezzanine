@@ -66,7 +66,7 @@ defmodule Mezzanine.Memory.SharedScopeRegistryTest do
   end
 
   test "registration and deregistration publish exact and shared cache fanout topics through Phoenix PubSub" do
-    pubsub = Module.concat(__MODULE__, PubSub)
+    pubsub = Mezzanine.Memory.SharedScopeRegistryTest.PubSub
     start_supervised!({Phoenix.PubSub, name: pubsub})
 
     previous_publisher =

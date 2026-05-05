@@ -111,7 +111,7 @@ defmodule Mezzanine.ConfigRegistry.ClusterInvalidationTest do
   end
 
   test "configured Phoenix PubSub publisher broadcasts exact and cache fanout topics" do
-    pubsub = Module.concat(__MODULE__, PubSub)
+    pubsub = Mezzanine.ConfigRegistry.ClusterInvalidationTest.PubSub
     start_supervised!({Phoenix.PubSub, name: pubsub})
 
     previous_publisher =

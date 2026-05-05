@@ -18,6 +18,8 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
   @workflow_contract "Mezzanine.WorkflowExecutionLifecycleInput.v1"
   @signal_contract "Mezzanine.WorkflowReceiptSignal.v1"
   @terminal_policy_contract "Mezzanine.WorkflowTerminalReceiptPolicy.v1"
+  @authorized_invocation_module :"Elixir.Mezzanine.IntegrationBridge.AuthorizedInvocation"
+  @receipt_reducer_module :"Elixir.Mezzanine.Projections.ReceiptReducer"
   @operator_signals [
     "operator.cancel",
     "operator.pause",
@@ -688,7 +690,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
         attrs,
         :mezzanine_workflow_runtime,
         :receipt_reducer,
-        Module.concat([Mezzanine, Projections, ReceiptReducer]),
+        receipt_reducer_module(),
         governed_default?: true
       )
 
@@ -919,14 +921,18 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
   end
 
   defp build_authorized_invocation(attrs) do
-    module = Module.concat([Mezzanine, IntegrationBridge, AuthorizedInvocation])
+    module = authorized_invocation_module()
 
     if Code.ensure_loaded?(module) and function_exported?(module, :new, 1) do
-      module.new(attrs)
+      :erlang.apply(module, :new, [attrs])
     else
       {:ok, Map.put(attrs, :authorized_invocation_boundary, module)}
     end
   end
+
+  defp authorized_invocation_module, do: @authorized_invocation_module
+
+  defp receipt_reducer_module, do: @receipt_reducer_module
 
   defp normalize_authority(nil), do: %{}
   defp normalize_authority(authority) when is_map(authority), do: normalize(authority)

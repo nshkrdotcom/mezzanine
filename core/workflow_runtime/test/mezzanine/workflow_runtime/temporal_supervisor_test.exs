@@ -102,6 +102,18 @@ defmodule Mezzanine.WorkflowRuntime.TemporalSupervisorTest do
            ) == Mezzanine.WorkflowRuntime.Phase6Temporal.MezzanineSemantic
   end
 
+  test "resolves StackLab source-owned Temporal bases through the explicit registry" do
+    assert TemporalSupervisor.instance_name("mezzanine.hazmat",
+             enabled?: true,
+             instance_base: Mezzanine.WorkflowRuntime.PrelimTemporal
+           ) == Mezzanine.WorkflowRuntime.PrelimTemporal.MezzanineHazmat
+
+    assert TemporalSupervisor.instance_name("mezzanine.hazmat",
+             enabled?: true,
+             instance_base: Mezzanine.WorkflowRuntime.StackLabPhase6Temporal
+           ) == Mezzanine.WorkflowRuntime.StackLabPhase6Temporal.MezzanineHazmat
+  end
+
   test "governed runtime config ignores application-configured Temporal credentials" do
     previous = Application.get_env(:mezzanine_workflow_runtime, :temporal)
 
