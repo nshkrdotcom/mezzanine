@@ -1,6 +1,9 @@
 defmodule Mezzanine.WorkspaceTest do
   use ExUnit.Case, async: true
 
+  Code.require_file("../../build_support/weld.exs", __DIR__)
+
+  alias Mezzanine.Build.WeldContract
   alias Mezzanine.Build.WorkspaceContract
 
   test "declares the neutral package scaffold" do
@@ -185,6 +188,41 @@ defmodule Mezzanine.WorkspaceTest do
     refute "surfaces/*" in Mezzanine.Workspace.active_project_globs()
   end
 
+  test "weld projects an explicit execution-plane dependency for Citadel governance" do
+    dependencies =
+      WeldContract.manifest()
+      |> Keyword.fetch!(:dependencies)
+
+    execution_plane_opts =
+      dependencies
+      |> Keyword.fetch!(:execution_plane)
+      |> Keyword.fetch!(:opts)
+
+    assert Keyword.fetch!(execution_plane_opts, :git) ==
+             repo_root()
+             |> Path.join("../execution_plane")
+             |> Path.expand()
+
+    assert Keyword.fetch!(execution_plane_opts, :subdir) == "core/execution_plane"
+    assert Keyword.fetch!(execution_plane_opts, :override) == true
+
+    assert File.exists?(
+             repo_root()
+             |> Path.join("../execution_plane/core/execution_plane/mix.exs")
+             |> Path.expand()
+           )
+
+    citadel_bridge_mix =
+      repo_root()
+      |> Path.join("bridges/citadel_bridge/mix.exs")
+      |> File.read!()
+
+    assert String.contains?(
+             citadel_bridge_mix,
+             "{:execution_plane, path: \"../../../execution_plane/core/execution_plane\", override: true}"
+           )
+  end
+
   defp assert_refutes_file_patterns(root, patterns, needle) do
     patterns
     |> Enum.flat_map(fn pattern ->
@@ -216,4 +254,6 @@ defmodule Mezzanine.WorkspaceTest do
       [absolute]
     end
   end
+
+  defp repo_root, do: Path.expand("../..", __DIR__)
 end
