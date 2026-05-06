@@ -18,6 +18,7 @@ defmodule Mezzanine.WorkspaceTest do
     assert "core/workspace_engine" in Mezzanine.Workspace.neutral_package_paths()
     assert "core/execution_engine" in Mezzanine.Workspace.neutral_package_paths()
     assert "core/runtime_scheduler" in Mezzanine.Workspace.neutral_package_paths()
+    assert "core/adaptive_control_engine" in Mezzanine.Workspace.neutral_package_paths()
     assert "core/ai_run_model" in Mezzanine.Workspace.neutral_package_paths()
     assert "core/decision_engine" in Mezzanine.Workspace.neutral_package_paths()
     assert "core/evidence_engine" in Mezzanine.Workspace.neutral_package_paths()

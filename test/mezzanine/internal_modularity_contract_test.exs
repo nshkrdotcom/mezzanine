@@ -5,6 +5,7 @@ defmodule Mezzanine.InternalModularityContractTest do
 
   test "covers the live neutral core package graph" do
     assert InternalModularityContract.package_paths() == [
+             "core/adaptive_control_engine",
              "core/ai_run_model",
              "core/archival_engine",
              "core/audit_engine",

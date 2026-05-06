@@ -42,6 +42,7 @@ mezzanine/
   core/evidence_engine
   core/projection_engine
   core/operator_engine
+  core/adaptive_control_engine
   core/optimization_engine
   core/coordination_engine
   core/audit_engine
@@ -77,6 +78,7 @@ The active buildout in this repo is the neutral core scaffold:
 - `core/evidence_engine`
 - `core/projection_engine`
 - `core/operator_engine`
+- `core/adaptive_control_engine`
 - `core/optimization_engine`
 - `core/coordination_engine`
 - `core/audit_engine`
