@@ -22,6 +22,7 @@ graph:
 - `evidence_engine`
 - `projection_engine`
 - `operator_engine`
+- `optimization_engine`
 - `audit_engine`
 - `archival_engine`
 

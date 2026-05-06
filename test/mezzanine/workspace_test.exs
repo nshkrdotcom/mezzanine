@@ -23,6 +23,7 @@ defmodule Mezzanine.WorkspaceTest do
     assert "core/evidence_engine" in Mezzanine.Workspace.neutral_package_paths()
     assert "core/projection_engine" in Mezzanine.Workspace.neutral_package_paths()
     assert "core/operator_engine" in Mezzanine.Workspace.neutral_package_paths()
+    assert "core/optimization_engine" in Mezzanine.Workspace.neutral_package_paths()
     assert "core/audit_engine" in Mezzanine.Workspace.neutral_package_paths()
     assert "core/archival_engine" in Mezzanine.Workspace.neutral_package_paths()
     assert "core/workflow_runtime" in Mezzanine.Workspace.neutral_package_paths()

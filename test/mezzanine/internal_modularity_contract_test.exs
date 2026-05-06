@@ -26,6 +26,7 @@ defmodule Mezzanine.InternalModularityContractTest do
              "core/operator_engine",
              "core/ops_domain",
              "core/ops_model",
+             "core/optimization_engine",
              "core/pack_compiler",
              "core/pack_model",
              "core/projection_engine",

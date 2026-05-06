@@ -14,6 +14,7 @@
 - `./core/mezzanine_core/mix.exs`: Reusable business-semantics substrate for Mezzanine
 - `./core/object_engine/mix.exs`: Durable neutral subject ledger and lifecycle ownership for Mezzanine
 - `./core/operator_engine/mix.exs`: Operator pause, resume, and cancel substrate for Mezzanine
+- `./core/optimization_engine/mix.exs`: Governed GEPA orchestration, evaluator pool, budgets, and promotion gates
 - `./core/ops_domain/mix.exs`: Durable Ash/AshPostgres business domains for Mezzanine
 - `./core/ops_model/mix.exs`: Pure operational vocabulary for the Mezzanine workspace
 - `./core/pack_compiler/mix.exs`: Pure validator, compiler, and lifecycle evaluator for Mezzanine packs

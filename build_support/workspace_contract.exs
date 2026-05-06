@@ -33,6 +33,7 @@ defmodule Mezzanine.Build.WorkspaceContract do
     "core/cost_attribution_engine",
     "core/budget_enforcement_engine",
     "core/eval_engine",
+    "core/optimization_engine",
     "core/archival_engine"
   ]
 

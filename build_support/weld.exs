@@ -6,6 +6,7 @@ defmodule Mezzanine.Build.WeldContract do
   @repo_root Path.expand("..", __DIR__)
   @citadel_repo_path Path.expand("../citadel", @repo_root)
   @execution_plane_repo_path Path.expand("../execution_plane", @repo_root)
+  @gepa_framework_repo_path Path.expand("../gepa_framework", @repo_root)
   @outer_brain_repo_path Path.expand("../outer_brain", @repo_root)
   @aitrace_repo_path Path.expand("../AITrace", @repo_root)
   @temporalex_repo_path Path.expand("../temporalex", @repo_root)
@@ -84,6 +85,14 @@ defmodule Mezzanine.Build.WeldContract do
           ]
         end
     ],
+    gepa_framework: [
+      opts:
+        if File.dir?(@gepa_framework_repo_path) do
+          [git: @gepa_framework_repo_path]
+        else
+          [github: "nshkrdotcom/gepa_framework", branch: "main"]
+        end
+    ],
     temporalex: [
       opts:
         if File.dir?(@temporalex_repo_path) do
@@ -107,6 +116,7 @@ defmodule Mezzanine.Build.WeldContract do
     "core/headless_coding_ops/README.md",
     "core/workspace_build_model/README.md",
     "core/ai_run_model/README.md",
+    "core/optimization_engine/README.md",
     "core/decision_engine/README.md",
     "core/evidence_engine/README.md",
     "core/projection_engine/README.md",
@@ -135,7 +145,8 @@ defmodule Mezzanine.Build.WeldContract do
           "core/ai_run_model",
           "core/cost_attribution_engine",
           "core/budget_enforcement_engine",
-          "core/eval_engine"
+          "core/eval_engine",
+          "core/optimization_engine"
         ]
       ],
       dependencies: @dependencies,
@@ -159,6 +170,7 @@ defmodule Mezzanine.Build.WeldContract do
         "core/headless_coding_ops",
         "core/workspace_build_model",
         "core/ai_run_model",
+        "core/optimization_engine",
         "core/decision_engine",
         "core/evidence_engine",
         "core/projection_engine",
