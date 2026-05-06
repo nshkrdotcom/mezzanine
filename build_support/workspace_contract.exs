@@ -23,6 +23,7 @@ defmodule Mezzanine.Build.WorkspaceContract do
     "core/m1_m2_runtime",
     "core/headless_coding_ops",
     "core/workspace_build_model",
+    "core/ai_run_model",
     "core/decision_engine",
     "core/evidence_engine",
     "core/projection_engine",

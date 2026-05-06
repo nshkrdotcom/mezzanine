@@ -106,6 +106,7 @@ defmodule Mezzanine.Build.WeldContract do
     "core/m1_m2_runtime/README.md",
     "core/headless_coding_ops/README.md",
     "core/workspace_build_model/README.md",
+    "core/ai_run_model/README.md",
     "core/decision_engine/README.md",
     "core/evidence_engine/README.md",
     "core/projection_engine/README.md",
@@ -131,6 +132,7 @@ defmodule Mezzanine.Build.WeldContract do
         internal_only: [
           ".",
           "core/context_budget_admission",
+          "core/ai_run_model",
           "core/cost_attribution_engine",
           "core/budget_enforcement_engine",
           "core/eval_engine"
@@ -156,6 +158,7 @@ defmodule Mezzanine.Build.WeldContract do
         "core/m1_m2_runtime",
         "core/headless_coding_ops",
         "core/workspace_build_model",
+        "core/ai_run_model",
         "core/decision_engine",
         "core/evidence_engine",
         "core/projection_engine",

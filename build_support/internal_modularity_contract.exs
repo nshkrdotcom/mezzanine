@@ -87,6 +87,7 @@ defmodule Mezzanine.Build.InternalModularityContract do
         "core/pack_model"
       ]
     },
+    %{path: "core/ai_run_model", allowed_internal_deps: []},
     %{
       path: "core/decision_engine",
       allowed_internal_deps: ["core/audit_engine", "core/execution_engine", "core/object_engine"]
