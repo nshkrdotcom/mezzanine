@@ -42,6 +42,16 @@ defmodule Mezzanine.Audit.AIPlatformFact do
   ]
   @guard_postures [:pass, :partial, :excerpt_only, :no_export, :block]
   @guard_severities [:info, :warn, :block, :escalate]
+  @eval_verdicts [:pass, :regress, :improve, :inconclusive]
+  @replay_decisions [:clean, :diverged, :denied, :inconclusive]
+  @drift_signal_classes [
+    :prompt_drift,
+    :tool_call_drift,
+    :guard_decision_drift,
+    :memory_access_drift,
+    :cost_attribution_drift,
+    :latency_drift
+  ]
   @raw_payload_keys [
     :body,
     :raw_body,
@@ -54,6 +64,9 @@ defmodule Mezzanine.Audit.AIPlatformFact do
     :guard_violation_body,
     :guard_violation_payload,
     :provider_payload,
+    :eval_payload,
+    :model_output,
+    :replay_divergence_excerpt,
     :raw_guard,
     :secret,
     :token,
@@ -68,6 +81,9 @@ defmodule Mezzanine.Audit.AIPlatformFact do
     "guard_violation_body",
     "guard_violation_payload",
     "provider_payload",
+    "eval_payload",
+    "model_output",
+    "replay_divergence_excerpt",
     "raw_guard",
     "secret",
     "token"
@@ -135,6 +151,44 @@ defmodule Mezzanine.Audit.AIPlatformFact do
     :severity,
     :violation_class,
     :redaction_posture
+  ]
+
+  @eval_run_required [
+    :tenant_ref,
+    :authority_ref,
+    :installation_ref,
+    :idempotency_key,
+    :trace_ref,
+    :eval_run_ref,
+    :suite_ref,
+    :variant_ref,
+    :verdict,
+    :release_manifest_ref
+  ]
+
+  @replay_executed_required [
+    :tenant_ref,
+    :authority_ref,
+    :installation_ref,
+    :idempotency_key,
+    :trace_ref,
+    :source_trace_ref,
+    :replay_trace_ref,
+    :replay_bundle_ref,
+    :decision_class,
+    :cost_class
+  ]
+
+  @drift_signal_required [
+    :tenant_ref,
+    :authority_ref,
+    :installation_ref,
+    :idempotency_key,
+    :trace_ref,
+    :drift_signal_ref,
+    :signal_class,
+    :magnitude_class,
+    :window_ref
   ]
 
   @spec memory_access_recorded(map()) :: {:ok, map()} | {:error, term()}
@@ -250,6 +304,54 @@ defmodule Mezzanine.Audit.AIPlatformFact do
     end
   end
 
+  @spec eval_run_recorded(map()) :: {:ok, map()} | {:error, term()}
+  def eval_run_recorded(attrs) when is_map(attrs) do
+    with :ok <- reject_raw_payload(attrs),
+         :ok <- required_fields(attrs, @eval_run_required),
+         {:ok, verdict} <- member(attrs, :verdict, @eval_verdicts) do
+      {:ok,
+       base_fact(attrs, :eval_run_recorded, %{
+         "eval_run_ref" => fetch!(attrs, :eval_run_ref),
+         "suite_ref" => fetch!(attrs, :suite_ref),
+         "variant_ref" => fetch!(attrs, :variant_ref),
+         "verdict" => Atom.to_string(verdict),
+         "release_manifest_ref" => fetch!(attrs, :release_manifest_ref)
+       })}
+    end
+  end
+
+  @spec replay_executed(map()) :: {:ok, map()} | {:error, term()}
+  def replay_executed(attrs) when is_map(attrs) do
+    with :ok <- reject_raw_payload(attrs),
+         :ok <- required_fields(attrs, @replay_executed_required),
+         {:ok, decision_class} <- member(attrs, :decision_class, @replay_decisions),
+         :ok <- replay_cost_class(attrs) do
+      {:ok,
+       base_fact(attrs, :replay_executed, %{
+         "source_trace_ref" => fetch!(attrs, :source_trace_ref),
+         "replay_trace_ref" => fetch!(attrs, :replay_trace_ref),
+         "replay_bundle_ref" => fetch!(attrs, :replay_bundle_ref),
+         "decision_class" => Atom.to_string(decision_class),
+         "cost_class" => "replay"
+       })}
+    end
+  end
+
+  @spec drift_signal_recorded(map()) :: {:ok, map()} | {:error, term()}
+  def drift_signal_recorded(attrs) when is_map(attrs) do
+    with :ok <- reject_raw_payload(attrs),
+         :ok <- required_fields(attrs, @drift_signal_required),
+         {:ok, signal_class} <- member(attrs, :signal_class, @drift_signal_classes) do
+      {:ok,
+       base_fact(attrs, :drift_signal_recorded, %{
+         "drift_signal_ref" => fetch!(attrs, :drift_signal_ref),
+         "signal_class" => Atom.to_string(signal_class),
+         "magnitude_class" => fetch!(attrs, :magnitude_class),
+         "window_ref" => fetch!(attrs, :window_ref)
+       })}
+    end
+  end
+
   defp base_fact(attrs, fact_kind, payload) do
     %{
       installation_id: fetch!(attrs, :installation_ref),
@@ -292,6 +394,14 @@ defmodule Mezzanine.Audit.AIPlatformFact do
     if value in allowed,
       do: {:ok, value},
       else: {:error, {:invalid_ai_platform_audit_field, field}}
+  end
+
+  defp replay_cost_class(attrs) do
+    case fetch(attrs, :cost_class) do
+      :replay -> :ok
+      "replay" -> :ok
+      _other -> {:error, {:invalid_ai_platform_audit_field, :cost_class}}
+    end
   end
 
   defp non_negative_integer(attrs, field) do

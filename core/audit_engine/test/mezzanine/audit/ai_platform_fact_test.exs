@@ -67,6 +67,34 @@ defmodule Mezzanine.Audit.AIPlatformFactTest do
              |> AIPlatformFact.guard_violated()
   end
 
+  test "eval replay and drift facts carry ref-only context" do
+    assert {:ok, eval_fact} = AIPlatformFact.eval_run_recorded(eval_attrs())
+
+    assert eval_fact.fact_kind == :eval_run_recorded
+    assert eval_fact.payload["verdict"] == "regress"
+    refute Map.has_key?(eval_fact.payload, "model_output")
+
+    assert {:ok, replay_fact} = AIPlatformFact.replay_executed(replay_attrs())
+
+    assert replay_fact.fact_kind == :replay_executed
+    assert replay_fact.payload["cost_class"] == "replay"
+
+    assert {:ok, drift_fact} = AIPlatformFact.drift_signal_recorded(drift_attrs())
+
+    assert drift_fact.fact_kind == :drift_signal_recorded
+    assert drift_fact.payload["signal_class"] == "guard_decision_drift"
+
+    assert {:error, {:raw_ai_platform_audit_payload_forbidden, :model_output}} =
+             eval_attrs()
+             |> Map.put(:model_output, "raw")
+             |> AIPlatformFact.eval_run_recorded()
+
+    assert {:error, {:invalid_ai_platform_audit_field, :cost_class}} =
+             replay_attrs()
+             |> Map.put(:cost_class, :production)
+             |> AIPlatformFact.replay_executed()
+  end
+
   defp memory_attrs do
     %{
       tenant_ref: "tenant://a",
@@ -138,6 +166,50 @@ defmodule Mezzanine.Audit.AIPlatformFactTest do
       severity: :block,
       violation_class: "pii",
       redaction_posture: :block
+    }
+  end
+
+  defp eval_attrs do
+    %{
+      tenant_ref: "tenant://a",
+      authority_ref: "authority://a",
+      installation_ref: "installation://a",
+      idempotency_key: "idem-eval-audit",
+      trace_ref: "trace://eval",
+      eval_run_ref: "eval-run://a",
+      suite_ref: "eval-suite://a",
+      variant_ref: "eval-variant://a",
+      verdict: :regress,
+      release_manifest_ref: "release://phase-c"
+    }
+  end
+
+  defp replay_attrs do
+    %{
+      tenant_ref: "tenant://a",
+      authority_ref: "authority://a",
+      installation_ref: "installation://a",
+      idempotency_key: "idem-replay-audit",
+      trace_ref: "trace://replay",
+      source_trace_ref: "trace://source",
+      replay_trace_ref: "trace://replay/1",
+      replay_bundle_ref: "replay-bundle://a",
+      decision_class: :diverged,
+      cost_class: :replay
+    }
+  end
+
+  defp drift_attrs do
+    %{
+      tenant_ref: "tenant://a",
+      authority_ref: "authority://a",
+      installation_ref: "installation://a",
+      idempotency_key: "idem-drift-audit",
+      trace_ref: "trace://drift",
+      drift_signal_ref: "drift-signal://a",
+      signal_class: :guard_decision_drift,
+      magnitude_class: "bounded_delta",
+      window_ref: "drift-window://a"
     }
   end
 end

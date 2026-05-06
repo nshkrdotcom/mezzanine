@@ -587,3 +587,149 @@ defmodule Mezzanine.Archival.ArchivalSweep do
     struct!(__MODULE__, Map.merge(attrs, Map.put(actors, :contract_name, @contract_name)))
   end
 end
+
+defmodule Mezzanine.Archival.ReplayReadyTraceBundle do
+  @moduledoc """
+  Contract for restored traces that are replay-addressable by ref.
+
+  Contract: `Mezzanine.ReplayReadyTraceBundle.v1`.
+  """
+
+  alias Mezzanine.Archival.ReleaseContractSupport
+
+  @contract_name "Mezzanine.ReplayReadyTraceBundle.v1"
+  @required_binary_fields ReleaseContractSupport.base_required_binary_fields() ++
+                            [
+                              :replay_ready_ref,
+                              :source_trace_ref,
+                              :replay_bundle_ref,
+                              :redaction_policy_ref,
+                              :restore_request_ref
+                            ]
+  @optional_binary_fields ReleaseContractSupport.optional_actor_fields() ++
+                            [:retention_policy_ref, :cold_storage_uri_ref]
+
+  defstruct [
+    :contract_name,
+    :tenant_ref,
+    :installation_ref,
+    :workspace_ref,
+    :project_ref,
+    :environment_ref,
+    :principal_ref,
+    :system_actor_ref,
+    :resource_ref,
+    :authority_packet_ref,
+    :permission_decision_ref,
+    :idempotency_key,
+    :trace_id,
+    :correlation_id,
+    :release_manifest_ref,
+    :replay_ready_ref,
+    :source_trace_ref,
+    :replay_bundle_ref,
+    :redaction_policy_ref,
+    :restore_request_ref,
+    :retention_policy_ref,
+    :cold_storage_uri_ref
+  ]
+
+  @type t :: %__MODULE__{}
+
+  @spec contract_name() :: String.t()
+  def contract_name, do: @contract_name
+
+  @spec new(map() | keyword()) ::
+          {:ok, t()}
+          | {:error, {:missing_required_fields, [atom()]}}
+          | {:error, :invalid_replay_ready_trace_bundle}
+  def new(attrs) do
+    with {:ok, attrs} <- ReleaseContractSupport.normalize_attrs(attrs),
+         [] <- ReleaseContractSupport.missing_required_fields(attrs, @required_binary_fields, []),
+         true <- ReleaseContractSupport.optional_binary_fields?(attrs, @optional_binary_fields) do
+      {:ok, build(attrs)}
+    else
+      fields when is_list(fields) -> {:error, {:missing_required_fields, fields}}
+      _error -> {:error, :invalid_replay_ready_trace_bundle}
+    end
+  end
+
+  defp build(attrs) do
+    actors = ReleaseContractSupport.actor_fields(attrs)
+    struct!(__MODULE__, Map.merge(attrs, Map.put(actors, :contract_name, @contract_name)))
+  end
+end
+
+defmodule Mezzanine.Archival.ReplayReadinessGap do
+  @moduledoc """
+  Evidence that an archived trace cannot yet be replayed.
+
+  Contract: `Mezzanine.ReplayReadinessGap.v1`.
+  """
+
+  alias Mezzanine.Archival.ReleaseContractSupport
+
+  @contract_name "Mezzanine.ReplayReadinessGap.v1"
+  @required_binary_fields ReleaseContractSupport.base_required_binary_fields() ++
+                            [
+                              :gap_ref,
+                              :missing_ref,
+                              :remediation_ref,
+                              :redaction_policy_ref
+                            ]
+  @optional_binary_fields ReleaseContractSupport.optional_actor_fields() ++
+                            [:retention_policy_ref, :cold_storage_uri_ref]
+  @gap_classes [:missing_replay_ready_ref, :stale_redaction_policy, :missing_bundle_ref]
+
+  defstruct [
+    :contract_name,
+    :tenant_ref,
+    :installation_ref,
+    :workspace_ref,
+    :project_ref,
+    :environment_ref,
+    :principal_ref,
+    :system_actor_ref,
+    :resource_ref,
+    :authority_packet_ref,
+    :permission_decision_ref,
+    :idempotency_key,
+    :trace_id,
+    :correlation_id,
+    :release_manifest_ref,
+    :gap_ref,
+    :gap_class,
+    :missing_ref,
+    :remediation_ref,
+    :redaction_policy_ref,
+    :retention_policy_ref,
+    :cold_storage_uri_ref
+  ]
+
+  @type t :: %__MODULE__{}
+
+  @spec contract_name() :: String.t()
+  def contract_name, do: @contract_name
+
+  @spec new(map() | keyword()) ::
+          {:ok, t()}
+          | {:error, {:missing_required_fields, [atom()]}}
+          | {:error, :invalid_replay_readiness_gap}
+  def new(attrs) do
+    with {:ok, attrs} <- ReleaseContractSupport.normalize_attrs(attrs),
+         [] <- ReleaseContractSupport.missing_required_fields(attrs, @required_binary_fields, []),
+         true <- ReleaseContractSupport.optional_binary_fields?(attrs, @optional_binary_fields),
+         {:ok, gap_class} <-
+           ReleaseContractSupport.enum_atom(Map.get(attrs, :gap_class), @gap_classes) do
+      {:ok, build(Map.put(attrs, :gap_class, gap_class))}
+    else
+      fields when is_list(fields) -> {:error, {:missing_required_fields, fields}}
+      _error -> {:error, :invalid_replay_readiness_gap}
+    end
+  end
+
+  defp build(attrs) do
+    actors = ReleaseContractSupport.actor_fields(attrs)
+    struct!(__MODULE__, Map.merge(attrs, Map.put(actors, :contract_name, @contract_name)))
+  end
+end

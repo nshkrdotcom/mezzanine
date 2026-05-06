@@ -5,6 +5,8 @@ defmodule Mezzanine.Archival.ReleaseContractsTest do
   alias Mezzanine.Archival.ArchivalSweep
   alias Mezzanine.Archival.ColdRestoreArtifactQuery
   alias Mezzanine.Archival.ColdRestoreTraceQuery
+  alias Mezzanine.Archival.ReplayReadinessGap
+  alias Mezzanine.Archival.ReplayReadyTraceBundle
   alias Mezzanine.Archival.RestoreAuditJoin
   alias Mezzanine.Audit.AuditInclusionProof
 
@@ -24,7 +26,7 @@ defmodule Mezzanine.Archival.ReleaseContractsTest do
 
     assert query.contract_name == "Mezzanine.ColdRestoreTraceQuery.v1"
     assert query.trace_id == "trace:m12:060"
-    assert query.restore_consistency_hash =~ "sha256:"
+    assert String.starts_with?(query.restore_consistency_hash, "sha256:")
   end
 
   test "builds cold restore artifact query contracts" do
@@ -44,7 +46,7 @@ defmodule Mezzanine.Archival.ReleaseContractsTest do
 
     assert query.contract_name == "Mezzanine.ColdRestoreArtifactQuery.v1"
     assert query.artifact_id == "artifact-123"
-    assert query.artifact_hash =~ "sha256:"
+    assert String.starts_with?(query.artifact_hash, "sha256:")
   end
 
   test "joins cold restore evidence to audit inclusion proof" do
@@ -130,6 +132,63 @@ defmodule Mezzanine.Archival.ReleaseContractsTest do
     assert sweep.contract_name == "Mezzanine.ArchivalSweep.v1"
     assert sweep.retry_count == 3
     assert sweep.next_retry_at == ~U[2026-04-19 12:30:00Z]
+  end
+
+  test "builds replay-ready trace bundles and replay-readiness gaps" do
+    assert {:ok, bundle} =
+             ReplayReadyTraceBundle.new(
+               base_attrs()
+               |> Map.merge(%{
+                 replay_ready_ref: "replay-ready:trace:m12:060",
+                 source_trace_ref: "trace://trace:m12:060",
+                 replay_bundle_ref: "replay-bundle://trace:m12:060",
+                 redaction_policy_ref: "redaction-policy:replay:v1",
+                 restore_request_ref: "restore-request:trace:1"
+               })
+             )
+
+    assert bundle.contract_name == "Mezzanine.ReplayReadyTraceBundle.v1"
+    assert bundle.redaction_policy_ref == "redaction-policy:replay:v1"
+
+    assert {:ok, gap} =
+             ReplayReadinessGap.new(
+               base_attrs()
+               |> Map.merge(%{
+                 gap_ref: "archival-replay-gap:trace:m12:060",
+                 gap_class: :missing_replay_ready_ref,
+                 missing_ref: "replay-ready:trace:m12:060",
+                 remediation_ref: "operator-remediation:replay-ready:1",
+                 redaction_policy_ref: "redaction-policy:replay:v1"
+               })
+             )
+
+    assert gap.contract_name == "Mezzanine.ReplayReadinessGap.v1"
+    assert gap.gap_class == :missing_replay_ready_ref
+
+    assert {:error, {:missing_required_fields, fields}} =
+             ReplayReadyTraceBundle.new(
+               base_attrs()
+               |> Map.merge(%{
+                 source_trace_ref: "trace://trace:m12:060",
+                 replay_bundle_ref: "replay-bundle://trace:m12:060",
+                 redaction_policy_ref: "redaction-policy:replay:v1",
+                 restore_request_ref: "restore-request:trace:1"
+               })
+             )
+
+    assert :replay_ready_ref in fields
+
+    assert {:error, :invalid_replay_readiness_gap} =
+             ReplayReadinessGap.new(
+               base_attrs()
+               |> Map.merge(%{
+                 gap_ref: "archival-replay-gap:trace:m12:060",
+                 gap_class: :free_form,
+                 missing_ref: "replay-ready:trace:m12:060",
+                 remediation_ref: "operator-remediation:replay-ready:1",
+                 redaction_policy_ref: "redaction-policy:replay:v1"
+               })
+             )
   end
 
   test "rejects missing actor, same hash conflicts, and invalid retry counts" do

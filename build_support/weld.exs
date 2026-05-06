@@ -7,6 +7,7 @@ defmodule Mezzanine.Build.WeldContract do
   @citadel_repo_path Path.expand("../citadel", @repo_root)
   @execution_plane_repo_path Path.expand("../execution_plane", @repo_root)
   @outer_brain_repo_path Path.expand("../outer_brain", @repo_root)
+  @aitrace_repo_path Path.expand("../AITrace", @repo_root)
   @temporalex_repo_path Path.expand("../temporalex", @repo_root)
 
   @dependencies [
@@ -59,6 +60,18 @@ defmodule Mezzanine.Build.WeldContract do
           ]
         end
     ],
+    ai_trace_replay_contracts: [
+      opts:
+        if File.dir?(@aitrace_repo_path) do
+          [git: @aitrace_repo_path, sparse: "core/replay_contracts"]
+        else
+          [
+            github: "nshkrdotcom/AITrace",
+            branch: "main",
+            sparse: "core/replay_contracts"
+          ]
+        end
+    ],
     temporalex: [
       opts:
         if File.dir?(@temporalex_repo_path) do
@@ -103,7 +116,7 @@ defmodule Mezzanine.Build.WeldContract do
         tooling: ["."]
       ],
       publication: [
-        internal_only: [".", "core/context_budget_admission"]
+        internal_only: [".", "core/context_budget_admission", "core/eval_engine"]
       ],
       dependencies: @dependencies,
       artifacts: [

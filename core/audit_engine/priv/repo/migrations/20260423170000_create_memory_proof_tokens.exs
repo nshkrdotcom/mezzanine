@@ -29,8 +29,8 @@ defmodule Mezzanine.Audit.Repo.Migrations.CreateMemoryProofTokens do
       timestamps(type: :utc_datetime_usec)
     end
 
-    create unique_index(:memory_proof_tokens, [:proof_id])
-    create index(:memory_proof_tokens, [:tenant_ref, :trace_id, :t_event])
-    create index(:memory_proof_tokens, [:tenant_ref, :proof_hash])
+    create(unique_index(:memory_proof_tokens, [:proof_id]))
+    create(index(:memory_proof_tokens, [:tenant_ref, :trace_id, :t_event]))
+    create(index(:memory_proof_tokens, [:tenant_ref, :proof_hash]))
   end
 end
