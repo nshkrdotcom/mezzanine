@@ -17,6 +17,31 @@ defmodule Mezzanine.Audit.AIPlatformFact do
     :deny_policy,
     :deny_revoked
   ]
+  @prompt_decisions [
+    :resolved,
+    :resolved_with_redaction,
+    :denied_revoked,
+    :denied_revision_missing,
+    :denied_ab_assignment_invalid,
+    :denied_policy
+  ]
+  @guard_payload_kinds [
+    :input_prompt,
+    :tool_input,
+    :tool_output,
+    :provider_response,
+    :memory_candidate
+  ]
+  @guard_decisions [
+    :allow,
+    :allow_with_redaction,
+    :block,
+    :escalate,
+    :deny_policy,
+    :deny_detector_unavailable
+  ]
+  @guard_postures [:pass, :partial, :excerpt_only, :no_export, :block]
+  @guard_severities [:info, :warn, :block, :escalate]
   @raw_payload_keys [
     :body,
     :raw_body,
@@ -25,7 +50,11 @@ defmodule Mezzanine.Audit.AIPlatformFact do
     :content,
     :raw_content,
     :prompt_body,
+    :guard_payload,
+    :guard_violation_body,
+    :guard_violation_payload,
     :provider_payload,
+    :raw_guard,
     :secret,
     :token,
     "body",
@@ -35,7 +64,11 @@ defmodule Mezzanine.Audit.AIPlatformFact do
     "content",
     "raw_content",
     "prompt_body",
+    "guard_payload",
+    "guard_violation_body",
+    "guard_violation_payload",
     "provider_payload",
+    "raw_guard",
     "secret",
     "token"
   ]
@@ -65,6 +98,43 @@ defmodule Mezzanine.Audit.AIPlatformFact do
     :granted_units,
     :residual_units,
     :policy_revision_ref
+  ]
+
+  @prompt_required [
+    :tenant_ref,
+    :authority_ref,
+    :installation_ref,
+    :idempotency_key,
+    :trace_ref,
+    :prompt_id,
+    :revision,
+    :ab_key,
+    :decision_class
+  ]
+
+  @guard_evaluated_required [
+    :tenant_ref,
+    :authority_ref,
+    :installation_ref,
+    :idempotency_key,
+    :trace_ref,
+    :payload_kind,
+    :chain_ref,
+    :decision_class,
+    :redaction_posture
+  ]
+
+  @guard_violated_required [
+    :tenant_ref,
+    :authority_ref,
+    :installation_ref,
+    :idempotency_key,
+    :trace_ref,
+    :violation_id,
+    :detector_ref,
+    :severity,
+    :violation_class,
+    :redaction_posture
   ]
 
   @spec memory_access_recorded(map()) :: {:ok, map()} | {:error, term()}
@@ -130,6 +200,78 @@ defmodule Mezzanine.Audit.AIPlatformFact do
     end
   end
 
+  @spec prompt_resolved(map()) :: {:ok, map()} | {:error, term()}
+  def prompt_resolved(attrs) when is_map(attrs) do
+    with :ok <- reject_raw_payload(attrs),
+         :ok <- required_fields(attrs, @prompt_required),
+         {:ok, decision_class} <- member(attrs, :decision_class, @prompt_decisions),
+         :ok <- positive_integer(attrs, :revision) do
+      {:ok,
+       base_fact(attrs, :prompt_resolved, %{
+         "prompt_id" => fetch!(attrs, :prompt_id),
+         "revision" => fetch!(attrs, :revision),
+         "ab_key" => fetch!(attrs, :ab_key),
+         "decision_class" => Atom.to_string(decision_class)
+       })}
+    end
+  end
+
+  @spec guard_evaluated(map()) :: {:ok, map()} | {:error, term()}
+  def guard_evaluated(attrs) when is_map(attrs) do
+    with :ok <- reject_raw_payload(attrs),
+         :ok <- required_fields(attrs, @guard_evaluated_required),
+         {:ok, payload_kind} <- member(attrs, :payload_kind, @guard_payload_kinds),
+         {:ok, decision_class} <- member(attrs, :decision_class, @guard_decisions),
+         {:ok, redaction_posture} <- member(attrs, :redaction_posture, @guard_postures) do
+      {:ok,
+       base_fact(attrs, :guard_evaluated, %{
+         "payload_kind" => Atom.to_string(payload_kind),
+         "chain_ref" => fetch!(attrs, :chain_ref),
+         "decision_class" => Atom.to_string(decision_class),
+         "redaction_posture" => Atom.to_string(redaction_posture)
+       })}
+    end
+  end
+
+  @spec guard_violated(map()) :: {:ok, map()} | {:error, term()}
+  def guard_violated(attrs) when is_map(attrs) do
+    with :ok <- reject_raw_payload(attrs),
+         :ok <- required_fields(attrs, @guard_violated_required),
+         {:ok, severity} <- member(attrs, :severity, @guard_severities),
+         {:ok, redaction_posture} <- member(attrs, :redaction_posture, @guard_postures) do
+      {:ok,
+       base_fact(attrs, :guard_violated, %{
+         "violation_id" => fetch!(attrs, :violation_id),
+         "detector_ref" => fetch!(attrs, :detector_ref),
+         "severity" => Atom.to_string(severity),
+         "violation_class" => fetch!(attrs, :violation_class),
+         "redaction_posture" => Atom.to_string(redaction_posture)
+       })}
+    end
+  end
+
+  defp base_fact(attrs, fact_kind, payload) do
+    %{
+      installation_id: fetch!(attrs, :installation_ref),
+      trace_id: fetch!(attrs, :trace_ref),
+      fact_kind: fact_kind,
+      actor_ref: %{
+        "tenant_ref" => fetch!(attrs, :tenant_ref),
+        "authority_ref" => fetch!(attrs, :authority_ref)
+      },
+      idempotency_key: fetch!(attrs, :idempotency_key),
+      payload:
+        Map.merge(
+          %{
+            "tenant_ref" => fetch!(attrs, :tenant_ref),
+            "authority_ref" => fetch!(attrs, :authority_ref),
+            "installation_ref" => fetch!(attrs, :installation_ref)
+          },
+          payload
+        )
+    }
+  end
+
   defp reject_raw_payload(attrs) do
     case Enum.find(@raw_payload_keys, &Map.has_key?(attrs, &1)) do
       nil -> :ok
@@ -155,6 +297,13 @@ defmodule Mezzanine.Audit.AIPlatformFact do
   defp non_negative_integer(attrs, field) do
     case fetch(attrs, field) do
       value when is_integer(value) and value >= 0 -> :ok
+      _value -> {:error, {:invalid_ai_platform_audit_field, field}}
+    end
+  end
+
+  defp positive_integer(attrs, field) do
+    case fetch(attrs, field) do
+      value when is_integer(value) and value > 0 -> :ok
       _value -> {:error, {:invalid_ai_platform_audit_field, field}}
     end
   end
