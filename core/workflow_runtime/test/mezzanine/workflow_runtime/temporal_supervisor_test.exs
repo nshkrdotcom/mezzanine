@@ -28,7 +28,10 @@ defmodule Mezzanine.WorkflowRuntime.TemporalSupervisorTest do
     hazmat = Enum.find(specs, &(&1.task_queue == "mezzanine.hazmat"))
 
     assert hazmat.name == Mezzanine.WorkflowRuntime.TestTemporal.MezzanineHazmat
-    assert hazmat.connection == Mezzanine.WorkflowRuntime.TestTemporal.MezzanineHazmat.Connection
+
+    assert hazmat.connection ==
+             Temporalex.connection_name(Mezzanine.WorkflowRuntime.TestTemporal.MezzanineHazmat)
+
     assert Mezzanine.Workflows.ExecutionAttempt in hazmat.workflows
 
     assert Mezzanine.Workflows.AgentLoop in Enum.find(

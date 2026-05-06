@@ -136,7 +136,7 @@ defmodule Mezzanine.WorkflowRuntime.TemporalSupervisor do
   end
 
   @doc "Returns the Temporalex connection name for a task queue."
-  @spec connection_name(String.t(), runtime_config()) :: module()
+  @spec connection_name(String.t(), runtime_config()) :: Temporalex.process_name()
   def connection_name(task_queue, config \\ runtime_config()) do
     task_queue
     |> instance_name(config)

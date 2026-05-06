@@ -89,3 +89,7 @@ Do not invent raw `temporal server start-dev` commands for normal work. Do not r
 If a missing primitive is universal, move it to GroundPlane. If it is lower
 execution, move it to Execution Plane or Jido Integration.
 <!-- gn-ten:repo-agent:end -->
+
+## Blitz 0.3.0 operational note
+
+Root workspace Blitz uses published Hex `~> 0.3.0` by default; `.blitz/` is committed compact impact state after green QC. Source and `mix.exs` changes cascade through reverse workspace dependencies; docs-only changes should stay owner-local.
