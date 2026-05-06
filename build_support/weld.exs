@@ -60,6 +60,18 @@ defmodule Mezzanine.Build.WeldContract do
           ]
         end
     ],
+    outer_brain_token_meter: [
+      opts:
+        if File.dir?(@outer_brain_repo_path) do
+          [git: @outer_brain_repo_path, sparse: "core/token_meter"]
+        else
+          [
+            github: "nshkrdotcom/outer_brain",
+            branch: "main",
+            sparse: "core/token_meter"
+          ]
+        end
+    ],
     ai_trace_replay_contracts: [
       opts:
         if File.dir?(@aitrace_repo_path) do
@@ -116,7 +128,13 @@ defmodule Mezzanine.Build.WeldContract do
         tooling: ["."]
       ],
       publication: [
-        internal_only: [".", "core/context_budget_admission", "core/eval_engine"]
+        internal_only: [
+          ".",
+          "core/context_budget_admission",
+          "core/cost_attribution_engine",
+          "core/budget_enforcement_engine",
+          "core/eval_engine"
+        ]
       ],
       dependencies: @dependencies,
       artifacts: [

@@ -20,7 +20,8 @@ defmodule MezzanineExecutionEngine do
       Mezzanine.WorkQueries,
       Mezzanine.OperatorActions,
       Mezzanine.Reviews,
-      Mezzanine.Execution.RuntimeStack
+      Mezzanine.Execution.RuntimeStack,
+      Mezzanine.CostAttributionEngine.CostFact
     ]
   end
 end

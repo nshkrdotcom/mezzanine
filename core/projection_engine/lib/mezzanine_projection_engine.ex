@@ -22,7 +22,8 @@ defmodule MezzanineProjectionEngine do
     [
       Mezzanine.Projections.ReceiptReducer,
       Mezzanine.Projections.ReviewGate,
-      Mezzanine.Projections.SourceReconciliation
+      Mezzanine.Projections.SourceReconciliation,
+      Mezzanine.CostAttributionEngine.CostBreakdownProjection
     ]
   end
 end

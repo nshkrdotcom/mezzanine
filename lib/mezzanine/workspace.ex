@@ -30,6 +30,8 @@ defmodule Mezzanine.Workspace do
     "core/operator_engine",
     "core/audit_engine",
     "core/context_budget_admission",
+    "core/cost_attribution_engine",
+    "core/budget_enforcement_engine",
     "core/eval_engine",
     "core/archival_engine",
     "core/workflow_runtime"

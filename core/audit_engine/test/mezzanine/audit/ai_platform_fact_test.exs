@@ -33,6 +33,20 @@ defmodule Mezzanine.Audit.AIPlatformFactTest do
              |> AIPlatformFact.budget_enforced()
   end
 
+  test "cost recorded audit facts carry bounded amount classes and meter refs" do
+    assert {:ok, fact} = AIPlatformFact.cost_recorded(cost_attrs())
+
+    assert fact.fact_kind == :cost_recorded
+    assert fact.payload["run_ref"] == "run://cost"
+    assert fact.payload["amount_class"] == "redacted_below_floor"
+    assert fact.payload["token_meter_ref"] == "meter://phase-d"
+
+    assert {:error, {:raw_ai_platform_audit_payload_forbidden, :cost_amount}} =
+             cost_attrs()
+             |> Map.put(:cost_amount, 10)
+             |> AIPlatformFact.cost_recorded()
+  end
+
   test "prompt resolved audit facts carry prompt refs without raw bodies" do
     assert {:ok, fact} = AIPlatformFact.prompt_resolved(prompt_attrs())
 
@@ -123,6 +137,22 @@ defmodule Mezzanine.Audit.AIPlatformFactTest do
       granted_units: 0,
       residual_units: 0,
       policy_revision_ref: "policy-revision://budget"
+    }
+  end
+
+  defp cost_attrs do
+    %{
+      tenant_ref: "tenant://a",
+      authority_ref: "authority://a",
+      installation_ref: "installation://a",
+      idempotency_key: "idem-cost-audit",
+      trace_ref: "trace://cost",
+      run_ref: "run://cost",
+      capability_id: "codex.session.turn",
+      cost_class: :production,
+      amount_class: :redacted_below_floor,
+      token_meter_ref: "meter://phase-d",
+      release_manifest_ref: "release://phase-d"
     }
   end
 

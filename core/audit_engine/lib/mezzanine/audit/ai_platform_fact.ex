@@ -11,7 +11,10 @@ defmodule Mezzanine.Audit.AIPlatformFact do
   @budget_loci [:preflight, :append, :stream, :runtime_admission, :reconciliation]
   @budget_decisions [
     :allow,
+    :allow_warn_soft,
+    :allow_with_override,
     :allow_with_redaction,
+    :deny_hard_exhausted,
     :deny_oversize,
     :deny_exhausted,
     :deny_policy,
@@ -52,6 +55,13 @@ defmodule Mezzanine.Audit.AIPlatformFact do
     :cost_attribution_drift,
     :latency_drift
   ]
+  @cost_classes [:production, :replay, :eval, :simulation, :infrastructure]
+  @amount_classes [
+    :production_native,
+    :redacted_below_floor,
+    :redacted_above_ceiling,
+    :bounded_excerpt
+  ]
   @raw_payload_keys [
     :body,
     :raw_body,
@@ -70,6 +80,8 @@ defmodule Mezzanine.Audit.AIPlatformFact do
     :raw_guard,
     :secret,
     :token,
+    :cost_amount,
+    :raw_amount,
     "body",
     "raw_body",
     "memory_body",
@@ -86,7 +98,9 @@ defmodule Mezzanine.Audit.AIPlatformFact do
     "replay_divergence_excerpt",
     "raw_guard",
     "secret",
-    "token"
+    "token",
+    "cost_amount",
+    "raw_amount"
   ]
 
   @memory_required [
@@ -191,6 +205,20 @@ defmodule Mezzanine.Audit.AIPlatformFact do
     :window_ref
   ]
 
+  @cost_recorded_required [
+    :tenant_ref,
+    :authority_ref,
+    :installation_ref,
+    :idempotency_key,
+    :trace_ref,
+    :run_ref,
+    :capability_id,
+    :cost_class,
+    :amount_class,
+    :token_meter_ref,
+    :release_manifest_ref
+  ]
+
   @spec memory_access_recorded(map()) :: {:ok, map()} | {:error, term()}
   def memory_access_recorded(attrs) when is_map(attrs) do
     with :ok <- reject_raw_payload(attrs),
@@ -251,6 +279,24 @@ defmodule Mezzanine.Audit.AIPlatformFact do
            "policy_revision_ref" => fetch!(attrs, :policy_revision_ref)
          }
        }}
+    end
+  end
+
+  @spec cost_recorded(map()) :: {:ok, map()} | {:error, term()}
+  def cost_recorded(attrs) when is_map(attrs) do
+    with :ok <- reject_raw_payload(attrs),
+         :ok <- required_fields(attrs, @cost_recorded_required),
+         {:ok, cost_class} <- member(attrs, :cost_class, @cost_classes),
+         {:ok, amount_class} <- member(attrs, :amount_class, @amount_classes) do
+      {:ok,
+       base_fact(attrs, :cost_recorded, %{
+         "run_ref" => fetch!(attrs, :run_ref),
+         "capability_id" => fetch!(attrs, :capability_id),
+         "cost_class" => Atom.to_string(cost_class),
+         "amount_class" => Atom.to_string(amount_class),
+         "token_meter_ref" => fetch!(attrs, :token_meter_ref),
+         "release_manifest_ref" => fetch!(attrs, :release_manifest_ref)
+       })}
     end
   end
 
