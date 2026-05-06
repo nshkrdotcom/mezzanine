@@ -161,14 +161,14 @@ defmodule Mezzanine.OperatorCommandsTest do
       Path.expand("../../lib/mezzanine/operator_commands.ex", __DIR__)
       |> File.read!()
 
-    refute source =~ "Ecto.Adapters.SQL"
-    refute source =~ "UPDATE subject_records"
-    refute source =~ "UPDATE execution_records"
-    refute source =~ "FROM subject_records"
-    assert source =~ "SubjectRecord.pause"
-    assert source =~ "SubjectRecord.cancel"
-    assert source =~ "ExecutionRecord.record_operator_cancelled"
-    assert source =~ "OperatorActionClassification"
+    refute String.contains?(source, "Ecto.Adapters.SQL")
+    refute String.contains?(source, "UPDATE subject_records")
+    refute String.contains?(source, "UPDATE execution_records")
+    refute String.contains?(source, "FROM subject_records")
+    assert String.contains?(source, "SubjectRecord.pause")
+    assert String.contains?(source, "SubjectRecord.cancel")
+    assert String.contains?(source, "ExecutionRecord.record_operator_cancelled")
+    assert String.contains?(source, "OperatorActionClassification")
   end
 
   defp ingest_subject(source_ref) do

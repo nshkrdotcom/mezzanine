@@ -288,8 +288,8 @@ defmodule MezzanineConfigRegistryTest do
       |> MezzanineConfigRegistry.register_pack!()
 
     assert {:error, %Invalid{} = error} = PackRegistration.activate(overlapping_registration)
-    assert Exception.message(error) =~ "canonical subject kinds"
-    assert Exception.message(error) =~ "expense_request"
+    assert String.contains?(Exception.message(error), "canonical subject kinds")
+    assert String.contains?(Exception.message(error), "expense_request")
 
     assert {:ok, %PackRegistration{status: :registered}} =
              Ash.get(PackRegistration, overlapping_registration.id)

@@ -15,13 +15,13 @@ defmodule Mezzanine.Decisions.DecisionCommandsBoundaryTest do
   test "decision commands do not own raw SQL for decision or audit rows" do
     source = File.read!(@source_path)
 
-    refute source =~ "Ecto.Adapters.SQL"
-    refute source =~ "Mezzanine.Execution.Repo"
-    refute source =~ "AuditFact"
-    assert source =~ "AuditQuery.decision_terminal_resolution_attempts"
+    refute String.contains?(source, "Ecto.Adapters.SQL")
+    refute String.contains?(source, "Mezzanine.Execution.Repo")
+    refute String.contains?(source, "AuditFact")
+    assert String.contains?(source, "AuditQuery.decision_terminal_resolution_attempts")
 
     for token <- @forbidden_sql_tokens do
-      refute source =~ token
+      refute String.contains?(source, token)
     end
   end
 end

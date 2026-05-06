@@ -6,8 +6,8 @@ defmodule Mezzanine.Objects.SubjectAuditBoundaryTest do
   test "subject aggregate delegates audit fact writes to the audit append owner" do
     source = File.read!(@source_path)
 
-    refute source =~ "alias Mezzanine.Audit.AuditFact"
-    refute source =~ "AuditFact.record("
-    assert source =~ "AuditAppend.append_fact"
+    refute String.contains?(source, "alias Mezzanine.Audit.AuditFact")
+    refute String.contains?(source, "AuditFact.record(")
+    assert String.contains?(source, "AuditAppend.append_fact")
   end
 end

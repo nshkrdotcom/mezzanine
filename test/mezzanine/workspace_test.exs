@@ -42,7 +42,10 @@ defmodule Mezzanine.WorkspaceTest do
         package.path == "core/ops_domain"
       end)
 
-    assert ops_domain.current_role =~ "live program, work, run, review, evidence, and control"
+    assert String.contains?(
+             ops_domain.current_role,
+             "live program, work, run, review, evidence, and control"
+           )
   end
 
   test "removes retired packages from the live workspace" do
@@ -230,7 +233,7 @@ defmodule Mezzanine.WorkspaceTest do
     end)
     |> Enum.uniq()
     |> Enum.each(fn path ->
-      refute File.read!(path) =~ needle, "#{path} still references #{needle}"
+      refute String.contains?(File.read!(path), needle), "#{path} still references #{needle}"
     end)
   end
 
@@ -241,7 +244,7 @@ defmodule Mezzanine.WorkspaceTest do
     end)
     |> Enum.uniq()
     |> Enum.each(fn path ->
-      assert File.read!(path) =~ needle, "#{path} is missing #{needle}"
+      assert String.contains?(File.read!(path), needle), "#{path} is missing #{needle}"
     end)
   end
 

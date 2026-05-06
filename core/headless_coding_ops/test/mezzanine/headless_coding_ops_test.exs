@@ -35,7 +35,7 @@ defmodule Mezzanine.HeadlessCodingOpsTest do
     assert work_item.target_selection_ref == "target-selection://tenant-1/local-process"
     assert work_item.session_ref == "session://tenant-1/headless/1"
     assert work_item.receipt_ref == "headless-coding-ops-receipt://tenant-1/idempotency-1"
-    refute inspect(work_item) =~ "secret"
+    refute String.contains?(inspect(work_item), "secret")
   end
 
   test "rejects raw credential material in headless intake" do
@@ -129,7 +129,7 @@ defmodule Mezzanine.HeadlessCodingOpsTest do
     assert resume.idempotency_key == "resume-idempotency-1"
     assert resume.restart_event == :workflow_resume
     assert resume.redacted?
-    refute inspect(resume) =~ "secret"
+    refute String.contains?(inspect(resume), "secret")
 
     assert {:error, {:duplicate_active_execution_after_restart, details}} =
              valid_resume()

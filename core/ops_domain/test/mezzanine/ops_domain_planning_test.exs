@@ -86,7 +86,7 @@ defmodule Mezzanine.OpsDomainPlanningTest do
              |> Ash.create(actor: actor, domain: Mezzanine.Programs)
 
     assert bundle.status == :compiled
-    assert bundle.prompt_template =~ "Prompt Only"
+    assert String.contains?(bundle.prompt_template, "Prompt Only")
     assert bundle.config["review"]["required"] == true
     assert bundle.compiled_form["run_profile"]["capability"] == "linear.issue.execute"
     assert bundle.compiled_form["review_rules"]["required"] == true

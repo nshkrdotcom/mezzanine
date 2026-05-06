@@ -18,11 +18,11 @@ defmodule Mezzanine.PrivateWriterTest do
     assert receipt.private_commit.memory_commit_ref == request.memory_commit_ref
     assert receipt.private_commit.m7a_proof_refs == [receipt.m7a_proof.proof_ref]
     assert receipt.private_commit.recall_refs == PrivateWriter.recall_refs(receipt)
-    assert receipt.private_commit.commit_lsn =~ "private-lsn://"
-    assert receipt.private_commit.commit_hlc =~ "private-hlc://"
+    assert String.contains?(receipt.private_commit.commit_lsn, "private-lsn://")
+    assert String.contains?(receipt.private_commit.commit_hlc, "private-hlc://")
 
     assert %M7AProof{} = receipt.m7a_proof
-    assert receipt.m7a_proof.integrity_hash =~ "sha256:"
+    assert String.contains?(receipt.m7a_proof.integrity_hash, "sha256:")
 
     assert {:ok, duplicate} = PrivateWriter.commit(request, caller: :m2_agent_loop)
     assert duplicate == receipt

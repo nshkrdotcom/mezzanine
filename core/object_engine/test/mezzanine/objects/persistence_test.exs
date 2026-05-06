@@ -53,7 +53,7 @@ defmodule Mezzanine.Objects.PersistenceTest do
     assert audit_fact.subject_id == subject.id
     assert audit_fact.payload["schema_ref"] == subject.schema_ref
     assert audit_fact.payload["schema_version"] == subject.schema_version
-    assert audit_fact.payload["schema_hash"] =~ "sha256:"
+    assert String.contains?(audit_fact.payload["schema_hash"], "sha256:")
   end
 
   test "ingest persists provider source metadata and progress refs" do
@@ -115,7 +115,7 @@ defmodule Mezzanine.Objects.PersistenceTest do
     assert subject.labels == ["backend", "needs-triage"]
     assert subject.priority == 2
     assert subject.branch_ref == "feature/lin-101"
-    assert subject.source_url =~ "LIN-101"
+    assert String.contains?(subject.source_url, "LIN-101")
     assert subject.workpad_ref == "linear-comment:workpad-1"
     assert subject.progress_ref == "linear-comment:progress-1"
     assert subject.source_routing["team_id"] == "team-1"
@@ -193,7 +193,7 @@ defmodule Mezzanine.Objects.PersistenceTest do
                actor_ref: %{kind: :intake}
              })
 
-    assert Exception.message(oversized_error) =~ "subject_payload_ref_required"
+    assert String.contains?(Exception.message(oversized_error), "subject_payload_ref_required")
   end
 
   test "ingest rejects missing, unknown, stale, or incompatible subject payload schemas" do
@@ -209,8 +209,10 @@ defmodule Mezzanine.Objects.PersistenceTest do
                actor_ref: %{kind: :intake}
              })
 
-    assert Exception.message(missing_schema_error) =~
+    assert String.contains?(
+             Exception.message(missing_schema_error),
              "subject payload must match a source-owned schema"
+           )
 
     assert {:error, missing_version_error} =
              SubjectRecord.ingest(%{
@@ -225,8 +227,10 @@ defmodule Mezzanine.Objects.PersistenceTest do
                actor_ref: %{kind: :intake}
              })
 
-    assert Exception.message(missing_version_error) =~
+    assert String.contains?(
+             Exception.message(missing_version_error),
              "{:missing_subject_payload_schema_field, :schema_version}"
+           )
 
     assert {:error, unknown_ref_error} =
              SubjectRecord.ingest(%{
@@ -242,11 +246,15 @@ defmodule Mezzanine.Objects.PersistenceTest do
                actor_ref: %{kind: :intake}
              })
 
-    assert Exception.message(unknown_ref_error) =~
+    assert String.contains?(
+             Exception.message(unknown_ref_error),
              "unknown_subject_payload_schema_ref"
+           )
 
-    assert Exception.message(unknown_ref_error) =~
+    assert String.contains?(
+             Exception.message(unknown_ref_error),
              "subject-payload-schema-quarantine:"
+           )
 
     assert {:error, stale_version_error} =
              SubjectRecord.ingest(%{
@@ -262,11 +270,15 @@ defmodule Mezzanine.Objects.PersistenceTest do
                actor_ref: %{kind: :intake}
              })
 
-    assert Exception.message(stale_version_error) =~
+    assert String.contains?(
+             Exception.message(stale_version_error),
              "stale_subject_payload_schema_version"
+           )
 
-    assert Exception.message(stale_version_error) =~
+    assert String.contains?(
+             Exception.message(stale_version_error),
              "subject-payload-schema-quarantine:"
+           )
 
     assert {:error, unknown_version_error} =
              SubjectRecord.ingest(%{
@@ -282,11 +294,15 @@ defmodule Mezzanine.Objects.PersistenceTest do
                actor_ref: %{kind: :intake}
              })
 
-    assert Exception.message(unknown_version_error) =~
+    assert String.contains?(
+             Exception.message(unknown_version_error),
              "unknown_subject_payload_schema_version"
+           )
 
-    assert Exception.message(unknown_version_error) =~
+    assert String.contains?(
+             Exception.message(unknown_version_error),
              "subject-payload-schema-quarantine:"
+           )
 
     assert {:error, invalid_payload_error} =
              SubjectRecord.ingest(%{
@@ -303,8 +319,10 @@ defmodule Mezzanine.Objects.PersistenceTest do
                actor_ref: %{kind: :intake}
              })
 
-    assert Exception.message(invalid_payload_error) =~
+    assert String.contains?(
+             Exception.message(invalid_payload_error),
              "subject payload must match a source-owned schema"
+           )
   end
 
   test "pause, resume, and cancel mutate durable operator status without rewriting lifecycle truth" do
@@ -405,7 +423,7 @@ defmodule Mezzanine.Objects.PersistenceTest do
                actor_ref: %{kind: :system}
              })
 
-    assert Exception.message(error) =~ "stale"
+    assert String.contains?(Exception.message(error), "stale")
 
     assert {:ok, [audit_fact]} = AuditFact.list_trace("inst-1", "trace-lifecycle")
     assert audit_fact.fact_kind == :lifecycle_advanced

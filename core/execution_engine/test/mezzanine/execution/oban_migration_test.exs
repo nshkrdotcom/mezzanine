@@ -7,7 +7,7 @@ defmodule Mezzanine.Execution.ObanMigrationTest do
   test "execution repo migrates oban metadata to the packaged dependency requirement" do
     migration = File.read!(@migration_path)
 
-    assert migration =~ "Oban.Migrations.up(version: 14)"
-    assert migration =~ "Oban.Migrations.down(version: 12)"
+    assert String.contains?(migration, "Oban.Migrations.up(version: 14)")
+    assert String.contains?(migration, "Oban.Migrations.down(version: 12)")
   end
 end

@@ -44,7 +44,7 @@ defmodule Mezzanine.ConfigRegistry.PolicyRegistryTest do
     assert resolved.granularity_scope == :installation
 
     assert_receive {:cluster_invalidation, %{message: message}}
-    assert message.topic =~ "memory.policy."
+    assert String.contains?(message.topic, "memory.policy.")
     assert message.source_node_ref == "node://mez_1@127.0.0.1/node-a"
     assert is_binary(message.commit_lsn)
     assert message.commit_hlc == commit_hlc()
@@ -157,7 +157,7 @@ defmodule Mezzanine.ConfigRegistry.PolicyRegistryTest do
                effective_until: @effective_until
              )
 
-    assert error.message =~ "cluster_invalidation.source_node_ref"
+    assert String.contains?(error.message, "cluster_invalidation.source_node_ref")
 
     assert {:error, :not_found} =
              PolicyRegistry.resolve(:read, %{tenant_ref: "tenant-a"},

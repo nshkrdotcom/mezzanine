@@ -100,8 +100,8 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
     assert projection.payload["workpad"]["refs"] == ["source-workpad://linear/tenant-1/subj-1"]
     assert projection.payload["diagnostics"]["missing_required_evidence"] == []
     assert projection.payload["diagnostics"]["review_blocking?"] == false
-    refute inspect(projection.payload) =~ "should-drop"
-    refute inspect(projection.payload) =~ "never-project-this-token"
+    refute String.contains?(inspect(projection.payload), "should-drop")
+    refute String.contains?(inspect(projection.payload), "never-project-this-token")
 
     assert {:ok, audit_facts} = AuditFact.list_trace("inst-1", "trace-receipt-completed")
     audit_fact = Enum.find(audit_facts, &(&1.fact_kind == :receipt_reduced))

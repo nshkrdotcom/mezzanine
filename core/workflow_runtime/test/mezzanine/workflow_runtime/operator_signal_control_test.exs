@@ -294,7 +294,7 @@ defmodule Mezzanine.WorkflowRuntime.OperatorSignalControlTest do
 
     assert result.workflow_effect_state == "pending"
     assert result.projection_state == "stale"
-    assert result.operator_message =~ "pending"
+    assert String.contains?(result.operator_message, "pending")
     refute Map.has_key?(result, :temporal_query_result)
   end
 

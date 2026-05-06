@@ -55,7 +55,7 @@ defmodule Mezzanine.Memory.InvalidationCoordinatorTest do
       assert is_binary(fragment_metadata["invalidation_id"])
 
       assert_received {:cluster_publish, %{topic: durable_topic}, ^reason}
-      assert durable_topic =~ "memory.invalidation."
+      assert String.contains?(durable_topic, "memory.invalidation.")
 
       if reason in [:user_deletion, :tenant_offboarding] do
         assert_received {:access_edges_revoked, ^reason, @tenant_ref, @node_ref}
@@ -124,7 +124,7 @@ defmodule Mezzanine.Memory.InvalidationCoordinatorTest do
              )
 
     assert_receive {:cluster_publish, %{topic: policy_topic, metadata: metadata}, :policy_change}
-    assert policy_topic =~ "memory.policy."
+    assert String.contains?(policy_topic, "memory.policy.")
     assert metadata["policy_id"] == "policy://invalidate/default"
     assert metadata["policy_version"] == 3
     assert metadata["effective_at"] == "2026-04-24T17:00:00Z"

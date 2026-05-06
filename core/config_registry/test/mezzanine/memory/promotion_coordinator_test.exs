@@ -59,9 +59,9 @@ defmodule Mezzanine.Memory.PromotionCoordinatorTest do
     assert_received {:workflow_plan, plan}
     assert plan.workflow_type == "memory_promotion"
     assert plan.workflow_version == "memory-promotion.v1"
-    assert plan.workflow_id =~ candidate.candidate_id
-    assert plan.idempotency_key =~ candidate.candidate_id
-    assert plan.idempotency_key =~ candidate.promotion_policy_ref
+    assert String.contains?(plan.workflow_id, candidate.candidate_id)
+    assert String.contains?(plan.idempotency_key, candidate.candidate_id)
+    assert String.contains?(plan.idempotency_key, candidate.promotion_policy_ref)
     assert plan.task_queue == TemporalQueueRouting.promotion_queue(@installation_ref)
 
     assert ["mez-a", "12345678", "promotion_worker", queue_segment] =
@@ -69,8 +69,8 @@ defmodule Mezzanine.Memory.PromotionCoordinatorTest do
 
     assert byte_size(queue_segment) == 20
     assert b32lower_segment?(queue_segment)
-    refute plan.worker_identity =~ @installation_ref
-    refute plan.worker_identity =~ "PID"
+    refute String.contains?(plan.worker_identity, @installation_ref)
+    refute String.contains?(plan.worker_identity, "PID")
     assert plan.signal_name == "memory.promotion.decision"
     assert plan.signal_version == "memory-promotion-decision.v1"
 

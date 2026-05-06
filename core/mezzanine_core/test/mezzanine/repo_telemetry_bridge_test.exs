@@ -71,7 +71,7 @@ defmodule Mezzanine.RepoTelemetryBridgeTest do
       assert metadata.repo_name == "archival"
       assert metadata.repo_module == inspect(FakeRepo)
       assert metadata.source == "archival_manifests"
-      assert metadata.error_message =~ "dropped from queue"
+      assert String.contains?(metadata.error_message, "dropped from queue")
     after
       :telemetry.detach(handler_id)
     end

@@ -13,7 +13,7 @@ defmodule Mezzanine.Policy.BundleLoaderTest do
 
     assert bundle.source_ref == @fixture_path
     assert bundle.config["tracker"]["kind"] == "linear"
-    assert bundle.prompt_template =~ "Operate on the assigned work."
+    assert String.contains?(bundle.prompt_template, "Operate on the assigned work.")
   end
 
   test "compiles typed config from a realistic workflow bundle" do

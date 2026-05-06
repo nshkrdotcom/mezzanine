@@ -32,11 +32,15 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecisionTest do
                &(&1.mix_exs == "core/workflow_runtime/mix.exs")
              )
 
-    assert File.read!(Path.join(@mezzanine_root, "mix.exs")) =~
+    assert String.contains?(
+             File.read!(Path.join(@mezzanine_root, "mix.exs")),
              ~s({:temporalex, path: "../temporalex"})
+           )
 
-    assert File.read!(Path.join(@mezzanine_root, "core/workflow_runtime/mix.exs")) =~
+    assert String.contains?(
+             File.read!(Path.join(@mezzanine_root, "core/workflow_runtime/mix.exs")),
              ~s({:temporalex, path: "../../../temporalex"})
+           )
   end
 
   test "registers final workflow and activity modules through temporalex" do
@@ -137,12 +141,12 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecisionTest do
         )
       )
 
-    refute source =~ "workflow skeleton"
-    refute source =~ "activity skeleton"
-    assert source =~ "execute_activity(Mezzanine.Activities.CallOuterBrain"
-    assert source =~ ~s(task_queue: "mezzanine.semantic")
-    assert source =~ "execute_activity(Mezzanine.Activities.RequestDecision"
-    assert source =~ ~s(task_queue: "mezzanine.agentic")
+    refute String.contains?(source, "workflow skeleton")
+    refute String.contains?(source, "activity skeleton")
+    assert String.contains?(source, "execute_activity(Mezzanine.Activities.CallOuterBrain")
+    assert String.contains?(source, ~s(task_queue: "mezzanine.semantic"))
+    assert String.contains?(source, "execute_activity(Mezzanine.Activities.RequestDecision")
+    assert String.contains?(source, ~s(task_queue: "mezzanine.agentic"))
   end
 
   test "declares the concrete Temporalex adapter and worker supervision contract" do
@@ -229,7 +233,11 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecisionTest do
            )
 
     refute Enum.any?(retained, &(&1.queue == :decision_expiry))
-    refute Enum.any?(classifications, &(to_string(&1[:worker]) =~ "DecisionExpiryWorker"))
+
+    refute Enum.any?(
+             classifications,
+             &String.contains?(to_string(&1[:worker]), "DecisionExpiryWorker")
+           )
 
     refute Enum.any?(classifications, &(&1.classification == :invalid_saga_orchestration))
 

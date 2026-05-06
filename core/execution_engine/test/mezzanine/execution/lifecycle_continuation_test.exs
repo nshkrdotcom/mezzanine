@@ -97,7 +97,12 @@ defmodule Mezzanine.Execution.LifecycleContinuationTest do
 
     assert dead_lettered.status == :dead_lettered
     assert dead_lettered.last_error_class == "invalid_transition"
-    assert dead_lettered.last_error_message =~ "missing_lifecycle_continuation_target"
+
+    assert String.contains?(
+             dead_lettered.last_error_message,
+             "missing_lifecycle_continuation_target"
+           )
+
     [evidence] = dead_lettered.metadata["compensation_evidence"]
     assert evidence_field(evidence, "owner_command_or_signal")["kind"] == "invalid_target"
   end

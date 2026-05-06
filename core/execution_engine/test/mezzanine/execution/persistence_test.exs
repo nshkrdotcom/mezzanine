@@ -91,7 +91,10 @@ defmodule Mezzanine.Execution.PersistenceTest do
                actor_ref: %{kind: :scheduler}
              })
 
-    assert Exception.message(error) =~ "artifact payload boundary rejected dispatch_envelope"
+    assert String.contains?(
+             Exception.message(error),
+             "artifact payload boundary rejected dispatch_envelope"
+           )
   end
 
   test "accepted dispatch stores lower receipt and enriches execution lineage" do
@@ -232,7 +235,10 @@ defmodule Mezzanine.Execution.PersistenceTest do
                actor_ref: %{kind: :reconciler}
              })
 
-    assert Exception.message(error) =~ "artifact payload boundary rejected lower_receipt"
+    assert String.contains?(
+             Exception.message(error),
+             "artifact payload boundary rejected lower_receipt"
+           )
   end
 
   defp ingest_subject(source_ref) do

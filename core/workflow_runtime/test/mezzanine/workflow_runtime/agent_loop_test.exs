@@ -52,8 +52,8 @@ defmodule Mezzanine.WorkflowRuntime.AgentLoopTest do
     assert "receipt.observed" in event_kinds
     assert "run.terminal" in event_kinds
 
-    refute inspect(AgentLoopProjection.dump(projection)) =~ "raw_provider_payload"
-    refute inspect(AgentLoopProjection.dump(projection)) =~ "/home/"
+    refute String.contains?(inspect(AgentLoopProjection.dump(projection)), "raw_provider_payload")
+    refute String.contains?(inspect(AgentLoopProjection.dump(projection)), "/home/")
   end
 
   test "Temporal workflow calls explicit activity contracts" do
@@ -151,8 +151,8 @@ defmodule Mezzanine.WorkflowRuntime.AgentLoopTest do
     assert projection.terminal_state == "completed"
     assert [memory_commit_ref] = projection.memory_commit_refs
     assert [memory_proof_ref] = projection.memory_proof_refs
-    assert memory_commit_ref =~ "memory-commit://agent-loop/"
-    assert memory_proof_ref =~ "m7a-proof://"
+    assert String.contains?(memory_commit_ref, "memory-commit://agent-loop/")
+    assert String.contains?(memory_proof_ref, "m7a-proof://")
 
     [turn] = projection.turn_states
     assert turn.memory_commit_ref == memory_commit_ref

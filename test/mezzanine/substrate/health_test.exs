@@ -41,11 +41,11 @@ defmodule Mezzanine.Substrate.HealthTest do
         HealthTask.run([])
       end)
 
-    assert output =~ "schema_version=mezzanine_substrate_health_v1"
-    assert output =~ "postgres: configured_for_rehearsal"
-    assert output =~ "temporal: owned_local_substrate"
-    assert output =~ "outer_brain_provider_free: declared_provider_free_boundary"
-    assert output =~ "websocket_edge: reconnect_readback_required"
-    assert output =~ "raw_temporal_server_start_allowed?=false"
+    assert String.contains?(output, "schema_version=mezzanine_substrate_health_v1")
+    assert String.contains?(output, "postgres: configured_for_rehearsal")
+    assert String.contains?(output, "temporal: owned_local_substrate")
+    assert String.contains?(output, "outer_brain_provider_free: declared_provider_free_boundary")
+    assert String.contains?(output, "websocket_edge: reconnect_readback_required")
+    assert String.contains?(output, "raw_temporal_server_start_allowed?=false")
   end
 end

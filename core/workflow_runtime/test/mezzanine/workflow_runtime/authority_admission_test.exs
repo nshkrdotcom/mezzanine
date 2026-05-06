@@ -66,7 +66,7 @@ defmodule Mezzanine.WorkflowRuntime.AuthorityAdmissionTest do
     assert handoff.handoff_ref == "workflow-authority-handoff://idem-authority-admission-1"
     assert handoff.raw_material_present? == false
 
-    refute inspect(handoff) =~ "secret"
+    refute String.contains?(inspect(handoff), "secret")
     refute Map.has_key?(handoff, :raw_token)
     refute Map.has_key?(handoff, :provider_payload)
   end
@@ -113,8 +113,8 @@ defmodule Mezzanine.WorkflowRuntime.AuthorityAdmissionTest do
     refute reqllm_handoff.credential_lease_ref == claude_handoff.credential_lease_ref
     refute reqllm_handoff.target_ref == claude_handoff.target_ref
     refute reqllm_handoff.operation_policy_ref == claude_handoff.operation_policy_ref
-    refute inspect(reqllm_handoff) =~ "secret"
-    refute inspect(claude_handoff) =~ "secret"
+    refute String.contains?(inspect(reqllm_handoff), "secret")
+    refute String.contains?(inspect(claude_handoff), "secret")
   end
 
   test "agent loop refuses provider lower submission without provider authority refs" do

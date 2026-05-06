@@ -81,8 +81,8 @@ defmodule Mezzanine.Audit.TemporalQueueRoutingTest do
       )
 
     assert byte_size(identity) <= 96
-    refute identity =~ "installation://"
-    refute identity =~ "PID"
+    refute String.contains?(identity, "installation://")
+    refute String.contains?(identity, "PID")
   end
 
   test "rejects worker identity fields that would leak raw refs or path segments" do

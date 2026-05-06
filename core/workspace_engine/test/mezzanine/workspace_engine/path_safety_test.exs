@@ -50,7 +50,7 @@ defmodule Mezzanine.WorkspaceEngine.PathSafetyTest do
     assert public_ref.metadata.cleanup_policy == :on_terminal
     refute Map.has_key?(public_ref, :concrete_path)
     refute Map.has_key?(public_ref, :concrete_root)
-    refute inspect(public_ref) =~ root
+    refute String.contains?(inspect(public_ref), root)
   end
 
   test "replaces a stale non-directory target under the workspace root" do

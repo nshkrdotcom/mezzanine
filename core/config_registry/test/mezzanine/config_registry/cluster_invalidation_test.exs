@@ -65,7 +65,7 @@ defmodule Mezzanine.ConfigRegistry.ClusterInvalidationTest do
                published_at: ~U[2026-04-23 12:00:00Z]
              })
 
-    assert error.message =~ "cluster_invalidation.topic"
+    assert String.contains?(error.message, "cluster_invalidation.topic")
   end
 
   test "default publisher emits the normalized invalidation message through telemetry" do

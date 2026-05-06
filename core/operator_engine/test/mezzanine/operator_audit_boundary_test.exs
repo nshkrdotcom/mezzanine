@@ -6,11 +6,11 @@ defmodule Mezzanine.OperatorAuditBoundaryTest do
   test "operator commands delegate audit writes through bounded-context owner actions" do
     source = File.read!(@source_path)
 
-    refute source =~ "@insert_audit_fact_sql"
-    refute source =~ "insert_audit_fact("
-    refute source =~ "AuditAppend.append_fact"
-    assert source =~ "SubjectRecord.pause"
-    assert source =~ "ExecutionRecord.record_operator_cancelled"
-    assert source =~ "OperatorActionClassification"
+    refute String.contains?(source, "@insert_audit_fact_sql")
+    refute String.contains?(source, "insert_audit_fact(")
+    refute String.contains?(source, "AuditAppend.append_fact")
+    assert String.contains?(source, "SubjectRecord.pause")
+    assert String.contains?(source, "ExecutionRecord.record_operator_cancelled")
+    assert String.contains?(source, "OperatorActionClassification")
   end
 end

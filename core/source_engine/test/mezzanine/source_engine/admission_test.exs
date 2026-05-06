@@ -23,12 +23,12 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
     assert {:ok, %SourceEvent{} = event, seen} = Admission.admit(attrs, MapSet.new())
 
     assert event.contract_version == "Mezzanine.SourceEvent.v1"
-    assert event.source_event_id =~ "src_"
+    assert String.contains?(event.source_event_id, "src_")
 
     assert event.idempotency_key ==
              "linear/linear-primary/LIN-101/issue.updated/2026-04-25T10:00:00Z"
 
-    assert event.payload_hash =~ "sha256:"
+    assert String.contains?(event.payload_hash, "sha256:")
     assert event.status == :accepted
     assert MapSet.member?(seen, event.idempotency_key)
   end

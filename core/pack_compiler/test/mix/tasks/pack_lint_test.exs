@@ -16,7 +16,7 @@ defmodule Mix.Tasks.Pack.LintTest do
         PackLint.run(["Mezzanine.TestPacks.ExpenseApprovalPack"])
       end)
 
-    assert output =~ "pack lint passed"
+    assert String.contains?(output, "pack lint passed")
   end
 
   test "raises when the requested pack module is missing" do

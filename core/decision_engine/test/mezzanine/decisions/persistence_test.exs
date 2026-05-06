@@ -31,7 +31,12 @@ defmodule Mezzanine.Decisions.PersistenceTest do
     assert [audit_fact] = audit_facts_for_trace("inst-1", "trace-decision-pending")
     assert audit_fact.fact_kind == :decision_created
     assert audit_fact.decision_id == decision.id
-    assert audit_fact.payload["workflow_timer_ref"] =~ "workflow-timer://decision/"
+
+    assert String.contains?(
+             audit_fact.payload["workflow_timer_ref"],
+             "workflow-timer://decision/"
+           )
+
     refute Map.has_key?(audit_fact.payload, "expiry_job_id")
   end
 

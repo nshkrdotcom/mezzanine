@@ -95,17 +95,21 @@ defmodule Mezzanine.WorkflowRuntime.ProjectionReconciliationTest do
   test "candidate query joins execution projections to workflow-start outbox evidence" do
     query = ProjectionReconciliation.candidate_query()
 
-    assert query =~ "FROM execution_records er"
-    assert query =~ "FROM workflow_start_outbox wso"
-    assert query =~ "wso.workflow_type = 'execution_attempt'"
-    assert query =~ "COALESCE(wo.workflow_id, ep.expected_workflow_id) AS workflow_id"
+    assert String.contains?(query, "FROM execution_records er")
+    assert String.contains?(query, "FROM workflow_start_outbox wso")
+    assert String.contains?(query, "wso.workflow_type = 'execution_attempt'")
+
+    assert String.contains?(
+             query,
+             "COALESCE(wo.workflow_id, ep.expected_workflow_id) AS workflow_id"
+           )
 
     for state <- ["queued", "in_flight", "accepted_active"] do
-      assert query =~ "'#{state}'"
+      assert String.contains?(query, "'#{state}'")
     end
 
     for state <- ["pending_dispatch", "dispatching_retry", "awaiting_receipt"] do
-      refute query =~ "'#{state}'"
+      refute String.contains?(query, "'#{state}'")
     end
   end
 

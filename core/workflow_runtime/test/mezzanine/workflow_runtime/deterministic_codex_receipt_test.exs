@@ -33,7 +33,7 @@ defmodule Mezzanine.WorkflowRuntime.DeterministicCodexReceiptTest do
     assert result.temporal_substrate.address == "127.0.0.1:7233"
     assert result.temporal_substrate.namespace == "default"
     assert result.temporal_substrate.state_db_present? == true
-    assert result.temporal_substrate.state_db_ref =~ "sha256:"
+    assert String.contains?(result.temporal_substrate.state_db_ref, "sha256:")
 
     facts = Map.new(result.receipt_facts, &{&1.receipt_state, &1})
 
@@ -67,8 +67,8 @@ defmodule Mezzanine.WorkflowRuntime.DeterministicCodexReceiptTest do
              user_input_required: 1
            }
 
-    refute inspect(result) =~ File.cwd!()
-    refute inspect(result) =~ "raw_provider_payload"
+    refute String.contains?(inspect(result), File.cwd!())
+    refute String.contains?(inspect(result), "raw_provider_payload")
   end
 
   test "Temporal activity wrapper uses the deterministic fixture mapper" do
@@ -99,8 +99,8 @@ defmodule Mezzanine.WorkflowRuntime.DeterministicCodexReceiptTest do
 
     assert Enum.all?(result.token_dedupe.token_hash_refs, &String.starts_with?(&1, "sha256:"))
 
-    refute inspect(result) =~ "never-project-this-token"
-    refute inspect(result) =~ "second-token"
+    refute String.contains?(inspect(result), "never-project-this-token")
+    refute String.contains?(inspect(result), "second-token")
   end
 
   test "rejects live adapters and non-local fixtures before reading receipts" do
