@@ -20,6 +20,7 @@ core/evidence_engine/
 core/projection_engine/
 core/operator_engine/
 core/optimization_engine/
+core/coordination_engine/
 core/audit_engine/
 core/archival_engine/
 core/ops_model/

@@ -43,6 +43,7 @@ mezzanine/
   core/projection_engine
   core/operator_engine
   core/optimization_engine
+  core/coordination_engine
   core/audit_engine
   core/archival_engine
   core/ops_*           # live semantic hosts pending later neutral rename
@@ -77,6 +78,7 @@ The active buildout in this repo is the neutral core scaffold:
 - `core/projection_engine`
 - `core/operator_engine`
 - `core/optimization_engine`
+- `core/coordination_engine`
 - `core/audit_engine`
 - `core/archival_engine`
 
