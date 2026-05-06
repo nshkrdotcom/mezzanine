@@ -16,7 +16,9 @@ defmodule Mezzanine.OptimizationEngine.PromotionWorkflowTest do
       human_approval_gate: :pass,
       score_delta: -0.1,
       rollback_ref: "rollback:candidate:instruction:v2",
-      trace_refs: ["trace:promotion:v2"]
+      trace_refs: ["trace:promotion:v2"],
+      gate_evidence_refs: gate_evidence_refs(),
+      operator_evidence_refs: ["appkit://candidate-review/v2"]
     }
 
     assert {:error, %PromotionWorkflow.Decision{} = decision} =
@@ -25,6 +27,8 @@ defmodule Mezzanine.OptimizationEngine.PromotionWorkflowTest do
     assert decision.decision_class == :blocked
     assert decision.blocked_gate_refs == ["gate:regression"]
     assert decision.rollback_ref == "rollback:candidate:instruction:v2"
+    assert decision.gate_evidence_refs == gate_evidence_refs()
+    assert decision.operator_evidence_refs == ["appkit://candidate-review/v2"]
 
     failed_eval = %{attrs | eval_gate: :fail, score_delta: 0.1}
 
@@ -48,11 +52,47 @@ defmodule Mezzanine.OptimizationEngine.PromotionWorkflowTest do
                human_approval_gate: :pass,
                score_delta: 0.1,
                promotion_ref: "promotion:candidate:instruction:v2",
-               trace_refs: ["trace:promotion:v2"]
+               trace_refs: ["trace:promotion:v2"],
+               gate_evidence_refs: gate_evidence_refs(),
+               operator_evidence_refs: ["appkit://candidate-review/v2"]
              })
 
     assert decision.decision_class == :promote
     assert decision.promotion_ref == "promotion:candidate:instruction:v2"
     assert decision.blocked_gate_refs == []
+    assert decision.gate_evidence_refs == gate_evidence_refs()
+    assert decision.operator_evidence_refs == ["appkit://candidate-review/v2"]
+  end
+
+  test "blocks promotion when operator-visible gate evidence is missing" do
+    assert {:error, %PromotionWorkflow.Decision{} = decision} =
+             PromotionWorkflow.evaluate(%{
+               candidate_ref: "candidate:component:instruction:v2",
+               parent_candidate_ref: "candidate:component:instruction:v1",
+               eval_gate: :pass,
+               replay_gate: :pass,
+               guardrail_gate: :pass,
+               budget_gate: :pass,
+               shadow_gate: :pass,
+               canary_gate: :pass,
+               human_approval_gate: :pass,
+               score_delta: 0.1,
+               promotion_ref: "promotion:candidate:instruction:v2",
+               trace_refs: ["trace:promotion:v2"],
+               gate_evidence_refs: ["gate-evidence://eval"],
+               operator_evidence_refs: []
+             })
+
+    assert decision.blocked_gate_refs == ["gate:evidence"]
+    assert decision.rollback_ref == "rollback:evidence-missing"
+  end
+
+  defp gate_evidence_refs do
+    [
+      "gate-evidence://eval",
+      "gate-evidence://replay",
+      "gate-evidence://guardrail",
+      "gate-evidence://budget"
+    ]
   end
 end

@@ -54,7 +54,16 @@ defmodule Mezzanine.OptimizationEngine.EvaluatorPoolTest do
       budget_ref: "budget:optimization:phase7",
       eval_suite_ref: "eval_suite:phase7",
       replay_bundle_ref: "replay:phase7",
-      trace_ref: "trace:optimization:phase7"
+      trace_ref: "trace:optimization:phase7",
+      memory_ref_set: ["memory:optimization:phase7"],
+      prompt_ref_set: ["prompt:instruction:phase7"],
+      context_budget_ref: "context-budget:optimization:phase7",
+      guardrail_ref_set: ["guardrail:optimization:phase7"],
+      cost_budget_ref_set: ["budget:optimization:phase7"],
+      drift_ref_set: ["drift:optimization:phase7"],
+      persistence_ref_set: ["persistence:memory:phase7"],
+      promotion_ref_set: ["promotion:phase7"],
+      rollback_ref_set: ["rollback:phase7"]
     }
   end
 end

@@ -7,17 +7,28 @@ defmodule Mezzanine.OptimizationEngine.PromotionWorkflow.Decision do
           promotion_ref: String.t() | nil,
           rollback_ref: String.t() | nil,
           blocked_gate_refs: [String.t()],
-          trace_refs: [String.t()]
+          trace_refs: [String.t()],
+          gate_evidence_refs: [String.t()],
+          operator_evidence_refs: [String.t()]
         }
 
-  @enforce_keys [:decision_class, :candidate_ref, :blocked_gate_refs, :trace_refs]
+  @enforce_keys [
+    :decision_class,
+    :candidate_ref,
+    :blocked_gate_refs,
+    :trace_refs,
+    :gate_evidence_refs,
+    :operator_evidence_refs
+  ]
   defstruct [
     :decision_class,
     :candidate_ref,
     :promotion_ref,
     :rollback_ref,
     :blocked_gate_refs,
-    :trace_refs
+    :trace_refs,
+    :gate_evidence_refs,
+    :operator_evidence_refs
   ]
 end
 
@@ -38,10 +49,18 @@ defmodule Mezzanine.OptimizationEngine.PromotionWorkflow do
     {:canary_gate, "gate:canary"},
     {:human_approval_gate, "gate:human_approval"}
   ]
+  @required_gate_evidence_refs [
+    "gate-evidence://eval",
+    "gate-evidence://replay",
+    "gate-evidence://guardrail",
+    "gate-evidence://budget"
+  ]
 
   @spec evaluate(map()) :: {:ok, Decision.t()} | {:error, Decision.t()}
   def evaluate(attrs) when is_map(attrs) do
     blocked_gate_refs = blocked_gate_refs(attrs)
+    gate_evidence_refs = Value.string_list(Value.get(attrs, :gate_evidence_refs, []))
+    operator_evidence_refs = Value.string_list(Value.get(attrs, :operator_evidence_refs, []))
 
     if blocked_gate_refs == [] do
       {:ok,
@@ -50,16 +69,20 @@ defmodule Mezzanine.OptimizationEngine.PromotionWorkflow do
          candidate_ref: Value.get(attrs, :candidate_ref),
          promotion_ref: Value.get(attrs, :promotion_ref),
          blocked_gate_refs: [],
-         trace_refs: Value.string_list(Value.get(attrs, :trace_refs, []))
+         trace_refs: Value.string_list(Value.get(attrs, :trace_refs, [])),
+         gate_evidence_refs: gate_evidence_refs,
+         operator_evidence_refs: operator_evidence_refs
        }}
     else
       {:error,
        %Decision{
          decision_class: :blocked,
          candidate_ref: Value.get(attrs, :candidate_ref),
-         rollback_ref: Value.get(attrs, :rollback_ref),
+         rollback_ref: rollback_ref(attrs, blocked_gate_refs),
          blocked_gate_refs: blocked_gate_refs,
-         trace_refs: Value.string_list(Value.get(attrs, :trace_refs, []))
+         trace_refs: Value.string_list(Value.get(attrs, :trace_refs, [])),
+         gate_evidence_refs: gate_evidence_refs,
+         operator_evidence_refs: operator_evidence_refs
        }}
     end
   end
@@ -71,7 +94,9 @@ defmodule Mezzanine.OptimizationEngine.PromotionWorkflow do
        candidate_ref: "candidate:invalid",
        rollback_ref: "rollback:invalid",
        blocked_gate_refs: ["gate:invalid"],
-       trace_refs: []
+       trace_refs: [],
+       gate_evidence_refs: [],
+       operator_evidence_refs: []
      }}
   end
 
@@ -83,8 +108,20 @@ defmodule Mezzanine.OptimizationEngine.PromotionWorkflow do
 
     cond do
       is_binary(gate_failure) -> [gate_failure]
+      missing_evidence?(attrs) -> ["gate:evidence"]
       Value.get(attrs, :score_delta, 0.0) < 0 -> ["gate:regression"]
       true -> []
     end
   end
+
+  defp missing_evidence?(attrs) do
+    gate_evidence_refs = Value.string_list(Value.get(attrs, :gate_evidence_refs, []))
+    operator_evidence_refs = Value.string_list(Value.get(attrs, :operator_evidence_refs, []))
+
+    not Enum.all?(@required_gate_evidence_refs, &(&1 in gate_evidence_refs)) or
+      operator_evidence_refs == []
+  end
+
+  defp rollback_ref(_attrs, ["gate:evidence"]), do: "rollback:evidence-missing"
+  defp rollback_ref(attrs, _blocked_gate_refs), do: Value.get(attrs, :rollback_ref)
 end

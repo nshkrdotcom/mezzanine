@@ -21,6 +21,8 @@ defmodule Mezzanine.CoordinationEngine.Run do
     :cancellation_ref,
     :failure_ref,
     :replacement_ref,
+    guardrail_refs: [],
+    eval_refs: [],
     state_history: [],
     trace_refs: [],
     replay_refs: []
@@ -37,6 +39,8 @@ defmodule Mezzanine.CoordinationEngine.Run do
          ai_run_envelope: envelope,
          state: :created,
          provider_pool_ref: spec.provider_pool_ref,
+         guardrail_refs: spec.guardrail_ref_set,
+         eval_refs: spec.eval_ref_set,
          state_history: [:created],
          trace_refs: spec.trace_ref_set,
          replay_refs: [spec.replay_ref]

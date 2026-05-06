@@ -68,6 +68,8 @@ defmodule Mezzanine.CoordinationEngine.FailClosedTest do
       role_registry_ref: "role-registry://fail-closed",
       memory_ref_set: ["memory://shared"],
       prompt_ref_set: ["prompt://worker"],
+      guardrail_ref_set: ["guardrail://input", "guardrail://output"],
+      eval_ref_set: ["eval-suite://coordination-repair"],
       model_profile_ref_set: ["model://mock"],
       target_ref_set: ["target://mock"],
       trace_ref_set: ["trace://coordination"],

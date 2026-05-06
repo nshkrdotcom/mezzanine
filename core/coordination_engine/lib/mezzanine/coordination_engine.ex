@@ -4,7 +4,7 @@ defmodule Mezzanine.CoordinationEngine do
   """
 
   alias JidoHive.{CoordinationPatterns, InterAgentMessaging}
-  alias Mezzanine.CoordinationEngine.{Run, RunSpec, StateMachine, VerifierPolicy}
+  alias Mezzanine.CoordinationEngine.{Run, RunSpec, StateMachine, TraceDataset, VerifierPolicy}
 
   @spec admit(map()) :: {:ok, Run.t()} | {:error, term()}
   def admit(attrs) when is_map(attrs) do
@@ -66,4 +66,7 @@ defmodule Mezzanine.CoordinationEngine do
           {:ok, InterAgentMessaging.RoutedMessage.t()} | {:error, term()}
   def route_message(attrs, routing_context \\ %{}),
     do: InterAgentMessaging.route(attrs, routing_context)
+
+  @spec trace_dataset(Run.t(), map()) :: {:ok, TraceDataset.Receipt.t()} | {:error, term()}
+  def trace_dataset(%Run{} = run, attrs), do: TraceDataset.from_run(run, attrs)
 end

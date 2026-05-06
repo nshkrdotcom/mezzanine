@@ -25,6 +25,8 @@ defmodule Mezzanine.CoordinationEngine.RunSpec do
   @required_lists [
     :memory_ref_set,
     :prompt_ref_set,
+    :guardrail_ref_set,
+    :eval_ref_set,
     :model_profile_ref_set,
     :target_ref_set,
     :trace_ref_set
@@ -80,6 +82,7 @@ defmodule Mezzanine.CoordinationEngine.RunSpec do
       operation_policy_ref: spec.operation_policy_ref,
       target_ref_set: spec.target_ref_set,
       trace_ref_set: spec.trace_ref_set,
+      eval_ref_set: spec.eval_ref_set,
       budget_ref_set: [spec.cost_budget_ref, spec.context_budget_ref],
       idempotency_ref: "idempotency:" <> spec.coordination_run_ref,
       cancellation_ref: spec.cancellation_ref,
