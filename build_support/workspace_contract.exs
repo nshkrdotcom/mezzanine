@@ -28,6 +28,7 @@ defmodule Mezzanine.Build.WorkspaceContract do
     "core/projection_engine",
     "core/operator_engine",
     "core/audit_engine",
+    "core/context_budget_admission",
     "core/archival_engine"
   ]
 

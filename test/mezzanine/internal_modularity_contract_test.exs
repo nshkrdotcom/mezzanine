@@ -9,6 +9,7 @@ defmodule Mezzanine.InternalModularityContractTest do
              "core/audit_engine",
              "core/barriers",
              "core/config_registry",
+             "core/context_budget_admission",
              "core/decision_engine",
              "core/evidence_engine",
              "core/execution_engine",

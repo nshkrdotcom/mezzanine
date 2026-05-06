@@ -1,0 +1,167 @@
+defmodule Mezzanine.Audit.AIPlatformFact do
+  @moduledoc """
+  Redaction-safe AI Platform audit fact builders.
+
+  These builders produce bounded audit fact attributes for callers that own the
+  transaction boundary. They never accept raw memory bodies, prompt bodies,
+  provider payloads, or secret-like material.
+  """
+
+  @memory_operations [:write, :read, :evict]
+  @budget_loci [:preflight, :append, :stream, :runtime_admission, :reconciliation]
+  @budget_decisions [
+    :allow,
+    :allow_with_redaction,
+    :deny_oversize,
+    :deny_exhausted,
+    :deny_policy,
+    :deny_revoked
+  ]
+  @raw_payload_keys [
+    :body,
+    :raw_body,
+    :memory_body,
+    :raw_memory_body,
+    :content,
+    :raw_content,
+    :prompt_body,
+    :provider_payload,
+    :secret,
+    :token,
+    "body",
+    "raw_body",
+    "memory_body",
+    "raw_memory_body",
+    "content",
+    "raw_content",
+    "prompt_body",
+    "provider_payload",
+    "secret",
+    "token"
+  ]
+
+  @memory_required [
+    :tenant_ref,
+    :authority_ref,
+    :installation_ref,
+    :idempotency_key,
+    :trace_ref,
+    :scope_key,
+    :operation,
+    :redaction_policy_ref,
+    :memory_id,
+    :evidence_hash
+  ]
+
+  @budget_required [
+    :tenant_ref,
+    :authority_ref,
+    :installation_ref,
+    :idempotency_key,
+    :trace_ref,
+    :locus,
+    :decision_class,
+    :requested_units,
+    :granted_units,
+    :residual_units,
+    :policy_revision_ref
+  ]
+
+  @spec memory_access_recorded(map()) :: {:ok, map()} | {:error, term()}
+  def memory_access_recorded(attrs) when is_map(attrs) do
+    with :ok <- reject_raw_payload(attrs),
+         :ok <- required_fields(attrs, @memory_required),
+         {:ok, operation} <- member(attrs, :operation, @memory_operations) do
+      {:ok,
+       %{
+         installation_id: fetch!(attrs, :installation_ref),
+         trace_id: fetch!(attrs, :trace_ref),
+         fact_kind: :memory_access_recorded,
+         actor_ref: %{
+           "tenant_ref" => fetch!(attrs, :tenant_ref),
+           "authority_ref" => fetch!(attrs, :authority_ref)
+         },
+         idempotency_key: fetch!(attrs, :idempotency_key),
+         payload: %{
+           "tenant_ref" => fetch!(attrs, :tenant_ref),
+           "authority_ref" => fetch!(attrs, :authority_ref),
+           "installation_ref" => fetch!(attrs, :installation_ref),
+           "scope_key" => fetch!(attrs, :scope_key),
+           "operation" => Atom.to_string(operation),
+           "redaction_policy_ref" => fetch!(attrs, :redaction_policy_ref),
+           "memory_id" => fetch!(attrs, :memory_id),
+           "evidence_hash" => fetch!(attrs, :evidence_hash)
+         }
+       }}
+    end
+  end
+
+  @spec budget_enforced(map()) :: {:ok, map()} | {:error, term()}
+  def budget_enforced(attrs) when is_map(attrs) do
+    with :ok <- reject_raw_payload(attrs),
+         :ok <- required_fields(attrs, @budget_required),
+         {:ok, locus} <- member(attrs, :locus, @budget_loci),
+         {:ok, decision_class} <- member(attrs, :decision_class, @budget_decisions),
+         :ok <- non_negative_integer(attrs, :requested_units),
+         :ok <- non_negative_integer(attrs, :granted_units),
+         :ok <- non_negative_integer(attrs, :residual_units) do
+      {:ok,
+       %{
+         installation_id: fetch!(attrs, :installation_ref),
+         trace_id: fetch!(attrs, :trace_ref),
+         fact_kind: :budget_enforced,
+         actor_ref: %{
+           "tenant_ref" => fetch!(attrs, :tenant_ref),
+           "authority_ref" => fetch!(attrs, :authority_ref)
+         },
+         idempotency_key: fetch!(attrs, :idempotency_key),
+         payload: %{
+           "tenant_ref" => fetch!(attrs, :tenant_ref),
+           "authority_ref" => fetch!(attrs, :authority_ref),
+           "installation_ref" => fetch!(attrs, :installation_ref),
+           "locus" => Atom.to_string(locus),
+           "decision_class" => Atom.to_string(decision_class),
+           "requested_units" => fetch!(attrs, :requested_units),
+           "granted_units" => fetch!(attrs, :granted_units),
+           "residual_units" => fetch!(attrs, :residual_units),
+           "policy_revision_ref" => fetch!(attrs, :policy_revision_ref)
+         }
+       }}
+    end
+  end
+
+  defp reject_raw_payload(attrs) do
+    case Enum.find(@raw_payload_keys, &Map.has_key?(attrs, &1)) do
+      nil -> :ok
+      key -> {:error, {:raw_ai_platform_audit_payload_forbidden, key}}
+    end
+  end
+
+  defp required_fields(attrs, fields) do
+    case Enum.find(fields, &(not present?(fetch(attrs, &1)))) do
+      nil -> :ok
+      field -> {:error, {:missing_ai_platform_audit_ref, field}}
+    end
+  end
+
+  defp member(attrs, field, allowed) do
+    value = fetch(attrs, field)
+
+    if value in allowed,
+      do: {:ok, value},
+      else: {:error, {:invalid_ai_platform_audit_field, field}}
+  end
+
+  defp non_negative_integer(attrs, field) do
+    case fetch(attrs, field) do
+      value when is_integer(value) and value >= 0 -> :ok
+      _value -> {:error, {:invalid_ai_platform_audit_field, field}}
+    end
+  end
+
+  defp present?(value) when is_binary(value), do: String.trim(value) != ""
+  defp present?(value), do: not is_nil(value)
+
+  defp fetch!(attrs, field), do: fetch(attrs, field)
+  defp fetch(attrs, field), do: Map.get(attrs, field) || Map.get(attrs, Atom.to_string(field))
+end

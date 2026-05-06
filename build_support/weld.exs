@@ -6,6 +6,7 @@ defmodule Mezzanine.Build.WeldContract do
   @repo_root Path.expand("..", __DIR__)
   @citadel_repo_path Path.expand("../citadel", @repo_root)
   @execution_plane_repo_path Path.expand("../execution_plane", @repo_root)
+  @outer_brain_repo_path Path.expand("../outer_brain", @repo_root)
   @temporalex_repo_path Path.expand("../temporalex", @repo_root)
 
   @dependencies [
@@ -31,6 +32,30 @@ defmodule Mezzanine.Build.WeldContract do
             branch: "main",
             subdir: "core/execution_plane",
             override: true
+          ]
+        end
+    ],
+    outer_brain_context_budget: [
+      opts:
+        if File.dir?(@outer_brain_repo_path) do
+          [git: @outer_brain_repo_path, sparse: "core/context_budget"]
+        else
+          [
+            github: "nshkrdotcom/outer_brain",
+            branch: "main",
+            sparse: "core/context_budget"
+          ]
+        end
+    ],
+    outer_brain_memory_contracts: [
+      opts:
+        if File.dir?(@outer_brain_repo_path) do
+          [git: @outer_brain_repo_path, sparse: "core/memory_contracts"]
+        else
+          [
+            github: "nshkrdotcom/outer_brain",
+            branch: "main",
+            sparse: "core/memory_contracts"
           ]
         end
     ],
@@ -78,7 +103,7 @@ defmodule Mezzanine.Build.WeldContract do
         tooling: ["."]
       ],
       publication: [
-        internal_only: ["."]
+        internal_only: [".", "core/context_budget_admission"]
       ],
       dependencies: @dependencies,
       artifacts: [
