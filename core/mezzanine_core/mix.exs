@@ -45,6 +45,7 @@ defmodule MezzanineCore.MixProject do
 
   defp deps do
     [
+      {:ground_plane_persistence_policy, path: "../../../ground_plane/core/persistence_policy"},
       {:telemetry, "~> 1.3"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},

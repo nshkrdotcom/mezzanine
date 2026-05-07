@@ -2,6 +2,13 @@
 
 Neutral audit ledger and timeline engine for the Mezzanine rebuild.
 
+## Persistence Posture
+
+Audit state now enters through `Mezzanine.Audit.Store`. The default adapter is
+memory-only and does not start `Mezzanine.Audit.Repo`. The AshPostgres adapter
+is adapter-local durable opt-in and must pass migration preflight before state
+mutation.
+
 This package now owns the Phase `2.4.2` durable audit-ledger slice and retains
 the Phase `2.3` operational contract for:
 

@@ -2,6 +2,15 @@
 
 Owns the Phase 4 Temporal runtime boundary for Mezzanine.
 
+## Persistence Posture
+
+Workflow runtime state now enters through `Mezzanine.WorkflowRuntime.Store`.
+The default adapter is `Mezzanine.WorkflowRuntime.Store.Memory`, and outbox
+outcome persistence defaults to `Mezzanine.WorkflowRuntime.OutboxPersistence.Memory`.
+SQL outbox persistence is explicit opt-in through
+`Mezzanine.WorkflowRuntime.OutboxPersistence.SQL` and requires durable
+migration proof at the store facade.
+
 This package is the only Mezzanine package that compiles the direct
 `temporalex` runtime dependency. Core substrate packages keep pure contract and
 ledger ownership; workflow execution code stays isolated here so monorepo

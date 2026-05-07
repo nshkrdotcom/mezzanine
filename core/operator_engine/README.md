@@ -3,6 +3,12 @@
 Neutral operator command, diagnostics, and control-room evidence engine for the
 Mezzanine rebuild.
 
+## Persistence Posture
+
+Operator command state now enters through `Mezzanine.Operator.Store`. The
+default adapter is memory-only. The Postgres-backed path remains adapter-local
+and fails preflight without migration proof.
+
 This package owns operator-facing commands, diagnostics, intervention
 coordination above the neutral execution core, and the Phase 4 control-room
 incident bundle contract.

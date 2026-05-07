@@ -12,7 +12,7 @@ defmodule Mezzanine.EvidenceLedger.Application do
   end
 
   defp children do
-    if Application.get_env(:mezzanine_evidence_engine, :start_runtime_children?, true) do
+    if Application.get_env(:mezzanine_evidence_engine, :start_runtime_children?, false) do
       [Mezzanine.EvidenceLedger.Repo]
     else
       []

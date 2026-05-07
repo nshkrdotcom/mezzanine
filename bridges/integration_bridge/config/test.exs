@@ -1,5 +1,7 @@
 import Config
 
+config :mezzanine_audit_engine, start_runtime_children?: true
+
 config :mezzanine_audit_engine, Mezzanine.Audit.Repo,
   username: System.get_env("PGUSER", "postgres"),
   password: System.get_env("PGPASSWORD", "postgres"),

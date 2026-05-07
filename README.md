@@ -91,6 +91,9 @@ into neutral packages with current naming.
 Current posture:
 
 - new reusable substrate work lands in the neutral package graph
+- persistence-aware engines default to `:mickey_mouse` memory stores through
+  package-local facades; durable Postgres/AshPostgres and WorkflowRuntime SQL
+  paths are explicit opt-in and fail preflight without migration proof
 - source admission and workspace path-safety contracts are now neutral
   packages (`core/source_engine` and `core/workspace_engine`); provider calls
   remain below Mezzanine, and product source defaults remain above it

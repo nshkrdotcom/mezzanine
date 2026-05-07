@@ -3,6 +3,14 @@
 Neutral execution ledger and Temporal workflow handoff engine for the
 Mezzanine rebuild.
 
+## Persistence Posture
+
+Execution state now enters through `Mezzanine.Execution.Store`. The default
+adapter is `Mezzanine.Execution.Store.Memory`, which is process-lifetime memory
+and does not start `Mezzanine.Execution.Repo`, Oban, or AshPostgres children.
+The Postgres path is explicit through `Mezzanine.Execution.Store.AshPostgres`
+and fails preflight without migration proof.
+
 This package now owns the Phase `2.4.4` durable execution slice:
 
 - durable `ExecutionRecord` persistence

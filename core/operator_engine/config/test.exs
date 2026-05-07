@@ -1,5 +1,9 @@
 import Config
 
+config :mezzanine_execution_engine, start_runtime_children?: true
+config :mezzanine_object_engine, start_runtime_children?: true
+config :mezzanine_audit_engine, start_runtime_children?: true
+
 config :mezzanine_execution_engine, Mezzanine.Execution.Repo,
   username: "postgres",
   password: "postgres",

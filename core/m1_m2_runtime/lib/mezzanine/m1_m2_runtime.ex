@@ -21,6 +21,7 @@ defmodule Mezzanine.M1M2Runtime do
             operation_policy_ref: String.t() | nil,
             runtime_substrate_ref: String.t() | nil,
             trace_ref: String.t() | nil,
+            persistence_profile: atom() | nil,
             live_provider_call?: boolean(),
             credential_materialized?: boolean(),
             temporal_worker_used?: boolean()
@@ -39,6 +40,7 @@ defmodule Mezzanine.M1M2Runtime do
       :operation_policy_ref,
       :runtime_substrate_ref,
       :trace_ref,
+      :persistence_profile,
       live_provider_call?: false,
       credential_materialized?: false,
       temporal_worker_used?: false
@@ -49,7 +51,11 @@ defmodule Mezzanine.M1M2Runtime do
     :live_provider,
     :live_connector,
     :temporal_worker,
-    :credential_materializer
+    :credential_materializer,
+    :postgres_shared,
+    :temporal_durable,
+    :object_store,
+    :local_restart_safe
   ]
 
   @m2_required_refs [
@@ -63,7 +69,14 @@ defmodule Mezzanine.M1M2Runtime do
     :runtime_substrate_ref
   ]
 
-  @known_fields [:mode, :fixture_ref, :projection_ref, :capabilities, :trace_ref] ++
+  @known_fields [
+                  :mode,
+                  :fixture_ref,
+                  :projection_ref,
+                  :capabilities,
+                  :trace_ref,
+                  :persistence_profile
+                ] ++
                   @m2_required_refs
 
   @spec admit(map() | keyword()) ::
@@ -83,7 +96,11 @@ defmodule Mezzanine.M1M2Runtime do
 
   defp admit_m1(attrs) do
     capabilities = List.wrap(Map.get(attrs, :capabilities, []))
-    forbidden = Enum.filter(@m1_forbidden_capabilities, &(&1 in capabilities))
+
+    forbidden =
+      capabilities
+      |> Enum.filter(&(&1 in @m1_forbidden_capabilities))
+      |> Kernel.++(forbidden_persistence_profiles(attrs))
 
     case forbidden do
       [] ->
@@ -91,11 +108,22 @@ defmodule Mezzanine.M1M2Runtime do
          %Receipt{
            mode: :m1,
            fixture_ref: Map.get(attrs, :fixture_ref),
-           projection_ref: Map.get(attrs, :projection_ref)
+           projection_ref: Map.get(attrs, :projection_ref),
+           persistence_profile: Map.get(attrs, :persistence_profile)
          }}
 
       values ->
         {:error, {:m1_forbidden_capabilities, values}}
+    end
+  end
+
+  defp forbidden_persistence_profiles(attrs) do
+    profile_ref = Map.get(attrs, :persistence_profile)
+
+    case Mezzanine.Persistence.resolve(profile: profile_ref) do
+      {:ok, profile} when profile.durable? -> [profile.id]
+      {:ok, _profile} -> []
+      {:error, _reason} -> []
     end
   end
 

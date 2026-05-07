@@ -7,6 +7,7 @@ defmodule MezzanineExecutionEngine do
   @spec components() :: [module()]
   def components do
     [
+      Mezzanine.Execution.Store,
       Mezzanine.Execution,
       Mezzanine.Execution.ExecutionRecord,
       Mezzanine.Execution.LifecycleContinuation,

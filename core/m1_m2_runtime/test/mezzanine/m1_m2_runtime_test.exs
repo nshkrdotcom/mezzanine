@@ -30,6 +30,19 @@ defmodule Mezzanine.M1M2RuntimeTest do
     assert receipt.temporal_worker_used? == false
   end
 
+  test "M1 rejects durable persistence profiles and substrate capabilities" do
+    assert {:error, {:m1_forbidden_capabilities, forbidden}} =
+             M1M2Runtime.admit(%{
+               mode: :m1,
+               fixture_ref: "fixture://tenant-1/headless/readback",
+               projection_ref: "projection://tenant-1/headless/state",
+               persistence_profile: :integration_postgres,
+               capabilities: [:fixture_readback, :postgres_shared, :temporal_durable]
+             })
+
+    assert forbidden == [:postgres_shared, :temporal_durable, :integration_postgres]
+  end
+
   test "M2 requires provider, target, lease, policy, and substrate refs" do
     assert {:error, {:m2_missing_required_refs, missing}} =
              valid_m2_attrs()

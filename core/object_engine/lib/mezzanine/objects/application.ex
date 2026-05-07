@@ -9,7 +9,7 @@ defmodule Mezzanine.Objects.Application do
   end
 
   defp children do
-    if Application.get_env(:mezzanine_object_engine, :start_runtime_children?, true) do
+    if Application.get_env(:mezzanine_object_engine, :start_runtime_children?, false) do
       [Mezzanine.Objects.Repo]
     else
       []

@@ -7,6 +7,7 @@ defmodule MezzanineArchivalEngine do
   @spec contract_modules() :: [module()]
   def contract_modules do
     [
+      Mezzanine.Archival.Store,
       Mezzanine.Archival.ArchivalManifest,
       Mezzanine.Archival.ArchivalConflict,
       Mezzanine.Archival.ArchivalSweep,

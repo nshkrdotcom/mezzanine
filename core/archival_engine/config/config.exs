@@ -14,7 +14,7 @@ config :ash,
 config :mezzanine_archival_engine,
   ecto_repos: [Mezzanine.Archival.Repo],
   ash_domains: [Mezzanine.Archival],
-  start_runtime_children?: true,
+  start_runtime_children?: false,
   cold_store: [
     module: Mezzanine.Archival.FileSystemColdStore,
     root: Path.expand("../tmp/archival_store", __DIR__)

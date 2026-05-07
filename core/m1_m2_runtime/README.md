@@ -2,6 +2,13 @@
 
 Phase 12 package for deterministic M1 readback and live M2 runtime separation.
 
+## Persistence Posture
+
+M1 deterministic mode is memory-only. It rejects live provider, connector,
+Temporal worker, credential materializer, Postgres, Temporal durable, object
+store, local restart-safe, and other durable persistence selections. M2 remains
+the mode that can carry explicit durable substrate refs.
+
 M1 accepts fixture, readback, and projection facts only. It cannot call live
 providers, live connectors, Temporal workers, or credential materializers.
 

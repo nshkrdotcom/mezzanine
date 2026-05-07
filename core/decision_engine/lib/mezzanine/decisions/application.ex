@@ -12,7 +12,7 @@ defmodule Mezzanine.Decisions.Application do
   end
 
   defp children do
-    if Application.get_env(:mezzanine_decision_engine, :start_runtime_children?, true) do
+    if Application.get_env(:mezzanine_decision_engine, :start_runtime_children?, false) do
       [Mezzanine.Decisions.Repo]
     else
       []

@@ -12,7 +12,7 @@ defmodule Mezzanine.Audit.Application do
   end
 
   defp children do
-    if Application.get_env(:mezzanine_audit_engine, :start_runtime_children?, true) do
+    if Application.get_env(:mezzanine_audit_engine, :start_runtime_children?, false) do
       [Mezzanine.Audit.Repo]
     else
       []

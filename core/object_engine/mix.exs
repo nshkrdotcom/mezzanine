@@ -57,6 +57,7 @@ defmodule MezzanineObjectEngine.MixProject do
 
   defp deps do
     [
+      {:mezzanine_core, path: "../mezzanine_core"},
       {:mezzanine_audit_engine, path: "../audit_engine"},
       {:ash, "~> 3.24"},
       {:ash_postgres, "~> 2.6"},

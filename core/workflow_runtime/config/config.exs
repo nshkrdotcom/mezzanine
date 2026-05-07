@@ -13,5 +13,4 @@ config :mezzanine_workflow_runtime, :temporal,
   headers: []
 
 config :mezzanine_workflow_runtime, :outbox_persistence,
-  store: Mezzanine.WorkflowRuntime.OutboxPersistence.SQL,
-  repo: Mezzanine.Execution.Repo
+  store: Mezzanine.WorkflowRuntime.OutboxPersistence.Memory

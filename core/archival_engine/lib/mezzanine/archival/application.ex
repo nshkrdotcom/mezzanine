@@ -12,7 +12,7 @@ defmodule Mezzanine.Archival.Application do
   end
 
   defp children do
-    if Application.get_env(:mezzanine_archival_engine, :start_runtime_children?, true) do
+    if Application.get_env(:mezzanine_archival_engine, :start_runtime_children?, false) do
       [
         Mezzanine.Archival.Repo,
         {Mezzanine.RepoTelemetryBridge,

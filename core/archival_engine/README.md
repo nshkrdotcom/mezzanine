@@ -2,6 +2,13 @@
 
 Neutral archival engine for the Mezzanine rebuild.
 
+## Persistence Posture
+
+Archival manifest state now enters through `Mezzanine.Archival.Store`. The
+default adapter is memory-only and the archival application no longer starts
+durable children by default. The AshPostgres adapter requires explicit durable
+selection and migration proof before mutation.
+
 This package now owns the durable Stage-11 substrate archival slice for:
 
 - terminal-subject discovery and scheduler-driven archival

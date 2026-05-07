@@ -1,5 +1,11 @@
 import Config
 
+config :mezzanine_evidence_engine, start_runtime_children?: true
+config :mezzanine_decision_engine, start_runtime_children?: true
+config :mezzanine_execution_engine, start_runtime_children?: true
+config :mezzanine_object_engine, start_runtime_children?: true
+config :mezzanine_audit_engine, start_runtime_children?: true
+
 config :mezzanine_archival_engine, Mezzanine.Archival.Repo,
   username: "postgres",
   password: "postgres",

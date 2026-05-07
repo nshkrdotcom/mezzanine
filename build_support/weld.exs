@@ -7,6 +7,7 @@ defmodule Mezzanine.Build.WeldContract do
   @citadel_repo_path Path.expand("../citadel", @repo_root)
   @execution_plane_repo_path Path.expand("../execution_plane", @repo_root)
   @gepa_framework_repo_path Path.expand("../gepa_framework", @repo_root)
+  @ground_plane_repo_path Path.expand("../ground_plane", @repo_root)
   @trinity_framework_repo_path Path.expand("../trinity_framework", @repo_root)
   @jido_hive_repo_path Path.expand("../jido_hive", @repo_root)
   @outer_brain_repo_path Path.expand("../outer_brain", @repo_root)
@@ -84,6 +85,18 @@ defmodule Mezzanine.Build.WeldContract do
             github: "nshkrdotcom/AITrace",
             branch: "main",
             sparse: "core/replay_contracts"
+          ]
+        end
+    ],
+    ground_plane_persistence_policy: [
+      opts:
+        if File.dir?(@ground_plane_repo_path) do
+          [git: @ground_plane_repo_path, subdir: "core/persistence_policy"]
+        else
+          [
+            github: "nshkrdotcom/ground_plane",
+            branch: "main",
+            subdir: "core/persistence_policy"
           ]
         end
     ],

@@ -2,6 +2,14 @@
 
 Reusable business-semantics substrate for the Mezzanine workspace.
 
+## Persistence Posture
+
+`Mezzanine.Persistence` is the shared Mezzanine helper for GroundPlane
+persistence profiles. Its default resolution is `:mickey_mouse`, which selects
+memory-only state with no restart durability claim and no external substrate
+requirement. Durable profiles must be passed explicitly and must preflight
+caller-supplied capabilities before any adapter mutates state.
+
 This projected package boundary now sits above the neutral rebuild packages:
 
 - `core/pack_model`

@@ -2,6 +2,12 @@
 
 Neutral projection engine for the Mezzanine rebuild.
 
+## Persistence Posture
+
+Projection state now enters through `Mezzanine.Projections.Store`. The default
+adapter is memory-only and carries no restart claim. The AshPostgres adapter is
+explicit durable opt-in and fails preflight without migration proof.
+
 This package now owns the durable `2.4.6` substrate read-model slice for:
 
 - named projection rows with indexed `trace_id` / `causation_id` joins

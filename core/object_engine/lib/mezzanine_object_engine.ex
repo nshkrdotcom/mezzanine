@@ -6,6 +6,7 @@ defmodule MezzanineObjectEngine do
   @spec components() :: [module()]
   def components do
     [
+      Mezzanine.Objects.Store,
       Mezzanine.Objects,
       Mezzanine.Objects.SubjectRecord
     ]

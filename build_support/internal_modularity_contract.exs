@@ -23,14 +23,20 @@ defmodule Mezzanine.Build.InternalModularityContract do
         "core/pack_model"
       ]
     },
-    %{path: "core/audit_engine", allowed_internal_deps: ["core/ops_domain"]},
+    %{
+      path: "core/audit_engine",
+      allowed_internal_deps: ["core/mezzanine_core", "core/ops_domain"]
+    },
     %{path: "core/context_budget_admission", allowed_internal_deps: []},
     %{path: "core/cost_attribution_engine", allowed_internal_deps: []},
     %{path: "core/budget_enforcement_engine", allowed_internal_deps: []},
     %{path: "core/eval_engine", allowed_internal_deps: []},
     %{path: "core/optimization_engine", allowed_internal_deps: []},
     %{path: "core/coordination_engine", allowed_internal_deps: ["core/ai_run_model"]},
-    %{path: "core/object_engine", allowed_internal_deps: ["core/audit_engine"]},
+    %{
+      path: "core/object_engine",
+      allowed_internal_deps: ["core/audit_engine", "core/mezzanine_core"]
+    },
     %{
       path: "core/execution_engine",
       allowed_internal_deps: [
@@ -93,11 +99,21 @@ defmodule Mezzanine.Build.InternalModularityContract do
     %{path: "core/ai_run_model", allowed_internal_deps: []},
     %{
       path: "core/decision_engine",
-      allowed_internal_deps: ["core/audit_engine", "core/execution_engine", "core/object_engine"]
+      allowed_internal_deps: [
+        "core/audit_engine",
+        "core/execution_engine",
+        "core/mezzanine_core",
+        "core/object_engine"
+      ]
     },
     %{
       path: "core/evidence_engine",
-      allowed_internal_deps: ["core/audit_engine", "core/execution_engine", "core/object_engine"]
+      allowed_internal_deps: [
+        "core/audit_engine",
+        "core/execution_engine",
+        "core/mezzanine_core",
+        "core/object_engine"
+      ]
     },
     %{
       path: "core/projection_engine",
@@ -106,6 +122,7 @@ defmodule Mezzanine.Build.InternalModularityContract do
         "core/decision_engine",
         "core/evidence_engine",
         "core/execution_engine",
+        "core/mezzanine_core",
         "core/object_engine"
       ]
     },

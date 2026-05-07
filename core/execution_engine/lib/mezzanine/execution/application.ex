@@ -12,7 +12,7 @@ defmodule Mezzanine.Execution.Application do
   end
 
   defp children do
-    if Application.get_env(:mezzanine_execution_engine, :start_runtime_children?, true) do
+    if Application.get_env(:mezzanine_execution_engine, :start_runtime_children?, false) do
       [
         Mezzanine.Execution.Repo,
         {Mezzanine.RepoTelemetryBridge,

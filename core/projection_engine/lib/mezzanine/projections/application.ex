@@ -5,9 +5,12 @@ defmodule Mezzanine.Projections.Application do
 
   @impl true
   def start(_type, _args) do
-    children = [
-      Mezzanine.Projections.Repo
-    ]
+    children =
+      if Application.get_env(:mezzanine_projection_engine, :start_runtime_children?, false) do
+        [Mezzanine.Projections.Repo]
+      else
+        []
+      end
 
     Supervisor.start_link(children,
       strategy: :one_for_one,

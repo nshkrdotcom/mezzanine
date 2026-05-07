@@ -6,6 +6,7 @@ defmodule MezzanineEvidenceEngine do
   @spec components() :: [module()]
   def components do
     [
+      Mezzanine.EvidenceLedger.Store,
       Mezzanine.EvidenceLedger,
       Mezzanine.EvidenceLedger.EvidenceRecord,
       Mezzanine.EvidenceLedger.Summary

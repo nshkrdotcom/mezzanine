@@ -6,6 +6,7 @@ defmodule MezzanineDecisionEngine do
   @spec components() :: [module()]
   def components do
     [
+      Mezzanine.Decisions.Store,
       Mezzanine.Decisions,
       Mezzanine.Decisions.DecisionRecord,
       Mezzanine.DecisionCommands,

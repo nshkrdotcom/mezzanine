@@ -6,7 +6,7 @@ defmodule MezzanineProjectionEngine do
 
   @spec domain_modules() :: [module()]
   def domain_modules do
-    [Mezzanine.Projections]
+    [Mezzanine.Projections.Store, Mezzanine.Projections]
   end
 
   @spec resource_modules() :: [module()]

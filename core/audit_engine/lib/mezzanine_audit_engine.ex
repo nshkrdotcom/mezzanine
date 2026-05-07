@@ -18,6 +18,7 @@ defmodule MezzanineAuditEngine do
   @spec durable_modules() :: [module()]
   def durable_modules do
     [
+      Mezzanine.Audit.Store,
       Mezzanine.Audit,
       Mezzanine.Audit.AuditAppend,
       Mezzanine.Audit.AuditFact,
