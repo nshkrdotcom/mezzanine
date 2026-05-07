@@ -42,3 +42,7 @@ Internal implementation files:
 - `lib/mezzanine/archival/cold_store.ex`
 - `lib/mezzanine/archival/scheduler.ex`
 - `lib/mezzanine/archival/snapshot.ex`
+
+## Persistence Documentation
+
+See `docs/persistence.md` for tiers, defaults, adapters, unsupported selections, config examples, restart claims, durability claims, debug sidecar behavior, redaction guarantees, migration or preflight behavior, and no-bypass scope when applicable.

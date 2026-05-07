@@ -33,3 +33,7 @@ workflow state, lower receipts, decision records, or explicit operator actions.
 They do not read process environment and they do not accept static provider
 object selectors such as GitHub issue numbers or Linear issue ids as a
 production path.
+
+## Persistence Documentation
+
+See `docs/persistence.md` for tiers, defaults, adapters, unsupported selections, config examples, restart claims, durability claims, debug sidecar behavior, redaction guarantees, migration or preflight behavior, and no-bypass scope when applicable.

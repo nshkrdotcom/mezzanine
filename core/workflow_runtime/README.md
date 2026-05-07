@@ -216,3 +216,7 @@ when compact Temporal describe/query evidence reports a terminal status and a
 terminal workflow event ref. Otherwise the safe action is to signal/cancel the
 workflow through `Mezzanine.WorkflowRuntime` or quarantine/repair the
 projection.
+
+## Persistence Documentation
+
+See `docs/persistence.md` for tiers, defaults, adapters, unsupported selections, config examples, restart claims, durability claims, debug sidecar behavior, redaction guarantees, migration or preflight behavior, and no-bypass scope when applicable.

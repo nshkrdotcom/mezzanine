@@ -53,3 +53,7 @@ Phase `2.3` also freezes the generator-assisted boundary posture here:
 - the frozen generation manifest lives in:
   - `Mezzanine.Boundary.GenerationManifest`
   - `Mezzanine.Boundary.GenerationSpec`
+
+## Persistence Documentation
+
+See `docs/persistence.md` for tiers, defaults, adapters, unsupported selections, config examples, restart claims, durability claims, debug sidecar behavior, redaction guarantees, migration or preflight behavior, and no-bypass scope when applicable.
