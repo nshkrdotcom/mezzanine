@@ -91,6 +91,13 @@ dev-logs`, `just temporal-ui`, and `just dev-down` from the Mezzanine root.
 Do not run raw `temporal server start-dev`, and do not run
 `just temporal-reset-confirm` without explicit approval.
 
+Phase 8 keeps default supervision inert and adds
+`Mezzanine.WorkflowRuntime.TemporalSupervisor.preflight/1`. Disabled configs
+return `:ok` without checking a live service. Enabled configs fail with
+`{:temporal_substrate_unavailable, %{address: ..., namespace: ...}}` unless
+the caller passes explicit substrate proof from the repo-owned `just dev-*`
+workflow.
+
 Temporal worker instance module names are source-owned registry entries, not
 runtime concatenation over configured strings. Unknown `instance_base` or task
 queue values fail closed before any Temporalex child spec is built.

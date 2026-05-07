@@ -91,12 +91,13 @@ defmodule Mezzanine.Build.WeldContract do
     ground_plane_persistence_policy: [
       opts:
         if File.dir?(@ground_plane_repo_path) do
-          [git: @ground_plane_repo_path, subdir: "core/persistence_policy"]
+          [git: @ground_plane_repo_path, subdir: "core/persistence_policy", override: true]
         else
           [
             github: "nshkrdotcom/ground_plane",
             branch: "main",
-            subdir: "core/persistence_policy"
+            subdir: "core/persistence_policy",
+            override: true
           ]
         end
     ],

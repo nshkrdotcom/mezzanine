@@ -13,7 +13,9 @@ M1 accepts fixture, readback, and projection facts only. It cannot call live
 providers, live connectors, Temporal workers, or credential materializers.
 
 M2 requires provider account, target attach, credential lease, operation
-policy, and runtime substrate refs before live durable execution is admitted.
+policy, runtime substrate refs, explicit `:ops_durable` Temporal persistence
+profile, `:temporal_durable` capability, and substrate preflight proof before
+live durable execution is admitted.
 
 QC:
 

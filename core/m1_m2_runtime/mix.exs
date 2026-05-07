@@ -30,7 +30,7 @@ defmodule MezzanineM1M2Runtime.MixProject do
     [
       {:mezzanine_core, path: "../mezzanine_core"},
       {:mezzanine_execution_engine, path: "../execution_engine", runtime: false},
-      {:mezzanine_workflow_runtime, path: "../workflow_runtime", runtime: false},
+      {:mezzanine_workflow_runtime, path: "../workflow_runtime"},
       {:mezzanine_lifecycle_engine, path: "../lifecycle_engine", runtime: false},
       {:mezzanine_projection_engine, path: "../projection_engine", runtime: false},
       {:mezzanine_audit_engine, path: "../audit_engine", runtime: false},

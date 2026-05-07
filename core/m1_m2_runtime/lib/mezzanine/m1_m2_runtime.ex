@@ -3,6 +3,8 @@ defmodule Mezzanine.M1M2Runtime do
   Ref-only M1/M2 runtime separation contracts.
   """
 
+  alias Mezzanine.WorkflowRuntime.TemporalSupervisor
+
   defmodule Receipt do
     @moduledoc """
     Ref-only M1/M2 runtime admission receipt.
@@ -22,6 +24,7 @@ defmodule Mezzanine.M1M2Runtime do
             runtime_substrate_ref: String.t() | nil,
             trace_ref: String.t() | nil,
             persistence_profile: atom() | nil,
+            substrate_preflight_ref: String.t() | nil,
             live_provider_call?: boolean(),
             credential_materialized?: boolean(),
             temporal_worker_used?: boolean()
@@ -41,6 +44,7 @@ defmodule Mezzanine.M1M2Runtime do
       :runtime_substrate_ref,
       :trace_ref,
       :persistence_profile,
+      :substrate_preflight_ref,
       live_provider_call?: false,
       credential_materialized?: false,
       temporal_worker_used?: false
@@ -66,8 +70,11 @@ defmodule Mezzanine.M1M2Runtime do
     :target_ref,
     :attach_grant_ref,
     :operation_policy_ref,
-    :runtime_substrate_ref
+    :runtime_substrate_ref,
+    :persistence_profile
   ]
+
+  @m2_required_capabilities [:temporal_durable]
 
   @known_fields [
                   :mode,
@@ -75,7 +82,11 @@ defmodule Mezzanine.M1M2Runtime do
                   :projection_ref,
                   :capabilities,
                   :trace_ref,
-                  :persistence_profile
+                  :persistence_profile,
+                  :substrate_preflight_ref,
+                  :temporal_address,
+                  :temporal_namespace,
+                  :temporal_substrate_available?
                 ] ++
                   @m2_required_refs
 
@@ -83,6 +94,9 @@ defmodule Mezzanine.M1M2Runtime do
           {:ok, Receipt.t()}
           | {:error, {:m1_forbidden_capabilities, [atom()]}}
           | {:error, {:m2_missing_required_refs, [atom()]}}
+          | {:error, {:m2_missing_substrate_capabilities, [atom()]}}
+          | {:error, {:m2_unsupported_persistence_profile, atom() | term()}}
+          | {:error, {:temporal_substrate_unavailable, map()}}
           | {:error, :invalid_runtime_mode}
   def admit(attrs) when is_map(attrs) or is_list(attrs) do
     attrs = normalize(attrs)
@@ -132,25 +146,65 @@ defmodule Mezzanine.M1M2Runtime do
 
     case missing do
       [] ->
-        {:ok,
-         %Receipt{
-           mode: :m2,
-           provider_account_ref: Map.fetch!(attrs, :provider_account_ref),
-           connector_instance_ref: Map.fetch!(attrs, :connector_instance_ref),
-           connector_binding_ref: Map.fetch!(attrs, :connector_binding_ref),
-           credential_lease_ref: Map.fetch!(attrs, :credential_lease_ref),
-           target_ref: Map.fetch!(attrs, :target_ref),
-           attach_grant_ref: Map.fetch!(attrs, :attach_grant_ref),
-           operation_policy_ref: Map.fetch!(attrs, :operation_policy_ref),
-           runtime_substrate_ref: Map.fetch!(attrs, :runtime_substrate_ref),
-           trace_ref: Map.get(attrs, :trace_ref),
-           live_provider_call?: true,
-           temporal_worker_used?: true
-         }}
+        with :ok <- require_m2_temporal_profile(attrs),
+             :ok <- require_m2_temporal_capability(attrs),
+             :ok <- temporal_preflight(attrs) do
+          {:ok,
+           %Receipt{
+             mode: :m2,
+             provider_account_ref: Map.fetch!(attrs, :provider_account_ref),
+             connector_instance_ref: Map.fetch!(attrs, :connector_instance_ref),
+             connector_binding_ref: Map.fetch!(attrs, :connector_binding_ref),
+             credential_lease_ref: Map.fetch!(attrs, :credential_lease_ref),
+             target_ref: Map.fetch!(attrs, :target_ref),
+             attach_grant_ref: Map.fetch!(attrs, :attach_grant_ref),
+             operation_policy_ref: Map.fetch!(attrs, :operation_policy_ref),
+             runtime_substrate_ref: Map.fetch!(attrs, :runtime_substrate_ref),
+             trace_ref: Map.get(attrs, :trace_ref),
+             persistence_profile: Map.fetch!(attrs, :persistence_profile),
+             substrate_preflight_ref: Map.get(attrs, :substrate_preflight_ref),
+             live_provider_call?: true,
+             temporal_worker_used?: true
+           }}
+        end
 
       values ->
         {:error, {:m2_missing_required_refs, values}}
     end
+  end
+
+  defp require_m2_temporal_profile(attrs) do
+    profile_ref = Map.fetch!(attrs, :persistence_profile)
+
+    case Mezzanine.Persistence.resolve(profile: profile_ref) do
+      {:ok, %{default_tier: :temporal_durable}} ->
+        :ok
+
+      {:ok, %{id: profile_id}} ->
+        {:error, {:m2_unsupported_persistence_profile, profile_id}}
+
+      {:error, reason} ->
+        {:error, {:m2_unsupported_persistence_profile, reason}}
+    end
+  end
+
+  defp require_m2_temporal_capability(attrs) do
+    capabilities = List.wrap(Map.get(attrs, :capabilities, []))
+    missing = Enum.reject(@m2_required_capabilities, &(&1 in capabilities))
+
+    case missing do
+      [] -> :ok
+      values -> {:error, {:m2_missing_substrate_capabilities, values}}
+    end
+  end
+
+  defp temporal_preflight(attrs) do
+    TemporalSupervisor.preflight(
+      enabled?: true,
+      address: Map.get(attrs, :temporal_address, "127.0.0.1:7233"),
+      namespace: Map.get(attrs, :temporal_namespace, "default"),
+      substrate_available?: Map.get(attrs, :temporal_substrate_available?, false)
+    )
   end
 
   defp normalize(attrs) when is_list(attrs), do: attrs |> Map.new() |> normalize()

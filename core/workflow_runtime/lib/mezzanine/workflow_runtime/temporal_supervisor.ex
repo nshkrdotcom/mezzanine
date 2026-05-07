@@ -105,6 +105,28 @@ defmodule Mezzanine.WorkflowRuntime.TemporalSupervisor do
     end
   end
 
+  @doc "Fails early when live Temporal workers are enabled without substrate proof."
+  @spec preflight(keyword()) :: :ok | {:error, term()}
+  def preflight(overrides \\ []) do
+    config = runtime_config(overrides)
+
+    cond do
+      not Keyword.fetch!(config, :enabled?) ->
+        :ok
+
+      Keyword.get(config, :substrate_available?, false) == true ->
+        :ok
+
+      true ->
+        {:error,
+         {:temporal_substrate_unavailable,
+          %{
+            address: Keyword.fetch!(config, :address),
+            namespace: Keyword.fetch!(config, :namespace)
+          }}}
+    end
+  end
+
   @doc "Returns the per-task-queue worker specs without starting them."
   @spec task_queue_specs(runtime_config()) :: [map()]
   def task_queue_specs(config \\ runtime_config()) do

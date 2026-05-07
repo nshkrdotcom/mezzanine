@@ -5,6 +5,21 @@ defmodule Mezzanine.WorkflowRuntime.TemporalSupervisorTest do
 
   test "stays inert unless Temporal workers are explicitly enabled" do
     assert TemporalSupervisor.child_specs(enabled?: false) == []
+    assert TemporalSupervisor.preflight(enabled?: false) == :ok
+  end
+
+  test "fails early when live Temporal workers are enabled without substrate proof" do
+    assert {:error,
+            {:temporal_substrate_unavailable, %{address: "127.0.0.1:7233", namespace: "default"}}} =
+             TemporalSupervisor.preflight(enabled?: true)
+
+    assert :ok =
+             TemporalSupervisor.preflight(
+               enabled?: true,
+               substrate_available?: true,
+               address: "127.0.0.1:7233",
+               namespace: "default"
+             )
   end
 
   test "builds Mezzanine-owned Temporalex child specs from the registry" do
