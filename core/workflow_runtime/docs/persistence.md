@@ -75,3 +75,12 @@ Evidence stores opaque refs, stable redacted ids, hashes, bounded metadata, clai
 ## Migration And Preflight Behavior
 
 WorkflowRuntime SQL outbox migrations and Temporal preflight must pass before durable dispatch.
+
+## Phase 12 Migration And Preflight Closeout
+
+- Tier: `:ops_durable` for Temporal runtime and `:integration_postgres` for SQL outbox store-facade tests.
+- Schema owner: `Mezzanine.Execution.Repo` for SQL outbox rows used by `Mezzanine.WorkflowRuntime.Store.Postgres`.
+- Migration owner: `core/execution_engine/priv/repo/migrations`, including workflow runtime outbox migrations.
+- Substrate preflight command: `just dev-status` from `/home/home/p/g/n/mezzanine` for local Temporal plus `Mezzanine.WorkflowRuntime.Store.preflight(profile: :integration_postgres, migration_proof: :present)`.
+- Failure behavior: missing migration proof returns `{:error, {:missing_migration_proof, :workflow_runtime}}` before workflow runtime store mutation.
+- Tagged test command: `cd core/workflow_runtime && mix test test/mezzanine/workflow_runtime/store_test.exs`.

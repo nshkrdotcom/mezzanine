@@ -75,3 +75,12 @@ Evidence stores opaque refs, stable redacted ids, hashes, bounded metadata, clai
 ## Migration And Preflight Behavior
 
 Adapter-local AshPostgres migrations must pass before durable mutation.
+
+## Phase 12 Migration And Preflight Closeout
+
+- Tier: `:integration_postgres`.
+- Schema owner: `Mezzanine.Audit.Repo`.
+- Migration owner: `core/audit_engine/priv/repo/migrations`.
+- Migration preflight command: `Mezzanine.Audit.Store.preflight(profile: :integration_postgres, migration_proof: :present)`.
+- Failure behavior: missing migration proof returns `{:error, {:missing_migration_proof, :audit}}` before audit mutation.
+- Tagged test command: `cd core/audit_engine && mix test test/mezzanine/audit/store_test.exs`.

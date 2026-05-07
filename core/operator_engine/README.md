@@ -78,3 +78,7 @@ environment, principal-or-system-actor, resource, authority, idempotency,
 trace, release manifest, suppression, target, reason, diagnostics, and at
 least one recovery action ref before hidden work can be treated as safely
 visible to operators.
+
+## Persistence Documentation
+
+See `docs/persistence.md` for tiers, defaults, adapters, unsupported selections, config examples, restart claims, durability claims, debug sidecar behavior, redaction guarantees, migration or preflight behavior, and no-bypass scope when applicable.
