@@ -45,6 +45,82 @@ defmodule Mezzanine.Authoring.BundleImportTest do
            ]) == "memory_adapter"
   end
 
+  test "can replace overlapping active registrations during operator import" do
+    original_attrs =
+      signed_bundle_attrs(
+        bundle_id: "bundle-replace-original",
+        pack_slug: :phase3_replace_original,
+        installation_id: "install-replace-original"
+      )
+
+    assert {:ok, original} =
+             MezzanineConfigRegistry.import_authoring_bundle(original_attrs,
+               signing_key: @signing_key,
+               allowed_policy_refs: @allowed_policy_refs,
+               context_adapter_registry: @context_adapters
+             )
+
+    replacement_attrs =
+      signed_bundle_attrs(
+        bundle_id: "bundle-replace-next",
+        pack_slug: :phase3_replace_next,
+        installation_id: "install-replace-next"
+      )
+
+    assert {:ok, replacement} =
+             MezzanineConfigRegistry.import_authoring_bundle(replacement_attrs,
+               signing_key: @signing_key,
+               allowed_policy_refs: @allowed_policy_refs,
+               context_adapter_registry: @context_adapters,
+               replace_overlapping_active?: true
+             )
+
+    assert replacement.pack_registration.status == :active
+
+    assert {:ok, %PackRegistration{status: :deprecated}} =
+             Ash.get(PackRegistration, original.pack_registration.id)
+  end
+
+  test "invalid replacement import preserves the last active overlapping registration" do
+    original_attrs =
+      signed_bundle_attrs(
+        bundle_id: "bundle-last-good-original",
+        pack_slug: :phase3_last_good_original,
+        installation_id: "install-last-good-original"
+      )
+
+    assert {:ok, original} =
+             MezzanineConfigRegistry.import_authoring_bundle(original_attrs,
+               signing_key: @signing_key,
+               allowed_policy_refs: @allowed_policy_refs,
+               context_adapter_registry: @context_adapters
+             )
+
+    invalid_replacement_attrs =
+      signed_bundle_attrs(
+        bundle_id: "bundle-last-good-invalid",
+        pack_slug: :phase3_last_good_invalid,
+        installation_id: "install-last-good-invalid",
+        policy_refs: ["policy.missing"]
+      )
+
+    assert {:error, {:invalid_authoring_bundle, issues}} =
+             MezzanineConfigRegistry.import_authoring_bundle(invalid_replacement_attrs,
+               signing_key: @signing_key,
+               allowed_policy_refs: @allowed_policy_refs,
+               context_adapter_registry: @context_adapters,
+               replace_overlapping_active?: true
+             )
+
+    assert Enum.any?(issues, &(&1.code == :invalid_policy_ref))
+
+    assert {:ok, %PackRegistration{status: :active}} =
+             Ash.get(PackRegistration, original.pack_registration.id)
+
+    assert {:error, %Invalid{}} =
+             PackRegistration.by_slug_version("phase3_last_good_invalid", "1.0.0")
+  end
+
   test "rejects invalid bundle inputs before registration or activation" do
     cases = [
       {:checksum_mismatch,

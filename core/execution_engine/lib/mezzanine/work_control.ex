@@ -291,9 +291,9 @@ defmodule Mezzanine.WorkControl do
              %{
                run_series_id: run_series.id,
                attempt: attempt,
-               runtime_profile: runtime_profile(plan),
+               runtime_profile: runtime_profile(plan, attrs),
                placement_profile_id: placement_profile_id(plan),
-               grant_profile: grant_profile(plan)
+               grant_profile: grant_profile(plan, attrs)
              },
              actor: actor(tenant_id),
              tenant: tenant_id
@@ -479,12 +479,71 @@ defmodule Mezzanine.WorkControl do
     end
   end
 
-  defp runtime_profile(plan) do
-    map_value(first_run_intent(plan), :runtime_profile) || %{"runtime" => "session"}
+  defp runtime_profile(plan, attrs) do
+    intent = first_run_intent(plan)
+
+    %{"runtime" => map_value(intent, :runtime_class) || "session"}
+    |> maybe_put("run_intent_ref", map_value(intent, :intent_id))
+    |> maybe_put("capability_id", map_value(intent, :capability))
+    |> maybe_put("runtime_class", map_value(intent, :runtime_class))
+    |> maybe_put("target_ref", map_value(map_value(intent, :placement) || %{}, :requested_target))
+    |> Map.merge(map_value(intent, :runtime_profile) || %{})
+    |> Map.merge(phase2_runtime_metadata(attrs))
   end
 
   defp placement_profile_id(plan), do: map_value(first_run_intent(plan), :placement_profile_id)
-  defp grant_profile(plan), do: map_value(first_run_intent(plan), :grant_profile) || %{}
+
+  defp grant_profile(plan, attrs) do
+    base = map_value(first_run_intent(plan), :grant_profile) || %{}
+    requested_capability_ids = requested_capability_ids(base, attrs)
+
+    base
+    |> Map.put("capability_ids", requested_capability_ids)
+    |> maybe_put("requested_action_ids", list_value(attrs, :requested_action_ids))
+  end
+
+  defp phase2_runtime_metadata(attrs) do
+    %{}
+    |> maybe_put("trace_id", map_value(attrs, :trace_id))
+    |> maybe_put("recipe_ref", map_value(attrs, :recipe_ref))
+    |> maybe_put("idempotency_key", map_value(attrs, :idempotency_key))
+    |> maybe_put("pack_revision", map_value(attrs, :pack_revision))
+    |> maybe_put("runtime_profile_ref", map_value(attrs, :runtime_profile_ref))
+    |> maybe_put("runtime_profile_kind", map_value(attrs, :runtime_profile_kind))
+    |> maybe_put("runtime_profile_revision", map_value(attrs, :runtime_profile_revision))
+    |> maybe_put("lower_runtime_kind", map_value(attrs, :lower_runtime_kind))
+    |> maybe_put("requested_capability_ids", list_value(attrs, :requested_capability_ids))
+    |> maybe_put("requested_action_ids", list_value(attrs, :requested_action_ids))
+    |> maybe_put("source_binding_refs", list_value(attrs, :source_binding_refs))
+    |> maybe_put("resource_scope_refs", list_value(attrs, :resource_scope_refs))
+    |> maybe_put("workspace_policy_ref", map_value(attrs, :workspace_policy_ref))
+    |> maybe_put("live_provider_allowed", map_value(attrs, :live_provider_allowed))
+    |> maybe_put("evidence_profile_ref", map_value(attrs, :evidence_profile_ref))
+    |> maybe_put("redaction_profile_ref", map_value(attrs, :redaction_profile_ref))
+    |> maybe_put("prompt_context_recipe_refs", list_value(attrs, :prompt_context_recipe_refs))
+    |> maybe_put("runtime_policy_config", map_value(attrs, :runtime_policy_config))
+  end
+
+  defp requested_capability_ids(base, attrs) do
+    base
+    |> map_value(:capability_ids)
+    |> List.wrap()
+    |> Kernel.++(list_value(attrs, :requested_capability_ids) || [])
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+  end
+
+  defp list_value(attrs, key) do
+    case map_value(attrs, key) do
+      value when is_list(value) -> value
+      nil -> nil
+      value -> [value]
+    end
+  end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, _key, []), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp review_kind(plan) do
     plan

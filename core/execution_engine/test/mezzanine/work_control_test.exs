@@ -33,6 +33,45 @@ defmodule Mezzanine.WorkControlTest do
     assert Enum.all?(sessions, &(&1.status == :active))
   end
 
+  test "start_run_for_subject stores phase 2 runtime metadata on the scheduled run" do
+    %{tenant_id: tenant_id, work_object: work_object} =
+      fixture_stack("tenant-work-control-phase2")
+
+    attrs = %{
+      trace_id: "trace-phase2",
+      recipe_ref: "coding_operations",
+      idempotency_key: "idem-phase2",
+      pack_revision: 9,
+      runtime_profile_ref: "codex_session",
+      runtime_profile_kind: "temporal_local",
+      runtime_profile_revision: 4,
+      lower_runtime_kind: "codex_session",
+      requested_capability_ids: ["codex.session.turn", "linear.comments.update"],
+      requested_action_ids: ["codex.session.turn"],
+      source_binding_refs: ["linear_primary"],
+      resource_scope_refs: ["source_binding://linear_primary"],
+      workspace_policy_ref: "workspace-policy://extravaganza/coding_operations",
+      live_provider_allowed: false,
+      evidence_profile_ref: "github_pr_plus_workpad",
+      redaction_profile_ref: "redaction://extravaganza/default",
+      prompt_context_recipe_refs: ["coding_agent_system"],
+      runtime_policy_config: %{"run" => %{"capability" => "codex.session.turn"}}
+    }
+
+    assert {:ok, started} =
+             WorkControl.start_run_for_subject(tenant_id, work_object.id, attrs)
+
+    assert started.run.runtime_profile["runtime_profile_ref"] == "codex_session"
+    assert started.run.runtime_profile["runtime_profile_kind"] == "temporal_local"
+    assert started.run.runtime_profile["runtime_profile_revision"] == 4
+    assert started.run.runtime_profile["lower_runtime_kind"] == "codex_session"
+    assert started.run.runtime_profile["capability_id"] == "codex.session.turn"
+    assert started.run.runtime_profile["requested_action_ids"] == ["codex.session.turn"]
+    assert started.run.runtime_profile["idempotency_key"] == "idem-phase2"
+    assert started.run.runtime_profile["pack_revision"] == 9
+    assert "linear.comments.update" in started.run.grant_profile["capability_ids"]
+  end
+
   defp fixture_stack(tenant_id) do
     actor = %{tenant_id: tenant_id}
 

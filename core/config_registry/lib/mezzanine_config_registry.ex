@@ -161,14 +161,14 @@ defmodule MezzanineConfigRegistry do
     with {:ok, %Bundle{} = bundle} <- Bundle.new(attrs, opts),
          :ok <- assert_expected_installation_revision(bundle, opts) do
       bundle
-      |> import_authoring_bundle_with_transaction()
+      |> import_authoring_bundle_with_transaction(opts)
       |> finalize_authoring_bundle_import()
     end
   end
 
-  defp import_authoring_bundle_with_transaction(%Bundle{} = bundle) do
+  defp import_authoring_bundle_with_transaction(%Bundle{} = bundle, opts) do
     ConfigRegistryRepo.transaction(fn ->
-      case import_authoring_bundle_transaction(bundle) do
+      case import_authoring_bundle_transaction(bundle, opts) do
         {:ok, result} -> result
         {:error, error} -> ConfigRegistryRepo.rollback(error)
       end
@@ -182,9 +182,9 @@ defmodule MezzanineConfigRegistry do
 
   defp finalize_authoring_bundle_import({:error, error}), do: {:error, error}
 
-  defp import_authoring_bundle_transaction(%Bundle{} = bundle) do
+  defp import_authoring_bundle_transaction(%Bundle{} = bundle, opts) do
     with {:ok, %PackRegistration{} = registration, registration_notifications} <-
-           ensure_active_registration(bundle),
+           ensure_active_registration(bundle, opts),
          {:ok, %Installation{} = installation, installation_notifications} <-
            upsert_installation(bundle, registration) do
       {:ok,
@@ -197,13 +197,13 @@ defmodule MezzanineConfigRegistry do
     end
   end
 
-  defp ensure_active_registration(%Bundle{compiled_pack: %CompiledPack{} = compiled_pack}) do
+  defp ensure_active_registration(%Bundle{compiled_pack: %CompiledPack{} = compiled_pack}, opts) do
     case PackRegistration.by_slug_version(compiled_pack.pack_slug, compiled_pack.version) do
       {:ok, %PackRegistration{status: :active} = registration} ->
         {:ok, registration, []}
 
       {:ok, %PackRegistration{status: :registered} = registration} ->
-        activate_registration_with_notifications(registration)
+        activate_registration_with_notifications(registration, opts)
 
       {:ok, %PackRegistration{status: :deprecated} = registration} ->
         {:error, {:deprecated_pack_registration, %{pack_registration_id: registration.id}}}
@@ -212,7 +212,7 @@ defmodule MezzanineConfigRegistry do
         with {:ok, %PackRegistration{} = registration, register_notifications} <-
                register_pack_with_notifications(compiled_pack),
              {:ok, %PackRegistration{} = active_registration, activate_notifications} <-
-               activate_registration_with_notifications(registration) do
+               activate_registration_with_notifications(registration, opts) do
           {:ok, active_registration, register_notifications ++ activate_notifications}
         end
     end
@@ -305,10 +305,63 @@ defmodule MezzanineConfigRegistry do
   defp ensure_installation_active(%Installation{} = installation),
     do: activate_installation_with_notifications(installation)
 
-  defp activate_registration_with_notifications(%PackRegistration{} = registration) do
-    registration
-    |> PackRegistration.activate(return_notifications?: true)
+  defp activate_registration_with_notifications(%PackRegistration{} = registration, opts) do
+    with {:ok, overlap_notifications} <- maybe_deprecate_overlapping_active(registration, opts),
+         {:ok, %PackRegistration{} = active_registration, activate_notifications} <-
+           registration
+           |> PackRegistration.activate(return_notifications?: true)
+           |> action_result_with_notifications() do
+      {:ok, active_registration, overlap_notifications ++ activate_notifications}
+    end
+  end
+
+  defp maybe_deprecate_overlapping_active(%PackRegistration{} = registration, opts) do
+    opts
+    |> replace_overlapping_active?()
+    |> maybe_deprecate_overlapping_active(registration)
+  end
+
+  defp maybe_deprecate_overlapping_active(false, %PackRegistration{}), do: {:ok, []}
+
+  defp maybe_deprecate_overlapping_active(true, %PackRegistration{} = registration),
+    do: deprecate_overlapping_active(registration)
+
+  defp replace_overlapping_active?(opts),
+    do: Keyword.get(opts, :replace_overlapping_active?, false)
+
+  defp deprecate_overlapping_active(%PackRegistration{} = registration) do
+    with {:ok, active_registrations} <- PackRegistration.list_active() do
+      active_registrations
+      |> overlapping_registrations(registration)
+      |> deprecate_overlapping_registrations()
+    end
+  end
+
+  defp deprecate_overlapping_registrations(registrations),
+    do: Enum.reduce_while(registrations, {:ok, []}, &deprecate_overlapping_registration/2)
+
+  defp deprecate_overlapping_registration(overlapping_registration, {:ok, notifications}) do
+    overlapping_registration
+    |> PackRegistration.deprecate(return_notifications?: true)
     |> action_result_with_notifications()
+    |> deprecation_result(notifications)
+  end
+
+  defp deprecation_result({:ok, %PackRegistration{}, deprecate_notifications}, notifications),
+    do: {:cont, {:ok, notifications ++ deprecate_notifications}}
+
+  defp deprecation_result({:error, reason}, _notifications), do: {:halt, {:error, reason}}
+
+  defp overlapping_registrations(active_registrations, %PackRegistration{} = registration) do
+    subject_kinds = MapSet.new(registration.canonical_subject_kinds || [])
+
+    Enum.filter(active_registrations, fn active_registration ->
+      active_registration.id != registration.id and
+        not MapSet.disjoint?(
+          subject_kinds,
+          MapSet.new(active_registration.canonical_subject_kinds || [])
+        )
+    end)
   end
 
   defp activate_installation_with_notifications(%Installation{} = installation) do
