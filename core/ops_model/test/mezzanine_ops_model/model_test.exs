@@ -24,7 +24,7 @@ defmodule MezzanineOpsModel.ModelTest do
         intent_id: "intent-run-1",
         program_id: "program-1",
         work_id: "work-1",
-        capability: "linear.issue.execute"
+        capability: "codex.session.turn"
       })
 
     assert run_intent.runtime_class == :session
@@ -131,7 +131,7 @@ defmodule MezzanineOpsModel.ModelTest do
                    intent_id: "intent-run-1",
                    program_id: "program-1",
                    work_id: "work-1",
-                   capability: "linear.issue.execute"
+                   capability: "codex.session.turn"
                  })
              })
   end
@@ -173,7 +173,7 @@ defmodule MezzanineOpsModel.ModelTest do
         intent_id: "intent-run-1",
         program_id: "program-1",
         work_id: "work-1",
-        capability: "linear.issue.execute",
+        capability: "codex.session.turn",
         runtime_class: :session,
         metadata: %{source: :planner, review_required: false}
       })
@@ -181,7 +181,7 @@ defmodule MezzanineOpsModel.ModelTest do
     dumped = Codec.dump(run_intent)
 
     assert dumped == %{
-             "capability" => "linear.issue.execute",
+             "capability" => "codex.session.turn",
              "grant_profile" => %{},
              "input" => %{},
              "intent_id" => "intent-run-1",

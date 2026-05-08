@@ -372,7 +372,7 @@ defmodule MezzanineConfigRegistryTest do
     assert recipe.required_lifecycle_hints == []
     assert recipe.sandbox_policy_ref == "standard_registry_fixture"
     assert recipe.prompt_refs == ["registry_fixture_prompt"]
-    assert recipe.dynamic_tool_manifest == %{tools: ["linear.comment.update"]}
+    assert recipe.dynamic_tool_manifest == %{tools: ["linear.comments.update"]}
 
     assert recipe.dispatch_ref_requirements == %{
              "authority_decision_ref" => "required",
@@ -614,7 +614,7 @@ defmodule MezzanineConfigRegistryTest do
           },
           sandbox_policy_ref: :standard_registry_fixture,
           prompt_refs: [:registry_fixture_prompt],
-          dynamic_tool_manifest: %{tools: ["linear.comment.update"]},
+          dynamic_tool_manifest: %{tools: ["linear.comments.update"]},
           hook_stages: [:prepare_workspace],
           max_turns: 8,
           stall_timeout_ms: 300_000,

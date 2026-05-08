@@ -189,7 +189,7 @@ defmodule Mezzanine.Pack.CompilerTest do
     assert recipe.workspace_policy.root_ref == "local_workspaces"
     assert recipe.sandbox_policy_ref == "standard_coding"
     assert recipe.prompt_refs == ["coding_agent_system"]
-    assert recipe.dynamic_tool_manifest.tools == ["linear.comment.update", "github.pr.create"]
+    assert recipe.dynamic_tool_manifest.tools == ["linear.comments.update", "github.pr.create"]
     assert recipe.hook_stages == [:prepare_workspace, :after_turn]
     assert recipe.max_turns == 12
     assert recipe.stall_timeout_ms == 300_000
@@ -425,7 +425,7 @@ defmodule Mezzanine.Pack.CompilerTest do
           },
           sandbox_policy_ref: :standard_coding,
           prompt_refs: [:coding_agent_system],
-          dynamic_tool_manifest: %{tools: ["linear.comment.update", "github.pr.create"]},
+          dynamic_tool_manifest: %{tools: ["linear.comments.update", "github.pr.create"]},
           hook_stages: [:prepare_workspace, :after_turn],
           max_turns: 12,
           stall_timeout_ms: 300_000,

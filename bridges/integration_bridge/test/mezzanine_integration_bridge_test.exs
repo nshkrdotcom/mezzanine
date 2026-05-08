@@ -102,14 +102,14 @@ defmodule Mezzanine.IntegrationBridgeTest do
       {:ok, %{capability: capability, input: input}}
     end
 
-    assert {:ok, %{capability: "linear.issue.execute"}} =
+    assert {:ok, %{capability: "linear.issues.retrieve"}} =
              IntegrationBridge.invoke_run_intent(
                invocation,
                invoke_fun: invoke_fun,
                invoke_opts: [connection_id: "conn-1"]
              )
 
-    assert_received {:invoke, "linear.issue.execute", input, [connection_id: "conn-1"]}
+    assert_received {:invoke, "linear.issues.retrieve", input, [connection_id: "conn-1"]}
     assert input.invocation_request == invocation.invocation_request
     assert input.idempotency_key == "idem-1"
     assert input.submission_dedupe_key == "dedupe-1"
@@ -124,10 +124,10 @@ defmodule Mezzanine.IntegrationBridgeTest do
       {:ok, %{capability: capability, input: input}}
     end
 
-    assert {:ok, %{capability: "linear.issue.update"}} =
+    assert {:ok, %{capability: "linear.issues.update"}} =
              IntegrationBridge.dispatch_effect(invocation,
                invoke_fun: invoke_fun,
-               capability_id: "linear.issue.update"
+               capability_id: "linear.issues.update"
              )
   end
 
@@ -137,7 +137,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
         intent_id: "intent-run-1",
         program_id: "program-1",
         work_id: "work-1",
-        capability: "linear.issue.execute",
+        capability: "linear.issues.retrieve",
         input: %{"issue_id" => "ENG-42"}
       })
 
@@ -159,7 +159,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
         effect_type: :connector_effect,
         subject: "issue",
         payload: %{
-          capability_id: "linear.issue.update",
+          capability_id: "linear.issues.update",
           input: %{"id" => "ENG-42", "state" => "done"}
         }
       })
@@ -213,7 +213,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
       })
 
     invocation = AuthorizedInvocation.new!(attrs)
-    input = AuthorizedInvocation.invoke_input(invocation, "linear.issue.update")
+    input = AuthorizedInvocation.invoke_input(invocation, "linear.issues.update")
 
     assert input.authority.for_action_ref == "action://agent-loop/turn-1"
 
@@ -506,7 +506,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
       target_id: "target-1",
       target_kind: "runtime_target",
       selected_step_id: "step-1",
-      allowed_operations: ["linear.issue.execute", "linear.issue.update"],
+      allowed_operations: ["linear.issues.retrieve", "linear.issues.update"],
       authority_packet: authority_packet(),
       boundary_intent: %{},
       topology_intent: %{},
@@ -548,13 +548,13 @@ defmodule Mezzanine.IntegrationBridgeTest do
       contract_version: "v1",
       execution_governance_id: "mock-governance-123",
       authority_ref: %{"decision_id" => "mock-decision-123"},
-      sandbox: %{"allowed_tools" => ["linear.issue.update"]},
+      sandbox: %{"allowed_tools" => ["linear.issues.update"]},
       boundary: %{},
       topology: %{},
       workspace: %{},
       resources: %{},
       placement: %{},
-      operations: %{"allowed_operations" => ["linear.issue.execute", "linear.issue.update"]},
+      operations: %{"allowed_operations" => ["linear.issues.retrieve", "linear.issues.update"]},
       extensions: %{"citadel" => %{}}
     }
   end

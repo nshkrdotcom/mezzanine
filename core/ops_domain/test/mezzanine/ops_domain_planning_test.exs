@@ -27,7 +27,7 @@ defmodule Mezzanine.OpsDomainPlanningTest do
 
     assert bundle.status == :compiled
     assert bundle.config["review"]["required"] == true
-    assert bundle.compiled_form["run_profile"]["capability"] == "linear.issue.execute"
+    assert bundle.compiled_form["run_profile"]["capability"] == "codex.session.turn"
     assert bundle.compiled_form["approval_posture"]["escalation_required"] == true
     assert bundle.compiled_form["review_rules"]["required"] == true
     assert bundle.compiled_form["retry_profile"]["strategy"] == "exponential"
@@ -70,7 +70,7 @@ defmodule Mezzanine.OpsDomainPlanningTest do
                    "run" => %{
                      "profile" => "default_session",
                      "runtime_class" => "session",
-                     "capability" => "linear.issue.execute",
+                     "capability" => "codex.session.turn",
                      "target" => "linear-default"
                    },
                    "review" => %{
@@ -88,7 +88,7 @@ defmodule Mezzanine.OpsDomainPlanningTest do
     assert bundle.status == :compiled
     assert String.contains?(bundle.prompt_template, "Prompt Only")
     assert bundle.config["review"]["required"] == true
-    assert bundle.compiled_form["run_profile"]["capability"] == "linear.issue.execute"
+    assert bundle.compiled_form["run_profile"]["capability"] == "codex.session.turn"
     assert bundle.compiled_form["review_rules"]["required"] == true
     assert bundle.compiled_form["retry_profile"]["strategy"] == "linear"
   end

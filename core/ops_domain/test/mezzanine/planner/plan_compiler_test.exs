@@ -33,10 +33,10 @@ defmodule Mezzanine.Planner.PlanCompilerTest do
     [review_intent] = plan.derived_review_intents
     [obligation] = plan.obligations
 
-    assert run_intent.capability == "linear.issue.execute"
+    assert run_intent.capability == "codex.session.turn"
     assert run_intent.runtime_class == :session
     assert run_intent.placement.profile_id == "default-placement"
-    assert "linear.issue.read" in run_intent.grant_profile.capability_ids
+    assert "linear.issues.retrieve" in run_intent.grant_profile.capability_ids
     assert review_intent.gate == "operator"
     assert obligation.subject.review_intent_id == review_intent.intent_id
     assert plan.metadata.retry_profile.strategy == :exponential

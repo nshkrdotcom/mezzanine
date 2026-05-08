@@ -5,7 +5,7 @@ tracker:
 run:
   profile: default_session
   runtime_class: session
-  capability: linear.issue.execute
+  capability: codex.session.turn
   target: linear-default
 approval:
   mode: manual
@@ -34,9 +34,11 @@ review:
   gates:
     - operator
 capability_grants:
-  - capability_id: linear.issue.read
+  - capability_id: codex.session.turn
     mode: allow
-  - capability_id: linear.issue.update
+  - capability_id: linear.issues.retrieve
+    mode: allow
+  - capability_id: linear.issues.update
     mode: allow
 ---
 # Operator Prompt

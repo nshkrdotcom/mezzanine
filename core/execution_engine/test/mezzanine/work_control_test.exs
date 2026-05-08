@@ -112,7 +112,7 @@ defmodule Mezzanine.WorkControlTest do
     run:
       profile: default_session
       runtime_class: session
-      capability: linear.issue.execute
+      capability: codex.session.turn
       target: linear-default
     approval:
       mode: manual

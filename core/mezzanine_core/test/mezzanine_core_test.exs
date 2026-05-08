@@ -29,7 +29,7 @@ defmodule MezzanineCoreTest do
                intent_id: "intent-run-1",
                program_id: "program-1",
                work_id: "work-1",
-               capability: "linear.issue.execute"
+               capability: "codex.session.turn"
              })
 
     assert {:ok, read_intent} =
@@ -46,7 +46,7 @@ defmodule MezzanineCoreTest do
                subject: "issue"
              })
 
-    assert %RunIntent{capability: "linear.issue.execute"} = run_intent
+    assert %RunIntent{capability: "codex.session.turn"} = run_intent
     assert %ReadIntent{read_type: :lower_fact} = read_intent
     assert %EffectIntent{effect_type: :connector_effect} = effect_intent
   end

@@ -29,7 +29,7 @@ defmodule Mezzanine.Lifecycle.SourceExecutionMapperTest do
     assert input.authority_packet_ref == "citadel-authority-request://subject-1"
     assert input.permission_decision_ref == "citadel-permission-decision://subject-1"
     assert input.routing_facts["installation_revision"] == 7
-    assert input.routing_facts["capability"] == "linear.issue.execute"
+    assert input.routing_facts["capability"] == "codex.session.turn"
     assert input.routing_facts["actor_ref"] == %{kind: "system", id: "source-admission"}
   end
 
@@ -158,7 +158,7 @@ defmodule Mezzanine.Lifecycle.SourceExecutionMapperTest do
         trace_id: "trace-1",
         causation_id: "cause-1",
         actor_ref: %{kind: "system", id: "source-admission"},
-        capability: "linear.issue.execute",
+        capability: "codex.session.turn",
         normalized_payload: %{"title" => "Ship mapper"}
       },
       overrides

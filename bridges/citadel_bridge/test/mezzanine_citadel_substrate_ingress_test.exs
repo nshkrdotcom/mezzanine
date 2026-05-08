@@ -48,7 +48,7 @@ defmodule Mezzanine.Citadel.SubstrateIngressTest do
 
     assert compiled.lower_intent.invocation_request.execution_governance.sandbox[
              "allowed_tools"
-           ] == ["linear.issue.update"]
+           ] == ["linear.issues.update"]
   end
 
   test "bridge lib contains no host-ingress or session-continuity dependencies" do
@@ -96,12 +96,12 @@ defmodule Mezzanine.Citadel.SubstrateIngressTest do
       target_kind: "runtime_target",
       execution_intent_family: "process",
       execution_intent: %{
-        "command" => "linear.issue.execute",
+        "command" => "linear.issues.retrieve",
         "args" => ["work-1"],
         "environment" => %{"TRACE_ID" => "0123456789abcdef0123456789abcdef"},
         "extensions" => %{}
       },
-      allowed_operations: ["linear.issue.execute"],
+      allowed_operations: ["linear.issues.retrieve"],
       downstream_scope: "work:work-1",
       workspace_mutability: "read_write",
       risk_hints: ["writes_workspace"],
@@ -114,7 +114,7 @@ defmodule Mezzanine.Citadel.SubstrateIngressTest do
       intent_id: "intent-1",
       program_id: "program-1",
       work_id: "work-1",
-      capability: "linear.issue.execute",
+      capability: "linear.issues.retrieve",
       runtime_class: :session,
       placement: %{
         target_id: "workspace_runtime",
@@ -122,7 +122,7 @@ defmodule Mezzanine.Citadel.SubstrateIngressTest do
         boundary_class: "workspace_session",
         routing_tags: ["linear", "session"]
       },
-      grant_profile: %{"allowed_tools" => ["linear.issue.update"]},
+      grant_profile: %{"allowed_tools" => ["linear.issues.update"]},
       input: %{"issue_id" => "ENG-42"},
       metadata: %{"tenant_id" => "tenant-cb", "objective" => "Resolve Linear issue"}
     })

@@ -23,7 +23,7 @@ defmodule Mezzanine.Policy.BundleLoaderTest do
     assert TypedConfig.run_profile(compiled_bundle) == %{
              profile_id: "default_session",
              runtime_class: :session,
-             capability: "linear.issue.execute",
+             capability: "codex.session.turn",
              target: "linear-default"
            }
 
@@ -44,8 +44,9 @@ defmodule Mezzanine.Policy.BundleLoaderTest do
     assert TypedConfig.review_rules(compiled_bundle).required
 
     assert Enum.map(TypedConfig.capability_grants(compiled_bundle), & &1.capability_id) == [
-             "linear.issue.read",
-             "linear.issue.update"
+             "codex.session.turn",
+             "linear.issues.retrieve",
+             "linear.issues.update"
            ]
   end
 
@@ -68,13 +69,14 @@ defmodule Mezzanine.Policy.BundleLoaderTest do
           |> Enum.into(%{}, fn {key, value} -> {Atom.to_string(key), stringify_keys(value)} end)
     }
 
-    assert TypedConfig.run_profile(persisted_bundle).capability == "linear.issue.execute"
+    assert TypedConfig.run_profile(persisted_bundle).capability == "codex.session.turn"
     assert TypedConfig.review_rules(persisted_bundle).required
     assert TypedConfig.placement_profile(persisted_bundle).profile_id == "default-placement"
 
     assert Enum.map(TypedConfig.capability_grants(persisted_bundle), & &1.capability_id) == [
-             "linear.issue.read",
-             "linear.issue.update"
+             "codex.session.turn",
+             "linear.issues.retrieve",
+             "linear.issues.update"
            ]
   end
 
@@ -99,7 +101,7 @@ defmodule Mezzanine.Policy.BundleLoaderTest do
           "run_profile" => %{
             "profile_id" => "default_session",
             "runtime_class" => "session",
-            "capability" => "linear.issue.execute",
+            "capability" => "codex.session.turn",
             "target" => "linear-default"
           },
           "retry_profile" => %{
@@ -118,7 +120,7 @@ defmodule Mezzanine.Policy.BundleLoaderTest do
           },
           "capability_grants" => [
             %{
-              "capability_id" => "linear.issue.read",
+              "capability_id" => "linear.issues.retrieve",
               "mode" => "allow",
               "constraints" => %{}
             }
@@ -141,7 +143,7 @@ defmodule Mezzanine.Policy.BundleLoaderTest do
              BundleLoader.load_map(%{
                config: %{
                  "capability_grants" => [
-                   %{"capability_id" => "linear.issue.read", "mode" => "wild"}
+                   %{"capability_id" => "linear.issues.retrieve", "mode" => "wild"}
                  ]
                },
                prompt_template: "Do the work."
