@@ -17,8 +17,12 @@ defmodule Mezzanine.ServiceSupport do
     end
   end
 
-  def map_value(map, key) when is_map(map),
-    do: Map.get(map, key) || Map.get(map, Atom.to_string(key))
+  def map_value(map, key) when is_map(map) do
+    case Map.fetch(map, key) do
+      {:ok, value} -> value
+      :error -> Map.get(map, Atom.to_string(key))
+    end
+  end
 
   def map_value(_map, _key), do: nil
 

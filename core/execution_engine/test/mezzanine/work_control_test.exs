@@ -53,6 +53,11 @@ defmodule Mezzanine.WorkControlTest do
       workspace_policy_ref: "workspace-policy://extravaganza/coding_operations",
       live_provider_allowed: false,
       evidence_profile_ref: "github_pr_plus_workpad",
+      memory_profile_ref: "none",
+      context_profile_ref: "outer_brain_optional_context_v1",
+      memory_context_required: false,
+      memory_context_source_refs: ["workspace_memory"],
+      memory_context_binding_keys: ["shared_memory"],
       redaction_profile_ref: "redaction://extravaganza/default",
       prompt_context_recipe_refs: ["coding_agent_system"],
       runtime_policy_config: %{"run" => %{"capability" => "codex.session.turn"}}
@@ -67,6 +72,11 @@ defmodule Mezzanine.WorkControlTest do
     assert started.run.runtime_profile["lower_runtime_kind"] == "codex_session"
     assert started.run.runtime_profile["capability_id"] == "codex.session.turn"
     assert started.run.runtime_profile["requested_action_ids"] == ["codex.session.turn"]
+    assert started.run.runtime_profile["memory_profile_ref"] == "none"
+    assert started.run.runtime_profile["context_profile_ref"] == "outer_brain_optional_context_v1"
+    assert started.run.runtime_profile["memory_context_required"] == false
+    assert started.run.runtime_profile["memory_context_source_refs"] == ["workspace_memory"]
+    assert started.run.runtime_profile["memory_context_binding_keys"] == ["shared_memory"]
     assert started.run.runtime_profile["idempotency_key"] == "idem-phase2"
     assert started.run.runtime_profile["pack_revision"] == 9
     assert "linear.comments.update" in started.run.grant_profile["capability_ids"]

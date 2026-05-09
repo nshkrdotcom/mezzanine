@@ -84,6 +84,16 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
              "semantic_ref" => "semantic://context/1"
            }
 
+    assert projection.payload["memory_context"] == %{
+             "context_hash" => "sha256:context-pack",
+             "context_pack_ref" => "context-pack://app-kit/run-1",
+             "fragment_refs" => ["fragment-memory-1"],
+             "memory_evidence_refs" => ["memory-evidence://workspace/main/1"],
+             "memory_profile_ref" => "private_facts_v1",
+             "memory_query_ref" => "memory-query://run-1",
+             "redaction_policy_ref" => "policy://hash"
+           }
+
     assert projection.payload["semantic"]["failure"] == %{
              "failure_ref" => "semantic-failure://phase12/1",
              "kind" => "semantic_insufficient_context",
@@ -422,6 +432,16 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
           "provenance_refs" => ["outer-brain://provenance/1"],
           "redaction_policy_ref" => "redaction://prompt",
           "raw_prompt" => "should-drop"
+        },
+        "memory_context" => %{
+          "memory_profile_ref" => "private_facts_v1",
+          "context_pack_ref" => "context-pack://app-kit/run-1",
+          "context_hash" => "sha256:context-pack",
+          "fragment_refs" => ["fragment-memory-1"],
+          "memory_query_ref" => "memory-query://run-1",
+          "memory_evidence_refs" => ["memory-evidence://workspace/main/1"],
+          "redaction_policy_ref" => "policy://hash",
+          "raw_provider_payload" => "should-drop"
         },
         "semantic_failure" => %{
           "semantic_failure_ref" => "semantic-failure://phase12/1",

@@ -303,6 +303,7 @@ defmodule Mezzanine.Projections.ReceiptReducer do
         aitrace: aitrace_projection(lower_receipt)
       },
       prompt: prompt_projection(lower_receipt),
+      memory_context: memory_context_projection(lower_receipt),
       semantic: semantic_projection(lower_receipt),
       authority: authority_projection(lower_receipt),
       workpad: %{refs: string_list(map_value(lower_receipt, :workpad_refs))},
@@ -686,6 +687,22 @@ defmodule Mezzanine.Projections.ReceiptReducer do
     )
     |> maybe_put("provenance_refs", string_list_or_nil(map_value(source, :provenance_refs)))
     |> maybe_put("normalizer_version", string_or_nil(map_value(source, :normalizer_version)))
+    |> maybe_put("redaction_policy_ref", string_or_nil(map_value(source, :redaction_policy_ref)))
+  end
+
+  defp memory_context_projection(lower_receipt) do
+    source = map_value(lower_receipt, :memory_context) || %{}
+
+    %{}
+    |> maybe_put("memory_profile_ref", string_or_nil(map_value(source, :memory_profile_ref)))
+    |> maybe_put("context_pack_ref", string_or_nil(map_value(source, :context_pack_ref)))
+    |> maybe_put("context_hash", string_or_nil(map_value(source, :context_hash)))
+    |> maybe_put("fragment_refs", string_list_or_nil(map_value(source, :fragment_refs)))
+    |> maybe_put("memory_query_ref", string_or_nil(map_value(source, :memory_query_ref)))
+    |> maybe_put(
+      "memory_evidence_refs",
+      string_list_or_nil(map_value(source, :memory_evidence_refs))
+    )
     |> maybe_put("redaction_policy_ref", string_or_nil(map_value(source, :redaction_policy_ref)))
   end
 

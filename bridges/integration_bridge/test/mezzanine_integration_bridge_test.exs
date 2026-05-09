@@ -618,6 +618,14 @@ defmodule Mezzanine.IntegrationBridgeTest do
         "cwd" => "/home/dev/extravaganza",
         "continuation" => %{"strategy" => "latest"},
         "provider_metadata" => %{"model" => "gpt-5.4", "app_server" => true},
+        "memory_context" => %{
+          "context_pack_ref" => "context-pack://app-kit/run-1",
+          "context_hash" => "sha256:context-pack",
+          "fragment_refs" => ["fragment-memory-1"],
+          "memory_query_ref" => "memory-query://run-1",
+          "memory_evidence_refs" => ["memory-evidence://workspace/main/1"],
+          "redaction_policy_ref" => "policy://hash"
+        },
         "dynamic_tool_manifest" => %{"tools" => ["linear.comment.update"]},
         "host_tools" => [
           %{
@@ -640,6 +648,15 @@ defmodule Mezzanine.IntegrationBridgeTest do
 
     assert input.provider_metadata["model"] == "gpt-5.4"
     assert input.provider_metadata["app_server"] == true
+
+    assert input.provider_metadata["memory_context"] == %{
+             "context_pack_ref" => "context-pack://app-kit/run-1",
+             "context_hash" => "sha256:context-pack",
+             "fragment_refs" => ["fragment-memory-1"],
+             "memory_query_ref" => "memory-query://run-1",
+             "memory_evidence_refs" => ["memory-evidence://workspace/main/1"],
+             "redaction_policy_ref" => "policy://hash"
+           }
 
     assert input.provider_metadata["dynamic_tool_manifest"] == %{
              "tools" => ["linear.comment.update"]

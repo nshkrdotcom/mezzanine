@@ -347,11 +347,13 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
       %{}
     else
       dynamic_tool_manifest = optional_map(execution_intent, "dynamic_tool_manifest")
+      memory_context = execution_intent |> optional_map("memory_context") |> public_ref_map()
 
       provider_metadata =
         execution_intent
         |> optional_map("provider_metadata")
         |> maybe_put_non_empty("dynamic_tool_manifest", dynamic_tool_manifest)
+        |> maybe_put_non_empty("memory_context", memory_context)
 
       %{}
       |> maybe_put_non_empty(:prompt, string_value(execution_intent, "prompt"))
@@ -429,6 +431,38 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
   end
 
   defp optional_list(_map, _key), do: []
+
+  defp public_ref_map(%{} = map) do
+    map
+    |> Enum.reject(fn {key, _value} -> private_payload_key?(key) end)
+    |> Map.new(fn {key, value} -> {to_string(key), public_ref_value(value)} end)
+  end
+
+  defp public_ref_map(_value), do: %{}
+
+  defp public_ref_value(%{} = map), do: public_ref_map(map)
+  defp public_ref_value(values) when is_list(values), do: Enum.map(values, &public_ref_value/1)
+  defp public_ref_value(value), do: value
+
+  defp private_payload_key?(key) when is_atom(key), do: private_payload_key?(Atom.to_string(key))
+
+  defp private_payload_key?(key) when is_binary(key) do
+    key in [
+      "api_key",
+      "authorization",
+      "body",
+      "provider_payload",
+      "raw_body",
+      "raw_content",
+      "raw_payload",
+      "raw_prompt",
+      "raw_provider_payload",
+      "secret",
+      "token"
+    ]
+  end
+
+  defp private_payload_key?(_key), do: false
 
   defp maybe_put_non_empty(map, _key, nil), do: map
   defp maybe_put_non_empty(map, _key, []), do: map
