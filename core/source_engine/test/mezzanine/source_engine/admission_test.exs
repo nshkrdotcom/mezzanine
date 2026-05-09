@@ -3,6 +3,7 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
 
   alias Mezzanine.SourceEngine.Admission
   alias Mezzanine.SourceEngine.LinearIssue
+  alias Mezzanine.SourceEngine.LinearSourceFlow
   alias Mezzanine.SourceEngine.SourceBinding
   alias Mezzanine.SourceEngine.SourceEvent
 
@@ -144,6 +145,33 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
     assert decision.reason == :not_routed_to_worker
   end
 
+  test "normalizes Linear issue routing against explicit assignee filters" do
+    binding = %{
+      source_binding()
+      | candidate_filters: %{assignee: "me"}
+    }
+
+    assert {:ok, matched} =
+             LinearIssue.subject_attrs(
+               linear_issue(),
+               Map.put(source_envelope(), :viewer, %{id: "usr-linear-viewer"}),
+               binding
+             )
+
+    assert matched.lifecycle_state == "candidate"
+    assert matched.state_mapping.reason == "blocked_by_non_terminal"
+
+    assert {:ok, ignored} =
+             LinearIssue.subject_attrs(
+               linear_issue(),
+               Map.put(source_envelope(), :viewer, %{id: "usr-someone-else"}),
+               binding
+             )
+
+    assert ignored.lifecycle_state == "ignored"
+    assert ignored.state_mapping.reason == "not_routed_to_worker"
+  end
+
   test "normalizes Linear issue source facts into installation-scoped subject attrs" do
     assert {:ok, attrs} =
              LinearIssue.subject_attrs(
@@ -230,6 +258,110 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
                %{source_envelope() | authorization_scope: %{"tenant_id" => "tenant-2"}},
                binding
              )
+  end
+
+  test "builds governed Linear candidate fetch input from source binding state and viewer routing" do
+    binding = %{
+      source_binding()
+      | candidate_filters: %{project_slug: "ops-automation", assignee: "me"}
+    }
+
+    assert {:ok, input} =
+             LinearSourceFlow.candidate_fetch_input(binding,
+               viewer: %{id: "usr-linear-viewer"},
+               page_size: 25,
+               cursor: "cursor-1"
+             )
+
+    assert input == %{
+             filter: %{
+               project_slug: "ops-automation",
+               state_names: ["Todo"],
+               assignee_id: "usr-linear-viewer"
+             },
+             first: 25,
+             after: "cursor-1"
+           }
+
+    assert {:error, :linear_viewer_required_for_me_assignee} =
+             LinearSourceFlow.candidate_fetch_input(binding)
+  end
+
+  test "normalizes governed Linear candidate and refresh outputs through subject attrs" do
+    binding = source_binding()
+    envelope = source_envelope()
+
+    assert {:ok, page} =
+             LinearSourceFlow.normalize_candidate_page(
+               %{issues: [linear_issue()], page_info: %{has_next_page: false}},
+               envelope,
+               binding
+             )
+
+    assert page.operation == "linear.issues.list"
+    assert [%{source_ref: "linear://installation-1/issue/ENG-321"}] = page.subject_attrs
+
+    assert {:ok, refreshed} =
+             LinearSourceFlow.normalize_issue_refresh(%{issue: linear_issue()}, envelope, binding)
+
+    assert refreshed.operation == "linear.issues.retrieve"
+    assert refreshed.subject_attrs.provider_external_ref == "lin-issue-321"
+  end
+
+  test "builds Linear publication inputs and public-safe publication receipt refs" do
+    assert {:ok, {"linear.comments.update", update_input}} =
+             LinearSourceFlow.publication_input(%{
+               comment_id: "comment-1",
+               body: "Ready for review"
+             })
+
+    assert update_input == %{comment_id: "comment-1", body: "Ready for review"}
+
+    assert {:ok, {"linear.comments.create", create_input}} =
+             LinearSourceFlow.publication_input(%{
+               issue_id: "lin-issue-321",
+               body: "Ready for review",
+               allow_create_fallback?: true
+             })
+
+    assert create_input == %{issue_id: "lin-issue-321", body: "Ready for review"}
+
+    assert {:ok, receipt} =
+             LinearSourceFlow.publication_receipt(
+               %{
+                 output: %{success: true, comment: %{id: "comment-1"}},
+                 governed_lower_envelope: %{
+                   capability_id: "linear.comments.update",
+                   lower_runtime_kind: :direct_connector,
+                   lower_request_ref: "lower-request://source/comment-1",
+                   authority_ref: "authority://linear/comment",
+                   authority_decision_hash: String.duplicate("a", 64),
+                   connector_manifest_ref: "manifest://linear@active",
+                   connector_manifest_hash: "sha256:linear",
+                   capability_negotiation_ref: "cap-neg://linear/comment",
+                   redaction_profile_ref: "redaction://linear/public",
+                   trace_id: "trace-linear-publication"
+                 },
+                 governed_lower_receipt: %{
+                   lower_receipt_ref: "lower-receipt://source/comment-1/succeeded"
+                 }
+               },
+               %{
+                 source_publish_ref: "linear_workpad_review",
+                 source_binding_id: "linear-primary",
+                 source_ref: "linear://installation-1/issue/ENG-321",
+                 body: "Ready for review"
+               }
+             )
+
+    assert receipt.status == "published"
+    assert receipt.capability_id == "linear.comments.update"
+    assert receipt.lower_runtime_kind == "direct_connector"
+    assert receipt.authority_ref == "authority://linear/comment"
+    assert receipt.connector_manifest_ref == "manifest://linear@active"
+    assert receipt.provider_response_ref == "lower-receipt://source/comment-1/succeeded"
+    assert receipt.redaction_manifest_ref == "redaction://linear/public"
+    assert receipt.workpad_refs == ["linear-comment://comment-1"]
   end
 
   defp source_binding do

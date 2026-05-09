@@ -309,11 +309,91 @@ defmodule Mezzanine.Projections.ReceiptReducer do
       semantic: semantic_projection(lower_receipt),
       authority: authority_projection(lower_receipt),
       workpad: %{refs: string_list(map_value(lower_receipt, :workpad_refs))},
+      source_publication: source_publication_projection(lower_receipt),
+      source_bindings: source_binding_projections(subject, lower_receipt),
       diagnostics: %{
         missing_required_evidence: missing_required_evidence,
         review_blocking?: missing_required_evidence != []
       }
     }
+  end
+
+  defp source_binding_projections(subject, lower_receipt) do
+    [
+      %{
+        binding_ref: Map.get(subject, :source_binding_id),
+        source_ref: Map.get(subject, :source_ref),
+        source_kind: Map.get(subject, :subject_kind) || Map.get(subject, :provider),
+        external_system: Map.get(subject, :provider),
+        source_state: Map.get(subject, :source_state),
+        source_url: Map.get(subject, :source_url),
+        workpad_refs: string_list(map_value(lower_receipt, :workpad_refs)),
+        metadata: source_publication_metadata(lower_receipt)
+      }
+      |> compact_projection()
+    ]
+  end
+
+  defp source_publication_projection(lower_receipt) do
+    source = map_value(lower_receipt, :source_publication) || %{}
+
+    %{}
+    |> maybe_put(
+      "source_publication_receipt_ref",
+      string_or_nil(map_value(source, :source_publication_receipt_ref))
+    )
+    |> maybe_put("source_publish_ref", string_or_nil(map_value(source, :source_publish_ref)))
+    |> maybe_put("status", string_or_nil(map_value(source, :status)))
+    |> maybe_put("capability_id", string_or_nil(map_value(source, :capability_id)))
+    |> maybe_put("lower_runtime_kind", string_or_nil(map_value(source, :lower_runtime_kind)))
+    |> maybe_put("lower_request_ref", string_or_nil(map_value(source, :lower_request_ref)))
+    |> maybe_put("lower_receipt_ref", string_or_nil(map_value(source, :lower_receipt_ref)))
+    |> maybe_put("authority_ref", string_or_nil(map_value(source, :authority_ref)))
+    |> maybe_put(
+      "authority_decision_hash",
+      string_or_nil(map_value(source, :authority_decision_hash))
+    )
+    |> maybe_put(
+      "connector_manifest_ref",
+      string_or_nil(map_value(source, :connector_manifest_ref))
+    )
+    |> maybe_put(
+      "capability_negotiation_ref",
+      string_or_nil(map_value(source, :capability_negotiation_ref))
+    )
+    |> maybe_put(
+      "provider_response_ref",
+      string_or_nil(map_value(source, :provider_response_ref))
+    )
+    |> maybe_put(
+      "redaction_manifest_ref",
+      string_or_nil(map_value(source, :redaction_manifest_ref))
+    )
+    |> maybe_put("workpad_refs", string_list_or_nil(map_value(source, :workpad_refs)))
+    |> maybe_put("comment_ref", string_or_nil(map_value(source, :comment_ref)))
+    |> maybe_put("trace_id", string_or_nil(map_value(source, :trace_id)))
+  end
+
+  defp source_publication_metadata(lower_receipt) do
+    lower_receipt
+    |> source_publication_projection()
+    |> Map.take([
+      "source_publication_receipt_ref",
+      "source_publish_ref",
+      "status",
+      "capability_id",
+      "lower_runtime_kind",
+      "lower_request_ref",
+      "lower_receipt_ref",
+      "authority_ref",
+      "authority_decision_hash",
+      "connector_manifest_ref",
+      "capability_negotiation_ref",
+      "provider_response_ref",
+      "redaction_manifest_ref",
+      "comment_ref",
+      "trace_id"
+    ])
   end
 
   defp evidence_projection(%EvidenceRecord{} = evidence) do
@@ -546,6 +626,12 @@ defmodule Mezzanine.Projections.ReceiptReducer do
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  defp compact_projection(map) do
+    map
+    |> Enum.reject(fn {_key, value} -> value in [nil, "", [], %{}] end)
+    |> Map.new()
+  end
 
   defp integer_or_nil(value) when is_integer(value), do: value
   defp integer_or_nil(_value), do: nil

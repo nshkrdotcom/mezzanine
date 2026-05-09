@@ -98,6 +98,42 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
            }
 
     assert projection.payload["workpad"]["refs"] == ["source-workpad://linear/tenant-1/subj-1"]
+
+    assert projection.payload["source_publication"] == %{
+             "authority_decision_hash" => String.duplicate("b", 64),
+             "authority_ref" => "authority-decision://linear/comment",
+             "capability_id" => "linear.comments.update",
+             "capability_negotiation_ref" => "cap-neg://linear/comment",
+             "comment_ref" => "linear-comment://comment-linear-workpad",
+             "connector_manifest_ref" => "manifest://jido/connectors/linear@local",
+             "lower_receipt_ref" => "lower-receipt://source/comment/succeeded",
+             "lower_request_ref" => "lower-request://source/comment",
+             "lower_runtime_kind" => "direct_connector",
+             "provider_response_ref" => "artifact://linear/comment-update",
+             "redaction_manifest_ref" => "redaction://linear/workpad",
+             "source_publication_receipt_ref" => "source-publication://linear-primary/receipt",
+             "source_publish_ref" => "linear_workpad_review",
+             "status" => "published",
+             "trace_id" => "trace-linear-publication",
+             "workpad_refs" => ["source-workpad://linear/tenant-1/subj-1"]
+           }
+
+    assert [
+             %{
+               "binding_ref" => "source-binding-1",
+               "external_system" => "linear",
+               "metadata" => %{
+                 "source_publication_receipt_ref" =>
+                   "source-publication://linear-primary/receipt",
+                 "capability_id" => "linear.comments.update",
+                 "provider_response_ref" => "artifact://linear/comment-update"
+               },
+               "source_ref" => source_ref,
+               "workpad_refs" => ["source-workpad://linear/tenant-1/subj-1"]
+             }
+           ] = projection.payload["source_bindings"]
+
+    assert String.starts_with?(source_ref, "linear:")
     assert projection.payload["diagnostics"]["missing_required_evidence"] == []
     assert projection.payload["diagnostics"]["review_blocking?"] == false
     refute String.contains?(inspect(projection.payload), "should-drop")
@@ -334,6 +370,25 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
           "credential_ref" => "credential://lease/redacted",
           "api_key" => "should-drop",
           "redaction" => "ref_only"
+        },
+        "source_publication" => %{
+          "source_publication_receipt_ref" => "source-publication://linear-primary/receipt",
+          "source_publish_ref" => "linear_workpad_review",
+          "status" => "published",
+          "capability_id" => "linear.comments.update",
+          "lower_runtime_kind" => "direct_connector",
+          "lower_request_ref" => "lower-request://source/comment",
+          "lower_receipt_ref" => "lower-receipt://source/comment/succeeded",
+          "authority_ref" => "authority-decision://linear/comment",
+          "authority_decision_hash" => String.duplicate("b", 64),
+          "connector_manifest_ref" => "manifest://jido/connectors/linear@local",
+          "capability_negotiation_ref" => "cap-neg://linear/comment",
+          "provider_response_ref" => "artifact://linear/comment-update",
+          "redaction_manifest_ref" => "redaction://linear/workpad",
+          "workpad_refs" => ["source-workpad://linear/tenant-1/subj-1"],
+          "comment_ref" => "linear-comment://comment-linear-workpad",
+          "trace_id" => "trace-linear-publication",
+          "raw_provider_payload" => "should-drop"
         },
         "workpad_refs" => ["source-workpad://linear/tenant-1/subj-1"],
         "runtime_events" => [

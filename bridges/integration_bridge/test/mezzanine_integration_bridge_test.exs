@@ -121,6 +121,161 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert input.authority.policy_version == "mock-v1"
   end
 
+  test "Linear source candidate fetch uses governed direct connector dispatch and SourceEngine normalization" do
+    invocation = authorized_invocation_allowing(["linear.issues.list"])
+
+    invoke_fun = fn capability, input, opts ->
+      send(self(), {:invoke, capability, input, opts})
+
+      {:ok,
+       %{
+         output: %{
+           issues: [linear_issue()],
+           page_info: %{has_next_page: false}
+         },
+         artifact_refs: ["artifact://linear/issues-list"]
+       }}
+    end
+
+    assert {:ok, result} =
+             IntegrationBridge.fetch_linear_candidates(
+               invocation,
+               source_binding(),
+               invoke_fun: invoke_fun,
+               viewer: %{id: "usr-linear-viewer"}
+             )
+
+    assert_received {:invoke, "linear.issues.list", input, opts}
+    assert input.filter.state_names == ["Todo", "Backlog"]
+    assert input.filter.assignee_id == "usr-linear-viewer"
+    assert input.governed_lower_envelope["lower_runtime_kind"] == "direct_connector"
+    assert Keyword.fetch!(opts, :governed_lower_envelope).capability_id == "linear.issues.list"
+
+    assert result.source_intake.operation == "linear.issues.list"
+    assert [%{source_ref: "linear://inst-1/issue/ENG-321"}] = result.source_intake.subject_attrs
+  end
+
+  test "Linear source candidate fetch resolves viewer before assignee-me intake" do
+    invocation = authorized_invocation_allowing(["linear.users.get_self", "linear.issues.list"])
+
+    invoke_fun = fn
+      "linear.users.get_self", input, _opts ->
+        send(self(), {:invoke, "linear.users.get_self", input})
+        {:ok, %{output: %{user: %{id: "usr-linear-viewer", name: "Taylor Automation"}}}}
+
+      "linear.issues.list", input, _opts ->
+        send(self(), {:invoke, "linear.issues.list", input})
+        {:ok, %{output: %{issues: [linear_issue()]}}}
+    end
+
+    assert {:ok, result} =
+             IntegrationBridge.fetch_linear_candidates(
+               invocation,
+               source_binding(),
+               invoke_fun: invoke_fun
+             )
+
+    assert_received {:invoke, "linear.users.get_self", %{}}
+
+    assert_received {:invoke, "linear.issues.list",
+                     %{filter: %{assignee_id: "usr-linear-viewer"}}}
+
+    assert result.viewer_resolution.output.user.id == "usr-linear-viewer"
+    assert [%{lifecycle_state: "submitted"}] = result.source_intake.subject_attrs
+  end
+
+  test "Linear issue refresh normalizes provider output into source subject attrs" do
+    invocation = authorized_invocation_allowing(["linear.issues.retrieve"])
+
+    invoke_fun = fn capability, input, _opts ->
+      send(self(), {:invoke, capability, input})
+      {:ok, %{output: %{issue: linear_issue()}}}
+    end
+
+    assert {:ok, result} =
+             IntegrationBridge.refresh_linear_issue(
+               invocation,
+               "lin-issue-321",
+               source_binding(),
+               invoke_fun: invoke_fun
+             )
+
+    assert_received {:invoke, "linear.issues.retrieve", %{issue_id: "lin-issue-321"}}
+    assert result.source_refresh.operation == "linear.issues.retrieve"
+    assert result.source_refresh.subject_attrs.provider_external_ref == "lin-issue-321"
+  end
+
+  test "Linear source publication emits a public-safe governed publication receipt" do
+    invocation = authorized_invocation_allowing(["linear.comments.update"])
+
+    invoke_fun = fn capability, input, _opts ->
+      send(self(), {:invoke, capability, input})
+      {:ok, %{output: %{success: true, comment: %{id: "comment-1"}}}}
+    end
+
+    assert {:ok, result} =
+             IntegrationBridge.publish_linear_source(
+               invocation,
+               %{
+                 source_publish_ref: "linear_workpad_review",
+                 source_binding_id: "linear-primary",
+                 source_ref: "linear://inst-1/issue/ENG-321",
+                 comment_id: "comment-1",
+                 body: "Ready for review",
+                 redaction_manifest_ref: "redaction://linear/workpad"
+               },
+               invoke_fun: invoke_fun
+             )
+
+    assert_received {:invoke, "linear.comments.update", %{comment_id: "comment-1"}}
+
+    receipt = result.source_publication_receipt
+    assert receipt.status == "published"
+    assert receipt.capability_id == "linear.comments.update"
+    assert receipt.lower_runtime_kind == "direct_connector"
+    assert receipt.authority_ref == "authority-decision://mock-decision-123"
+    assert receipt.connector_manifest_ref == "manifest://jido/connectors/linear@local"
+    assert receipt.redaction_manifest_ref == "redaction://linear/workpad"
+    assert receipt.workpad_refs == ["linear-comment://comment-1"]
+  end
+
+  test "Linear source publication can create a workpad comment after update miss" do
+    invocation =
+      authorized_invocation_allowing(["linear.comments.update", "linear.comments.create"])
+
+    invoke_fun = fn
+      "linear.comments.update", input, _opts ->
+        send(self(), {:invoke, "linear.comments.update", input})
+        {:error, %{reason: %{code: "linear.not_found"}}}
+
+      "linear.comments.create", input, _opts ->
+        send(self(), {:invoke, "linear.comments.create", input})
+        {:ok, %{output: %{success: true, comment: %{id: "comment-created"}}}}
+    end
+
+    assert {:ok, result} =
+             IntegrationBridge.publish_linear_source(
+               invocation,
+               %{
+                 source_publish_ref: "linear_workpad_review",
+                 source_binding_id: "linear-primary",
+                 source_ref: "linear://inst-1/issue/ENG-321",
+                 issue_id: "lin-issue-321",
+                 comment_id: "stale-comment",
+                 body: "Ready for review",
+                 allow_create_fallback?: true
+               },
+               invoke_fun: invoke_fun
+             )
+
+    assert_received {:invoke, "linear.comments.update", %{comment_id: "stale-comment"}}
+    assert_received {:invoke, "linear.comments.create", %{issue_id: "lin-issue-321"}}
+
+    assert result.source_publication_receipt.capability_id == "linear.comments.create"
+    assert result.source_publication_receipt.fallback_from == "linear.comments.update"
+    assert result.source_publication_receipt.workpad_refs == ["linear-comment://comment-created"]
+  end
+
   test "invoke_run_intent builds a governed lower envelope and receipt around dispatch" do
     invocation = authorized_invocation()
 
@@ -622,6 +777,17 @@ defmodule Mezzanine.IntegrationBridgeTest do
     AuthorizedInvocation.new!(authorized_invocation_attrs())
   end
 
+  defp authorized_invocation_allowing(allowed_operations) do
+    attrs =
+      authorized_invocation_attrs()
+      |> put_in([:invocation_request, :allowed_operations], allowed_operations)
+      |> put_in([:invocation_request, :execution_governance, :operations], %{
+        "allowed_operations" => allowed_operations
+      })
+
+    AuthorizedInvocation.new!(attrs)
+  end
+
   defp authorized_invocation_with_governance_posture do
     attrs =
       authorized_invocation_attrs()
@@ -713,6 +879,40 @@ defmodule Mezzanine.IntegrationBridgeTest do
       placement: %{},
       operations: %{"allowed_operations" => ["linear.issues.retrieve", "linear.issues.update"]},
       extensions: %{"citadel" => %{}}
+    }
+  end
+
+  defp source_binding do
+    %{
+      source_binding_id: "linear-primary",
+      installation_id: "inst-1",
+      provider: "linear",
+      connection_ref: "linear-primary",
+      candidate_filters: %{project_slug: "ops-automation", assignee: "me"},
+      state_mapping: %{
+        "submitted" => ["Todo", "Backlog"],
+        "retry_submission" => ["Todo"],
+        "completed" => ["Done", "Completed"],
+        "rejected" => ["Canceled", "Duplicate"]
+      }
+    }
+  end
+
+  defp linear_issue do
+    %{
+      id: "lin-issue-321",
+      identifier: "ENG-321",
+      title: "Investigate source publication",
+      description: "Keep workpad in sync",
+      priority: 2,
+      labels: ["Automation"],
+      branch_name: "eng-321-source-publication",
+      url: "https://linear.app/acme/issue/ENG-321",
+      created_at: "2026-03-12T09:15:00Z",
+      updated_at: "2026-03-12T10:00:00Z",
+      state: %{id: "state-todo", name: "Todo", type: "unstarted"},
+      assignee: %{id: "usr-linear-viewer", name: "Taylor Automation"},
+      blockers: []
     }
   end
 end

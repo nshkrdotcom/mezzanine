@@ -27,7 +27,7 @@ defmodule Mezzanine.SourceEngine.LinearIssue do
       when is_map(issue) and is_map(envelope) and is_map(binding) do
     with {:ok, scope} <- normalize_scope(envelope, binding),
          {:ok, normalized_issue} <- normalize_issue(issue),
-         {:ok, classification} <- classify(normalized_issue, binding) do
+         {:ok, classification} <- classify(normalized_issue, binding, scope) do
       attrs = build_subject_attrs(normalized_issue, scope, classification)
 
       {:ok, Map.drop(attrs, @ledger_forbidden_keys)}
@@ -53,6 +53,7 @@ defmodule Mezzanine.SourceEngine.LinearIssue do
          trace_id: string_value(envelope, :trace_id),
          causation_id: string_value(envelope, :causation_id),
          actor_ref: actor_ref(envelope, tenant_id),
+         viewer: map_value(envelope, :viewer),
          state_mapping: map_value(envelope, :state_mapping) || state_mapping(binding)
        }}
     end
@@ -108,12 +109,12 @@ defmodule Mezzanine.SourceEngine.LinearIssue do
     end
   end
 
-  defp classify(issue, binding) do
+  defp classify(issue, binding, scope) do
     payload =
       issue
       |> Map.take([:id, :identifier, :title, :priority, :labels, :blockers])
       |> Map.put(:state, %{name: issue.source_state, type: issue.source_state_type})
-      |> Map.put(:assigned_to_worker, true)
+      |> Map.put(:assigned_to_worker, assigned_to_worker?(issue, binding, scope))
 
     {classification, decision} =
       Admission.classify_candidate(payload, binding_with_defaults(binding))
@@ -142,9 +143,25 @@ defmodule Mezzanine.SourceEngine.LinearIssue do
       installation_id: string_value(binding, :installation_id) || "unknown-installation",
       provider: @provider,
       connection_ref: string_value(binding, :connection_ref) || "linear",
+      candidate_filters: map_value(binding, :candidate_filters) || %{},
       state_mapping: state_mapping
     }
   end
+
+  defp assigned_to_worker?(issue, binding, scope) do
+    filters = map_value(binding, :candidate_filters) || %{}
+
+    case string_value(filters, :assignee_id) || string_value(filters, :assignee) do
+      nil -> true
+      "me" -> assigned_to?(issue, string_value(scope.viewer || %{}, :id))
+      assignee_id -> assigned_to?(issue, assignee_id)
+    end
+  end
+
+  defp assigned_to?(_issue, nil), do: false
+
+  defp assigned_to?(issue, assignee_id),
+    do: string_value(issue.assignee || %{}, :id) == assignee_id
 
   defp build_subject_attrs(issue, scope, classification) do
     source_ref = source_ref(scope.installation_id, issue.identifier)

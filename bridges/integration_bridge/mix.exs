@@ -45,6 +45,7 @@ defmodule MezzanineIntegrationBridge.MixProject do
     [
       {:mezzanine_core, path: "../../core/mezzanine_core"},
       {:mezzanine_audit_engine, path: "../../core/audit_engine"},
+      {:mezzanine_source_engine, path: "../../core/source_engine"},
       {:jido_integration_v2, path: "../../../jido_integration/core/platform"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},

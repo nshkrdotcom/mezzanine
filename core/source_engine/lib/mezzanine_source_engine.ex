@@ -8,6 +8,7 @@ defmodule MezzanineSourceEngine do
     [
       Mezzanine.SourceEngine.Admission,
       Mezzanine.SourceEngine.LinearIssue,
+      Mezzanine.SourceEngine.LinearSourceFlow,
       Mezzanine.SourceEngine.SourceBinding,
       Mezzanine.SourceEngine.SourceCursor,
       Mezzanine.SourceEngine.SourceEvent,

@@ -24,6 +24,7 @@ defmodule Mezzanine.IntegrationBridge.DirectRunDispatcher do
       input =
         invocation
         |> AuthorizedInvocation.invoke_input(capability_id)
+        |> merge_dispatch_input(Keyword.get(opts, :input, %{}))
         |> Map.put(:governed_lower_envelope, GovernedLowerEnvelope.to_map(envelope))
 
       invoke_opts = Keyword.put(invoke_opts, :governed_lower_envelope, envelope)
@@ -65,4 +66,17 @@ defmodule Mezzanine.IntegrationBridge.DirectRunDispatcher do
   end
 
   defp attach_governed_receipt(other, _envelope), do: other
+
+  defp merge_dispatch_input(input, extra_input) when is_map(extra_input) do
+    Map.merge(input, extra_input)
+  end
+
+  defp merge_dispatch_input(input, extra_input) when is_list(extra_input) do
+    Map.merge(input, Map.new(extra_input))
+  end
+
+  defp merge_dispatch_input(_input, extra_input) do
+    raise ArgumentError,
+          "dispatch input must be a map or keyword list, got: #{inspect(extra_input)}"
+  end
 end

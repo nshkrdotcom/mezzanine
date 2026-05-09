@@ -238,7 +238,12 @@ defmodule Mezzanine.SourceEngine.Admission do
     |> Enum.join("/")
   end
 
-  defp value(attrs, key), do: Map.get(attrs, key) || Map.get(attrs, Atom.to_string(key))
+  defp value(attrs, key) do
+    case Map.fetch(attrs, key) do
+      {:ok, value} -> value
+      :error -> Map.get(attrs, Atom.to_string(key))
+    end
+  end
 
   defp blank?(value), do: value in [nil, ""]
 

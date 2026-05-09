@@ -55,6 +55,34 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
          authority_present?: true
        }}
     end
+
+    def publish_linear_source(
+          %{authorized_invocation_boundary: _boundary} = invocation,
+          request,
+          _opts
+        ) do
+      send(self(), {:fake_source_publication, invocation, request})
+
+      {:ok,
+       %{
+         source_publication_receipt: %{
+           source_publication_receipt_ref:
+             "source-publication://#{request.source_binding_id}/#{request.source_publish_ref}",
+           source_publish_ref: request.source_publish_ref,
+           source_binding_id: request.source_binding_id,
+           source_ref: request.source_ref,
+           status: "published",
+           capability_id: "linear.comments.update",
+           lower_runtime_kind: "direct_connector",
+           authority_ref: "authority-decision://mock-decision-123",
+           connector_manifest_ref: "manifest://jido/connectors/linear@local",
+           provider_response_ref: "artifact://linear/comment-update",
+           redaction_manifest_ref: "redaction://linear/workpad",
+           workpad_refs: ["linear-comment://comment-1"],
+           trace_id: request.trace_id
+         }
+       }}
+    end
   end
 
   defmodule FakeReceiptReducer do
@@ -296,6 +324,47 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     assert execution_intent["cwd"] == "/home/dev/extravaganza"
     assert execution_intent["provider_metadata"]["app_server"] == true
     assert execution_intent["dynamic_tool_manifest"] == %{"tools" => ["linear.comment.update"]}
+  end
+
+  test "source publication activity dispatches Linear write through the governed bridge when requested" do
+    attrs =
+      lifecycle_attrs()
+      |> put_in([:routing_facts, :capability], "linear.comments.update")
+      |> put_in([:routing_facts, :allowed_operations], [
+        "linear.comments.update",
+        "linear.comments.create"
+      ])
+      |> put_in([:routing_facts, :allowed_tools], [
+        "linear.api.comments.update",
+        "linear.api.comments.create"
+      ])
+
+    assert {:ok, authority} = ExecutionLifecycleWorkflow.compile_citadel_authority_activity(attrs)
+
+    publish_attrs =
+      attrs
+      |> Map.put(:citadel_authority, authority)
+      |> Map.put(:source_publish_ref, "linear_workpad_review")
+      |> Map.put(:source_publication_request, %{
+        source_binding_id: "linear-primary",
+        source_ref: "linear://installation-main/issue/ENG-321",
+        comment_id: "comment-1",
+        body: "Ready for review",
+        redaction_manifest_ref: "redaction://linear/workpad"
+      })
+
+    assert {:ok, publish} = ExecutionLifecycleWorkflow.publish_source_activity(publish_attrs)
+
+    assert publish.owner_repo == :jido_integration
+    assert publish.source_publication_receipt.status == "published"
+    assert publish.result_ref == "source-publication://linear-primary/linear_workpad_review"
+
+    assert_received {:fake_source_publication, invocation, request}
+    assert invocation.tenant_id == "tenant-acme"
+    assert request.source_publish_ref == "linear_workpad_review"
+    assert request.source_binding_id == "linear-primary"
+    assert request.comment_id == "comment-1"
+    assert request.body == "Ready for review"
   end
 
   test "Citadel activity fails closed on explicit rejection" do

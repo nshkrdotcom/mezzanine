@@ -353,17 +353,18 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
             "source-publish://#{attrs.workflow_id}/#{attrs.resource_ref}"
           )
 
-        {:ok,
-         %{
-           activity: :publish_source,
-           activity_call_ref: "activity://#{attrs.workflow_id}/publish-source",
-           owner_repo: :jido_integration,
-           source_publish_ref: source_publish_ref,
-           resource_ref: attrs.resource_ref,
-           trace_id: attrs.trace_id,
-           release_manifest_ref: attrs.release_manifest_ref,
-           result_ref: source_publish_ref
-         }}
+        base_result = %{
+          activity: :publish_source,
+          activity_call_ref: "activity://#{attrs.workflow_id}/publish-source",
+          owner_repo: :jido_integration,
+          source_publish_ref: source_publish_ref,
+          resource_ref: attrs.resource_ref,
+          trace_id: attrs.trace_id,
+          release_manifest_ref: attrs.release_manifest_ref,
+          result_ref: source_publish_ref
+        }
+
+        maybe_publish_source(base_result, attrs, source_publish_ref)
 
       missing ->
         {:error, {:missing_required_fields, missing}}
@@ -905,6 +906,62 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
       )
 
     bridge.invoke_run_intent(invocation, [])
+  end
+
+  defp maybe_publish_source(base_result, attrs, source_publish_ref) do
+    case source_publication_request(attrs, source_publish_ref) do
+      nil -> {:ok, base_result}
+      request -> dispatch_source_publication(base_result, attrs, request, source_publish_ref)
+    end
+  end
+
+  defp dispatch_source_publication(base_result, attrs, request, source_publish_ref) do
+    with {:ok, input} <- new_input(attrs),
+         {:ok, invocation} <-
+           authorized_lower_invocation(input, Map.get(attrs, :citadel_authority)),
+         {:ok, publication} <- invoke_source_publication(invocation, request, attrs) do
+      {:ok, source_publication_result(base_result, publication, source_publish_ref)}
+    end
+  end
+
+  defp source_publication_result(base_result, publication, source_publish_ref) do
+    base_result
+    |> Map.put(:source_publication_receipt, Map.get(publication, :source_publication_receipt))
+    |> Map.put(:source_publication_result, publication)
+    |> Map.put(:result_ref, source_publication_receipt_ref(publication) || source_publish_ref)
+  end
+
+  defp source_publication_receipt_ref(publication) do
+    get_in(publication, [:source_publication_receipt, :source_publication_receipt_ref])
+  end
+
+  defp invoke_source_publication(invocation, request, attrs) do
+    bridge =
+      GovernedRuntimeConfig.module(
+        attrs,
+        :mezzanine_workflow_runtime,
+        :integration_bridge,
+        Mezzanine.IntegrationBridge,
+        governed_default?: true
+      )
+
+    bridge.publish_linear_source(invocation, request, [])
+  end
+
+  defp source_publication_request(attrs, source_publish_ref) do
+    request = Map.get(attrs, :source_publication_request) || Map.get(attrs, :source_publication)
+
+    case request do
+      nil ->
+        nil
+
+      request when is_map(request) or is_list(request) ->
+        request
+        |> normalize()
+        |> Map.put_new(:source_publish_ref, source_publish_ref)
+        |> Map.put_new(:source_ref, Map.get(attrs, :resource_ref))
+        |> Map.put_new(:trace_id, Map.get(attrs, :trace_id))
+    end
   end
 
   defp maybe_put_runtime_module(request, attrs, key) do
