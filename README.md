@@ -150,6 +150,22 @@ mix deps.get
 mix ci
 ```
 
+## Public API And Guides
+
+The supported public Elixir API surfaces are listed in
+[docs/public_api.md](docs/public_api.md). Start with the guide index for the
+runtime flow, boundary rules, and local acceptance commands:
+
+- [Guides index](docs/guides/index.md)
+- [Runtime stack overview](docs/guides/runtime_stack_overview.md)
+- [Work control run lifecycle](docs/guides/work_control_run_lifecycle.md)
+- [Citadel authority compilation](docs/guides/citadel_authority_compilation.md)
+- [Governed lower dispatch](docs/guides/governed_lower_dispatch.md)
+- [Workflow runtime and execution lifecycle](docs/guides/workflow_runtime_and_execution_lifecycle.md)
+- [Receipts and projections](docs/guides/receipts_and_projections.md)
+- [AppKit and product boundary](docs/guides/appkit_and_product_boundary.md)
+- [Local acceptance with StackLab](docs/guides/local_acceptance_with_stacklab.md)
+
 ## Temporal developer environment
 
 Temporal runtime development is managed from this repository through the
