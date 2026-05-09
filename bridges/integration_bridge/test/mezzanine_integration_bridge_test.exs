@@ -2,6 +2,9 @@ defmodule Mezzanine.IntegrationBridgeTest do
   use ExUnit.Case, async: false
 
   alias Ecto.Adapters.SQL.Sandbox
+  alias Jido.Integration.V2.GovernedLowerDenial
+  alias Jido.Integration.V2.GovernedLowerEnvelope
+  alias Jido.Integration.V2.GovernedLowerReceipt
   alias Jido.Integration.V2.TenantScope
   alias Mezzanine.Audit.{ExecutionLineage, ExecutionLineageStore, Repo}
   alias Mezzanine.IntegrationBridge
@@ -109,12 +112,47 @@ defmodule Mezzanine.IntegrationBridgeTest do
                invoke_opts: [connection_id: "conn-1"]
              )
 
-    assert_received {:invoke, "linear.issues.retrieve", input, [connection_id: "conn-1"]}
+    assert_received {:invoke, "linear.issues.retrieve", input, opts}
+    assert Keyword.fetch!(opts, :connection_id) == "conn-1"
     assert input.invocation_request == invocation.invocation_request
     assert input.idempotency_key == "idem-1"
     assert input.submission_dedupe_key == "dedupe-1"
     assert input.authority.permission_decision_ref == "mock-decision-123"
     assert input.authority.policy_version == "mock-v1"
+  end
+
+  test "invoke_run_intent builds a governed lower envelope and receipt around dispatch" do
+    invocation = authorized_invocation()
+
+    invoke_fun = fn capability, input, opts ->
+      send(self(), {:invoke, capability, input, opts})
+      {:ok, %{capability: capability, input: input}}
+    end
+
+    assert {:ok,
+            %{
+              governed_lower_envelope: %GovernedLowerEnvelope{} = envelope,
+              governed_lower_receipt: %GovernedLowerReceipt{} = receipt
+            }} =
+             IntegrationBridge.invoke_run_intent(
+               invocation,
+               invoke_fun: invoke_fun,
+               capability_id: "linear.issues.retrieve",
+               lower_runtime_kind: :deterministic_fixture
+             )
+
+    assert envelope.capability_id == "linear.issues.retrieve"
+    assert envelope.lower_runtime_kind == :deterministic_fixture
+    assert envelope.authority_ref == "authority-decision://mock-decision-123"
+    assert envelope.authority_decision_hash == String.duplicate("a", 64)
+    assert envelope.allowed_operations == ["linear.issues.retrieve", "linear.issues.update"]
+    assert envelope.resource_scope_refs == ["workspace://work_object/subject-1"]
+    assert receipt.status == :succeeded
+    assert GovernedLowerReceipt.matches_envelope?(receipt, envelope)
+
+    assert_received {:invoke, "linear.issues.retrieve", input, opts}
+    assert input.governed_lower_envelope["lower_request_ref"] == envelope.lower_request_ref
+    assert Keyword.fetch!(opts, :governed_lower_envelope) == envelope
   end
 
   test "dispatch_effect dispatches only an authorized invocation envelope" do
@@ -128,6 +166,38 @@ defmodule Mezzanine.IntegrationBridgeTest do
              IntegrationBridge.dispatch_effect(invocation,
                invoke_fun: invoke_fun,
                capability_id: "linear.issues.update"
+             )
+  end
+
+  test "direct lower dispatch returns governed denials before side effects" do
+    never = fn _capability, _input, _opts -> flunk("provider invoke must not run") end
+
+    assert {:error,
+            %GovernedLowerDenial{
+              denial_class: :lower_runtime_unavailable,
+              lower_runtime_kind: :tre_rhai
+            }} =
+             IntegrationBridge.invoke_run_intent(authorized_invocation(),
+               invoke_fun: never,
+               lower_runtime_kind: :tre_rhai
+             )
+
+    assert {:error, %GovernedLowerDenial{denial_class: :resource_scope_unresolvable}} =
+             IntegrationBridge.invoke_run_intent(authorized_invocation(),
+               invoke_fun: never,
+               resource_scope_refs: ["unresolved://workspace/main"]
+             )
+
+    assert {:error, %GovernedLowerDenial{denial_class: :sandbox_downgrade}} =
+             IntegrationBridge.invoke_run_intent(authorized_invocation_with_governance_posture(),
+               invoke_fun: never,
+               sandbox_level: :none
+             )
+
+    assert {:error, %GovernedLowerDenial{denial_class: :attestation_unsatisfied}} =
+             IntegrationBridge.invoke_run_intent(authorized_invocation_with_governance_posture(),
+               invoke_fun: never,
+               acceptable_attestation: ["attestation://unexpected"]
              )
   end
 
@@ -185,6 +255,20 @@ defmodule Mezzanine.IntegrationBridgeTest do
 
     assert_error_contains("missing required field :contract_version", fn ->
       AuthorizedInvocation.new!(attrs)
+    end)
+  end
+
+  test "authorized invocation rejects tenant and trace mismatches before lower dispatch" do
+    assert_error_contains("tenant_id mismatch", fn ->
+      authorized_invocation_attrs()
+      |> put_in([:invocation_request, :tenant_id], "tenant-other")
+      |> AuthorizedInvocation.new!()
+    end)
+
+    assert_error_contains("trace_id mismatch", fn ->
+      authorized_invocation_attrs()
+      |> put_in([:invocation_request, :trace_id], "trace-other")
+      |> AuthorizedInvocation.new!()
     end)
   end
 
@@ -479,6 +563,22 @@ defmodule Mezzanine.IntegrationBridgeTest do
 
   defp authorized_invocation do
     AuthorizedInvocation.new!(authorized_invocation_attrs())
+  end
+
+  defp authorized_invocation_with_governance_posture do
+    attrs =
+      authorized_invocation_attrs()
+      |> put_in([:invocation_request, :execution_governance, :sandbox], %{
+        "level" => "strict",
+        "egress" => "restricted",
+        "approvals" => "manual",
+        "acceptable_attestation" => ["attestation://required"],
+        "allowed_tools" => ["linear.issues.update"],
+        "file_scope_ref" => "workspace://work_object/subject-1",
+        "file_scope_hint" => nil
+      })
+
+    AuthorizedInvocation.new!(attrs)
   end
 
   defp authorized_invocation_attrs do

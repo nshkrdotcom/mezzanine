@@ -7,6 +7,10 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
   generic map, `RunIntent`, or `EffectIntent`.
   """
 
+  alias Jido.Integration.V2.GovernedLowerDenial
+  alias Jido.Integration.V2.GovernedLowerEnvelope
+  alias Jido.Integration.V2.GovernedLowerReceipt
+
   @typedoc "Raw `Citadel.InvocationRequest.V2` struct or dumped map."
   @type invocation_request :: map() | struct()
 
@@ -36,6 +40,7 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
   defstruct @required_fields ++ @optional_fields
 
   @invocation_request_module :"Elixir.Citadel.InvocationRequest.V2"
+  @sandbox_rank %{strict: 0, standard: 1, none: 2}
   @dialyzer :no_match
 
   @spec new(map() | keyword() | t()) :: {:ok, t()} | {:error, Exception.t()}
@@ -135,6 +140,690 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
       }
     }
   end
+
+  @spec governed_lower_envelope(t(), String.t(), keyword()) ::
+          {:ok, GovernedLowerEnvelope.t()} | {:error, GovernedLowerDenial.t() | Exception.t()}
+  def governed_lower_envelope(%__MODULE__{} = invocation, capability_id, opts \\ [])
+      when is_binary(capability_id) and is_list(opts) do
+    :ok = authorize_capability!(invocation, capability_id)
+
+    request = normalized_request!(invocation.invocation_request)
+    authority_packet = required!(request, :authority_packet)
+    execution_governance = required!(request, :execution_governance)
+    execution_envelope = execution_envelope(request)
+
+    attrs =
+      lower_envelope_attrs(
+        invocation,
+        capability_id,
+        request,
+        authority_packet,
+        execution_governance,
+        execution_envelope,
+        opts
+      )
+
+    with :ok <- validate_resource_scope_refs(attrs),
+         :ok <- validate_sandbox_posture(attrs, execution_governance, opts),
+         :ok <- validate_attestation_posture(attrs, execution_governance, opts) do
+      GovernedLowerEnvelope.new(attrs)
+    else
+      {:error, %GovernedLowerDenial{} = denial} ->
+        {:error, denial}
+    end
+  rescue
+    error in [ArgumentError, KeyError] -> {:error, error}
+  end
+
+  @spec governed_lower_envelope!(t(), String.t(), keyword()) :: GovernedLowerEnvelope.t()
+  def governed_lower_envelope!(%__MODULE__{} = invocation, capability_id, opts \\ []) do
+    case governed_lower_envelope(invocation, capability_id, opts) do
+      {:ok, %GovernedLowerEnvelope{} = envelope} ->
+        envelope
+
+      {:error, %GovernedLowerDenial{} = denial} ->
+        raise ArgumentError, GovernedLowerDenial.to_map(denial) |> inspect()
+
+      {:error, %ArgumentError{} = error} ->
+        raise error
+    end
+  end
+
+  @spec governed_lower_receipt(GovernedLowerEnvelope.t(), :succeeded | :failed, map()) ::
+          {:ok, GovernedLowerReceipt.t()} | {:error, Exception.t()}
+  def governed_lower_receipt(%GovernedLowerEnvelope{} = envelope, status, dispatch_result)
+      when status in [:succeeded, :failed] and is_map(dispatch_result) do
+    GovernedLowerReceipt.new(%{
+      lower_receipt_ref:
+        "lower-receipt://#{URI.encode_www_form(envelope.lower_request_ref)}/#{status}",
+      lower_request_ref: envelope.lower_request_ref,
+      lower_runtime_kind: envelope.lower_runtime_kind,
+      status: status,
+      tenant_ref: envelope.tenant_ref,
+      subject_ref: envelope.subject_ref,
+      run_ref: envelope.run_ref,
+      workflow_ref: envelope.workflow_ref,
+      attempt_ref: envelope.attempt_ref,
+      trace_id: envelope.trace_id,
+      idempotency_key: envelope.idempotency_key,
+      authority_ref: envelope.authority_ref,
+      authority_decision_hash: envelope.authority_decision_hash,
+      capability_id: envelope.capability_id,
+      action_id: envelope.action_id,
+      connector_ref: envelope.connector_ref,
+      connector_manifest_ref: envelope.connector_manifest_ref,
+      connector_manifest_hash: envelope.connector_manifest_hash,
+      capability_negotiation_ref: envelope.capability_negotiation_ref,
+      policy_bundle_hash: envelope.policy_bundle_hash,
+      cedar_schema_hash: envelope.cedar_schema_hash,
+      script_hash: envelope.script_hash,
+      workspace_ref: envelope.workspace_ref,
+      target_ref: envelope.target_ref,
+      artifact_refs: artifact_refs(dispatch_result),
+      event_refs: event_refs(dispatch_result),
+      observed_at: DateTime.utc_now() |> DateTime.to_iso8601(),
+      extensions: %{
+        "mezzanine" => %{
+          "dispatch_status" => Atom.to_string(status),
+          "jido_run_ref" => lower_run_ref(dispatch_result),
+          "jido_attempt_ref" => lower_attempt_ref(dispatch_result)
+        }
+      }
+    })
+  end
+
+  @spec governed_lower_receipt!(GovernedLowerEnvelope.t(), :succeeded | :failed, map()) ::
+          GovernedLowerReceipt.t()
+  def governed_lower_receipt!(%GovernedLowerEnvelope{} = envelope, status, dispatch_result) do
+    case governed_lower_receipt(envelope, status, dispatch_result) do
+      {:ok, %GovernedLowerReceipt{} = receipt} -> receipt
+      {:error, %ArgumentError{} = error} -> raise error
+    end
+  end
+
+  @spec governed_lower_denial(GovernedLowerEnvelope.t(), atom(), String.t()) ::
+          GovernedLowerDenial.t()
+  def governed_lower_denial(%GovernedLowerEnvelope{} = envelope, denial_class, reason)
+      when is_atom(denial_class) and is_binary(reason) do
+    GovernedLowerDenial.new!(%{
+      lower_denial_ref:
+        "lower-denial://#{URI.encode_www_form(envelope.lower_request_ref)}/#{denial_class}",
+      lower_request_ref: envelope.lower_request_ref,
+      lower_runtime_kind: envelope.lower_runtime_kind,
+      denial_class: denial_class,
+      reason: reason,
+      tenant_ref: envelope.tenant_ref,
+      subject_ref: envelope.subject_ref,
+      run_ref: envelope.run_ref,
+      workflow_ref: envelope.workflow_ref,
+      attempt_ref: envelope.attempt_ref,
+      trace_id: envelope.trace_id,
+      authority_ref: envelope.authority_ref,
+      authority_decision_hash: envelope.authority_decision_hash,
+      capability_id: envelope.capability_id,
+      action_id: envelope.action_id,
+      connector_manifest_ref: envelope.connector_manifest_ref,
+      connector_manifest_hash: envelope.connector_manifest_hash,
+      capability_negotiation_ref: envelope.capability_negotiation_ref,
+      policy_bundle_ref: envelope.policy_bundle_ref,
+      cedar_schema_ref: envelope.cedar_schema_ref,
+      script_ref: envelope.script_ref,
+      resource_scope_refs: envelope.resource_scope_refs,
+      sandbox_profile_ref: envelope.sandbox_profile_ref,
+      extensions: %{"mezzanine" => %{"stage" => "authorized_invocation"}}
+    })
+  end
+
+  defp lower_envelope_attrs(
+         %__MODULE__{} = invocation,
+         capability_id,
+         request,
+         authority_packet,
+         execution_governance,
+         execution_envelope,
+         opts
+       ) do
+    context =
+      lower_envelope_context(
+        invocation,
+        capability_id,
+        request,
+        authority_packet,
+        execution_governance,
+        execution_envelope,
+        opts
+      )
+
+    %{
+      lower_request_ref: context.lower_request_ref,
+      lower_runtime_kind: context.lower_runtime_kind,
+      capability_id: capability_id,
+      action_id: Keyword.get(opts, :action_id, capability_id),
+      tenant_ref: invocation.tenant_id,
+      subject_ref: invocation.subject_id,
+      trace_id: invocation.trace_id,
+      idempotency_key: invocation.idempotency_key
+    }
+    |> Map.merge(runtime_profile_attrs(context))
+    |> Map.merge(authority_attrs(context))
+    |> Map.merge(connector_attrs(context))
+    |> Map.merge(policy_script_attrs(context))
+    |> Map.merge(scope_attrs(context))
+    |> Map.merge(sandbox_attrs(context))
+    |> Map.merge(evidence_attrs(context))
+    |> Map.merge(extension_attrs(context))
+  end
+
+  defp lower_envelope_context(
+         invocation,
+         capability_id,
+         request,
+         authority_packet,
+         execution_governance,
+         execution_envelope,
+         opts
+       ) do
+    governance_sandbox = optional(execution_governance, :sandbox) || %{}
+
+    context = %{
+      invocation: invocation,
+      capability_id: capability_id,
+      request: request,
+      authority_packet: authority_packet,
+      execution_governance: execution_governance,
+      execution_envelope: execution_envelope,
+      opts: opts,
+      governance_sandbox: governance_sandbox,
+      governance_workspace: optional(execution_governance, :workspace) || %{},
+      governance_placement: optional(execution_governance, :placement) || %{},
+      governance_operations: optional(execution_governance, :operations) || %{},
+      governance_authority_ref: optional(execution_governance, :authority_ref) || %{},
+      request_extensions: optional(request, :extensions) || %{}
+    }
+
+    Map.merge(context, lower_envelope_defaults(context))
+  end
+
+  defp lower_envelope_defaults(context) do
+    opts = context.opts
+    invocation = context.invocation
+    capability_id = context.capability_id
+    execution_governance = context.execution_governance
+    governance_sandbox = context.governance_sandbox
+
+    %{
+      lower_runtime_kind:
+        Keyword.get(opts, :lower_runtime_kind, infer_lower_runtime_kind(capability_id)),
+      connector_ref: Keyword.get(opts, :connector_ref, infer_connector_ref(capability_id)),
+      lower_request_ref:
+        Keyword.get(opts, :lower_request_ref, lower_request_ref(invocation, capability_id)),
+      resource_scope_refs:
+        Keyword.get(
+          opts,
+          :resource_scope_refs,
+          resource_scope_refs(invocation, execution_governance)
+        ),
+      sandbox_level: Keyword.get(opts, :sandbox_level, sandbox_level(governance_sandbox)),
+      acceptable_attestation:
+        Keyword.get(
+          opts,
+          :acceptable_attestation,
+          list_value(governance_sandbox, "acceptable_attestation", [])
+        )
+    }
+  end
+
+  defp runtime_profile_attrs(context) do
+    opts = context.opts
+    execution_envelope = context.execution_envelope
+    invocation = context.invocation
+
+    %{
+      runtime_profile_ref:
+        Keyword.get(
+          opts,
+          :runtime_profile_ref,
+          default_runtime_profile_ref(execution_envelope, invocation)
+        ),
+      runtime_profile_kind:
+        Keyword.get(opts, :runtime_profile_kind, default_runtime_profile_kind(execution_envelope)),
+      run_ref: Keyword.get(opts, :run_ref, invocation.execution_id),
+      workflow_ref:
+        Keyword.get(opts, :workflow_ref, string_value(execution_envelope, "workflow_id")),
+      attempt_ref:
+        Keyword.get(opts, :attempt_ref, string_value(execution_envelope, "attempt_ref"))
+    }
+  end
+
+  defp default_runtime_profile_ref(execution_envelope, invocation) do
+    string_value(execution_envelope, "runtime_profile_ref") ||
+      "runtime-profile://local/#{invocation.installation_id}"
+  end
+
+  defp default_runtime_profile_kind(execution_envelope) do
+    string_value(execution_envelope, "runtime_profile_kind") || :temporal_local
+  end
+
+  defp authority_attrs(context) do
+    %{
+      authority_ref: authority_packet_ref(context.authority_packet),
+      authority_decision_hash: authority_decision_hash(context),
+      allowed_operations:
+        string_list_value(
+          context.governance_operations,
+          "allowed_operations",
+          required!(context.request, :allowed_operations)
+        )
+    }
+  end
+
+  defp authority_decision_hash(context) do
+    string_value(context.authority_packet, :decision_hash) ||
+      string_value(context.governance_authority_ref, "decision_hash") ||
+      authority_packet_ref(context.authority_packet)
+  end
+
+  defp connector_attrs(context) do
+    opts = context.opts
+    capability_id = context.capability_id
+    connector_ref = context.connector_ref
+
+    %{
+      connector_ref: connector_ref,
+      connector_manifest_ref:
+        Keyword.get(opts, :connector_manifest_ref, "manifest://#{connector_ref}@local"),
+      connector_manifest_hash:
+        Keyword.get(
+          opts,
+          :connector_manifest_hash,
+          "sha256:" <> sha256("#{connector_ref}:#{capability_id}")
+        ),
+      connector_manifest_state: Keyword.get(opts, :connector_manifest_state, :active),
+      capability_negotiation_ref:
+        Keyword.get(opts, :capability_negotiation_ref, "cap-neg://#{context.lower_request_ref}"),
+      side_effect_class:
+        Keyword.get(opts, :side_effect_class, infer_side_effect_class(capability_id)),
+      idempotency_class:
+        Keyword.get(opts, :idempotency_class, infer_idempotency_class(capability_id)),
+      runtime_class:
+        Keyword.get(opts, :runtime_class, infer_runtime_class(context.lower_runtime_kind))
+    }
+  end
+
+  defp policy_script_attrs(context) do
+    opts = context.opts
+
+    %{
+      policy_profile_ref:
+        Keyword.get(
+          opts,
+          :policy_profile_ref,
+          policy_profile_ref(context.authority_packet, context.request_extensions)
+        ),
+      policy_bundle_ref: Keyword.get(opts, :policy_bundle_ref),
+      policy_bundle_hash: Keyword.get(opts, :policy_bundle_hash),
+      cedar_schema_ref: Keyword.get(opts, :cedar_schema_ref),
+      cedar_schema_hash: Keyword.get(opts, :cedar_schema_hash),
+      script_ref: Keyword.get(opts, :script_ref),
+      script_hash: Keyword.get(opts, :script_hash),
+      script_api_version: Keyword.get(opts, :script_api_version),
+      declared_actions: Keyword.get(opts, :declared_actions, [])
+    }
+  end
+
+  defp scope_attrs(context) do
+    opts = context.opts
+
+    %{
+      resource_scope_refs: context.resource_scope_refs,
+      workspace_ref: Keyword.get(opts, :workspace_ref, default_workspace_ref(context)),
+      target_ref: Keyword.get(opts, :target_ref, required_string!(context.request, :target_id)),
+      placement_ref: Keyword.get(opts, :placement_ref, default_placement_ref(context))
+    }
+  end
+
+  defp default_workspace_ref(context) do
+    string_value(context.governance_workspace, "logical_workspace_ref") ||
+      List.first(context.resource_scope_refs)
+  end
+
+  defp default_placement_ref(context) do
+    string_value(context.governance_placement, "node_affinity") ||
+      required_string!(context.request, :target_id)
+  end
+
+  defp sandbox_attrs(context) do
+    opts = context.opts
+    execution_governance = context.execution_governance
+    governance_sandbox = context.governance_sandbox
+
+    %{
+      sandbox_profile_ref:
+        Keyword.get(
+          opts,
+          :sandbox_profile_ref,
+          "sandbox://#{required_string!(execution_governance, :execution_governance_id)}"
+        ),
+      sandbox_level: context.sandbox_level,
+      network_policy_ref:
+        Keyword.get(opts, :network_policy_ref, network_policy_ref(governance_sandbox)),
+      filesystem_policy_ref:
+        Keyword.get(opts, :filesystem_policy_ref, filesystem_policy_ref(governance_sandbox)),
+      acceptable_attestation: context.acceptable_attestation
+    }
+  end
+
+  defp evidence_attrs(context) do
+    opts = context.opts
+    invocation = context.invocation
+    request = context.request
+
+    %{
+      evidence_profile_ref:
+        Keyword.get(opts, :evidence_profile_ref, "evidence://#{invocation.execution_id}/minimal"),
+      redaction_profile_ref:
+        Keyword.get(
+          opts,
+          :redaction_profile_ref,
+          "redaction://#{invocation.execution_id}/default"
+        ),
+      input_ref: Keyword.get(opts, :input_ref, "input://#{invocation.execution_id}"),
+      input_hash:
+        Keyword.get(
+          opts,
+          :input_hash,
+          "sha256:" <> sha256(inspect(optional(request, :extensions)))
+        )
+    }
+  end
+
+  defp extension_attrs(context) do
+    invocation = context.invocation
+    request = context.request
+    execution_governance = context.execution_governance
+
+    %{
+      extensions: %{
+        "mezzanine" => %{
+          "execution_id" => invocation.execution_id,
+          "installation_id" => invocation.installation_id,
+          "submission_dedupe_key" => invocation.submission_dedupe_key
+        },
+        "citadel" => %{
+          "invocation_request_id" => required_string!(request, :invocation_request_id),
+          "execution_governance_id" =>
+            required_string!(execution_governance, :execution_governance_id)
+        }
+      }
+    }
+  end
+
+  defp validate_resource_scope_refs(attrs) do
+    if Enum.any?(attrs.resource_scope_refs, &String.starts_with?(&1, "unresolved://")) do
+      {:error,
+       lower_denial_from_attrs(
+         attrs,
+         :resource_scope_unresolvable,
+         "resource scope refs must resolve before lower dispatch"
+       )}
+    else
+      :ok
+    end
+  end
+
+  defp validate_sandbox_posture(attrs, execution_governance, opts) do
+    requested = posture_sandbox_level(Keyword.get(opts, :sandbox_level))
+
+    required =
+      execution_governance |> optional(:sandbox) |> sandbox_level() |> posture_sandbox_level()
+
+    cond do
+      is_nil(requested) or is_nil(required) ->
+        :ok
+
+      Map.fetch!(@sandbox_rank, requested) <= Map.fetch!(@sandbox_rank, required) ->
+        :ok
+
+      true ->
+        {:error,
+         lower_denial_from_attrs(
+           attrs,
+           :sandbox_downgrade,
+           "requested sandbox level is weaker than Citadel execution governance"
+         )}
+    end
+  end
+
+  defp validate_attestation_posture(attrs, execution_governance, opts) do
+    requested = Keyword.get(opts, :acceptable_attestation)
+
+    if is_nil(requested) do
+      :ok
+    else
+      required =
+        execution_governance
+        |> optional(:sandbox)
+        |> list_value("acceptable_attestation", [])
+
+      requested = normalize_string_list(requested)
+
+      if required == [] or Enum.any?(requested, &(&1 in required)) do
+        :ok
+      else
+        {:error,
+         lower_denial_from_attrs(
+           attrs,
+           :attestation_unsatisfied,
+           "requested attestation does not satisfy Citadel execution governance"
+         )}
+      end
+    end
+  end
+
+  defp lower_denial_from_attrs(attrs, denial_class, reason) do
+    GovernedLowerDenial.new!(%{
+      lower_denial_ref:
+        "lower-denial://#{URI.encode_www_form(attrs.lower_request_ref)}/#{denial_class}",
+      lower_request_ref: attrs.lower_request_ref,
+      lower_runtime_kind: attrs.lower_runtime_kind,
+      denial_class: denial_class,
+      reason: reason,
+      tenant_ref: attrs.tenant_ref,
+      subject_ref: attrs.subject_ref,
+      run_ref: attrs.run_ref,
+      workflow_ref: attrs.workflow_ref,
+      attempt_ref: attrs.attempt_ref,
+      trace_id: attrs.trace_id,
+      authority_ref: attrs.authority_ref,
+      authority_decision_hash: attrs.authority_decision_hash,
+      capability_id: attrs.capability_id,
+      action_id: attrs.action_id,
+      connector_manifest_ref: attrs.connector_manifest_ref,
+      connector_manifest_hash: attrs.connector_manifest_hash,
+      capability_negotiation_ref: attrs.capability_negotiation_ref,
+      policy_bundle_ref: attrs.policy_bundle_ref,
+      cedar_schema_ref: attrs.cedar_schema_ref,
+      script_ref: attrs.script_ref,
+      resource_scope_refs: attrs.resource_scope_refs,
+      sandbox_profile_ref: attrs.sandbox_profile_ref,
+      extensions: %{"mezzanine" => %{"stage" => "authorized_invocation"}}
+    })
+  end
+
+  defp lower_request_ref(%__MODULE__{} = invocation, capability_id) do
+    "lower-request://#{invocation.execution_id}/#{URI.encode_www_form(capability_id)}"
+  end
+
+  defp infer_lower_runtime_kind("codex.session." <> _rest), do: :codex_session
+  defp infer_lower_runtime_kind(_capability_id), do: :direct_connector
+
+  defp infer_connector_ref("codex.session." <> _rest), do: "jido/connectors/codex_cli"
+  defp infer_connector_ref("linear." <> _rest), do: "jido/connectors/linear"
+  defp infer_connector_ref("github." <> _rest), do: "jido/connectors/github"
+  defp infer_connector_ref(_capability_id), do: "jido/connectors/deterministic_fixture"
+
+  defp infer_runtime_class(:codex_session), do: :session
+  defp infer_runtime_class(:deterministic_fixture), do: :fixture
+  defp infer_runtime_class(_lower_runtime_kind), do: :direct
+
+  defp infer_side_effect_class(capability_id) do
+    capability_id
+    |> String.split(".")
+    |> List.last()
+    |> case do
+      action when action in ["list", "retrieve", "fetch", "status", "get_self", "get_combined"] ->
+        :read
+
+      action when action in ["create", "update", "delete", "upsert", "label", "close"] ->
+        :write
+
+      _action ->
+        :execute
+    end
+  end
+
+  defp infer_idempotency_class(capability_id) do
+    case infer_side_effect_class(capability_id) do
+      :read -> :idempotent
+      _other -> :non_idempotent
+    end
+  end
+
+  defp resource_scope_refs(%__MODULE__{} = invocation, execution_governance) do
+    governance_sandbox = optional(execution_governance, :sandbox) || %{}
+    governance_workspace = optional(execution_governance, :workspace) || %{}
+
+    [
+      string_value(governance_workspace, "logical_workspace_ref"),
+      string_value(governance_sandbox, "file_scope_ref"),
+      "workspace://work_object/#{invocation.subject_id}"
+    ]
+    |> Enum.filter(&(is_binary(&1) and &1 != ""))
+    |> Enum.uniq()
+  end
+
+  defp sandbox_level(%{} = sandbox) do
+    sandbox
+    |> string_value("level")
+    |> normalize_atomish()
+  end
+
+  defp sandbox_level(_sandbox), do: nil
+
+  defp posture_sandbox_level(level) when level in [:strict, :standard, :none], do: level
+
+  defp posture_sandbox_level(level) when is_binary(level) do
+    case level do
+      "strict" -> :strict
+      "standard" -> :standard
+      "none" -> :none
+      _other -> nil
+    end
+  end
+
+  defp posture_sandbox_level(_level), do: nil
+
+  defp network_policy_ref(sandbox) do
+    case string_value(sandbox || %{}, "egress") do
+      nil -> nil
+      egress -> "network-policy://#{egress}"
+    end
+  end
+
+  defp filesystem_policy_ref(sandbox) do
+    case string_value(sandbox || %{}, "file_scope_ref") do
+      nil -> nil
+      file_scope_ref -> "filesystem-policy://#{URI.encode_www_form(file_scope_ref)}"
+    end
+  end
+
+  defp policy_profile_ref(authority_packet, request_extensions) do
+    citadel_extensions = citadel_extension(optional(authority_packet, :extensions))
+
+    string_value(citadel_extensions, "policy_pack_id") ||
+      get_in(request_extensions, ["citadel", "policy_pack_id"])
+  end
+
+  defp artifact_refs(dispatch_result) do
+    dispatch_result
+    |> Map.get(:artifact_refs, Map.get(dispatch_result, "artifact_refs", []))
+    |> normalize_string_list()
+  end
+
+  defp event_refs(dispatch_result) do
+    dispatch_result
+    |> Map.get(:event_refs, Map.get(dispatch_result, "event_refs", []))
+    |> List.wrap()
+  end
+
+  defp lower_run_ref(dispatch_result) do
+    case Map.get(dispatch_result, :run) || Map.get(dispatch_result, "run") do
+      %{run_id: run_id} when is_binary(run_id) -> run_id
+      %{"run_id" => run_id} when is_binary(run_id) -> run_id
+      _other -> nil
+    end
+  end
+
+  defp lower_attempt_ref(dispatch_result) do
+    case Map.get(dispatch_result, :attempt) || Map.get(dispatch_result, "attempt") do
+      %{attempt_id: attempt_id} when is_binary(attempt_id) -> attempt_id
+      %{"attempt_id" => attempt_id} when is_binary(attempt_id) -> attempt_id
+      _other -> nil
+    end
+  end
+
+  defp list_value(%{} = map, key, default) do
+    map
+    |> optional(key)
+    |> case do
+      nil -> default
+      value -> normalize_string_list(value)
+    end
+  end
+
+  defp list_value(_map, _key, default), do: default
+
+  defp string_list_value(%{} = map, key, default) do
+    map
+    |> optional(key)
+    |> case do
+      nil -> default
+      value -> normalize_string_list(value)
+    end
+  end
+
+  defp string_list_value(_map, _key, default), do: default
+
+  defp normalize_string_list(values) when is_list(values) do
+    values
+    |> Enum.filter(&(is_binary(&1) and &1 != ""))
+    |> Enum.uniq()
+  end
+
+  defp normalize_string_list(_values), do: []
+
+  defp string_value(map, key) when is_map(map) do
+    case optional(map, key) do
+      value when is_binary(value) and value != "" -> value
+      _other -> nil
+    end
+  end
+
+  defp string_value(_map, _key), do: nil
+
+  defp normalize_atomish(nil), do: nil
+  defp normalize_atomish(value) when is_atom(value), do: value
+
+  defp normalize_atomish(value) when is_binary(value) do
+    value
+    |> String.trim()
+    |> case do
+      "" -> nil
+      trimmed -> String.to_atom(trimmed)
+    end
+  end
+
+  defp sha256(value), do: :crypto.hash(:sha256, value) |> Base.encode16(case: :lower)
 
   defp validate!(%__MODULE__{} = invocation) do
     request = normalized_request!(invocation.invocation_request)

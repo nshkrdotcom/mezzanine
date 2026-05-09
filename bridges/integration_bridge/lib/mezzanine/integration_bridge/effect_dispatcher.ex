@@ -5,23 +5,15 @@ defmodule Mezzanine.IntegrationBridge.EffectDispatcher do
   """
 
   alias Mezzanine.IntegrationBridge.AuthorizedInvocation
+  alias Mezzanine.IntegrationBridge.DirectRunDispatcher
 
   @invoke_fun &Jido.Integration.V2.invoke/3
 
   @spec dispatch_effect(AuthorizedInvocation.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def dispatch_effect(%AuthorizedInvocation{} = invocation, opts \\ []) when is_list(opts) do
-    invoke_fun = Keyword.get(opts, :invoke_fun, @invoke_fun)
-    invoke_opts = Keyword.get(opts, :invoke_opts, [])
-
-    capability_id =
-      Keyword.get(opts, :capability_id, AuthorizedInvocation.default_capability!(invocation))
-
-    :ok = AuthorizedInvocation.authorize_capability!(invocation, capability_id)
-
-    invoke_fun.(
-      capability_id,
-      AuthorizedInvocation.invoke_input(invocation, capability_id),
-      invoke_opts
+    DirectRunDispatcher.invoke_run_intent(
+      invocation,
+      Keyword.put_new(opts, :invoke_fun, @invoke_fun)
     )
   end
 end

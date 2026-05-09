@@ -3,6 +3,7 @@ defmodule Mezzanine.IntegrationBridge.DirectRunDispatcher do
   Direct public-platform dispatch for narrow run-intent cases.
   """
 
+  alias Jido.Integration.V2.GovernedLowerEnvelope
   alias Mezzanine.IntegrationBridge.AuthorizedInvocation
 
   @invoke_fun &Jido.Integration.V2.invoke/3
@@ -17,10 +18,51 @@ defmodule Mezzanine.IntegrationBridge.DirectRunDispatcher do
 
     :ok = AuthorizedInvocation.authorize_capability!(invocation, capability_id)
 
-    invoke_fun.(
-      capability_id,
-      AuthorizedInvocation.invoke_input(invocation, capability_id),
-      invoke_opts
-    )
+    with {:ok, envelope} <-
+           AuthorizedInvocation.governed_lower_envelope(invocation, capability_id, opts),
+         :ok <- require_dispatchable(envelope) do
+      input =
+        invocation
+        |> AuthorizedInvocation.invoke_input(capability_id)
+        |> Map.put(:governed_lower_envelope, GovernedLowerEnvelope.to_map(envelope))
+
+      invoke_opts = Keyword.put(invoke_opts, :governed_lower_envelope, envelope)
+
+      invoke_fun.(capability_id, input, invoke_opts)
+      |> attach_governed_receipt(envelope)
+    end
   end
+
+  defp require_dispatchable(envelope) do
+    if GovernedLowerEnvelope.dispatchable?(envelope) do
+      :ok
+    else
+      {:error,
+       AuthorizedInvocation.governed_lower_denial(
+         envelope,
+         :lower_runtime_unavailable,
+         "lower runtime kind #{inspect(envelope.lower_runtime_kind)} is reserved or unavailable"
+       )}
+    end
+  end
+
+  defp attach_governed_receipt({:ok, result}, envelope) when is_map(result) do
+    receipt = AuthorizedInvocation.governed_lower_receipt!(envelope, :succeeded, result)
+
+    {:ok,
+     result
+     |> Map.put(:governed_lower_envelope, envelope)
+     |> Map.put(:governed_lower_receipt, receipt)}
+  end
+
+  defp attach_governed_receipt({:error, result}, envelope) when is_map(result) do
+    receipt = AuthorizedInvocation.governed_lower_receipt!(envelope, :failed, result)
+
+    {:error,
+     result
+     |> Map.put(:governed_lower_envelope, envelope)
+     |> Map.put(:governed_lower_receipt, receipt)}
+  end
+
+  defp attach_governed_receipt(other, _envelope), do: other
 end
