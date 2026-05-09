@@ -437,6 +437,44 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert Keyword.fetch!(opts, :governed_lower_envelope) == envelope
   end
 
+  test "governed lower envelope inherits Citadel TRE policy refs" do
+    tre_policy = tre_policy()
+
+    attrs =
+      authorized_invocation_attrs()
+      |> put_in(
+        [:invocation_request, :authority_packet, :extensions, "citadel", "tre_policy"],
+        tre_policy
+      )
+      |> put_in(
+        [:invocation_request, :execution_governance, :extensions, "citadel", "tre_policy"],
+        tre_policy
+      )
+      |> put_in([:invocation_request, :extensions, "citadel", "tre_policy"], tre_policy)
+
+    invocation = AuthorizedInvocation.new!(attrs)
+
+    assert {:ok, %GovernedLowerEnvelope{} = envelope} =
+             AuthorizedInvocation.governed_lower_envelope(
+               invocation,
+               "linear.issues.retrieve",
+               lower_runtime_kind: :tre_rhai
+             )
+
+    assert envelope.policy_profile_ref == "tre-policy-profile://coding-ops/standard"
+    assert envelope.policy_bundle_ref == "tre-policy-bundle://coding-ops/coding-ops-2026-04-25/1"
+
+    assert envelope.policy_bundle_hash ==
+             "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+
+    assert envelope.cedar_schema_ref == "cedar-schema://nshkr_tre/coding_ops/v1"
+
+    assert envelope.cedar_schema_hash ==
+             "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+
+    assert envelope.declared_actions == ["tre.run", "process.spawn"]
+  end
+
   test "dispatch_effect dispatches only an authorized invocation envelope" do
     invocation = authorized_invocation()
 
@@ -1088,6 +1126,21 @@ defmodule Mezzanine.IntegrationBridgeTest do
       placement: %{},
       operations: %{"allowed_operations" => ["linear.issues.retrieve", "linear.issues.update"]},
       extensions: %{"citadel" => %{}}
+    }
+  end
+
+  defp tre_policy do
+    %{
+      "selection_mode" => "prebuilt_bundle_ref",
+      "policy_profile_ref" => "tre-policy-profile://coding-ops/standard",
+      "policy_bundle_ref" => "tre-policy-bundle://coding-ops/coding-ops-2026-04-25/1",
+      "policy_bundle_hash" =>
+        "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "cedar_schema_ref" => "cedar-schema://nshkr_tre/coding_ops/v1",
+      "cedar_schema_hash" =>
+        "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "allowed_actions" => ["tre.run", "process.spawn"],
+      "denied_actions" => []
     }
   end
 

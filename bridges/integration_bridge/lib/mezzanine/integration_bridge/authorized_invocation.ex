@@ -493,7 +493,9 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
       governance_placement: optional(execution_governance, :placement) || %{},
       governance_operations: optional(execution_governance, :operations) || %{},
       governance_authority_ref: optional(execution_governance, :authority_ref) || %{},
-      request_extensions: optional(request, :extensions) || %{}
+      request_extensions: optional(request, :extensions) || %{},
+      tre_policy:
+        tre_policy(authority_packet, execution_governance, optional(request, :extensions) || %{})
     }
 
     Map.merge(context, lower_envelope_defaults(context))
@@ -607,22 +609,29 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
 
   defp policy_script_attrs(context) do
     opts = context.opts
+    tre_policy = context.tre_policy
 
     %{
       policy_profile_ref:
         Keyword.get(
           opts,
           :policy_profile_ref,
-          policy_profile_ref(context.authority_packet, context.request_extensions)
+          string_value(tre_policy, "policy_profile_ref") ||
+            policy_profile_ref(context.authority_packet, context.request_extensions)
         ),
-      policy_bundle_ref: Keyword.get(opts, :policy_bundle_ref),
-      policy_bundle_hash: Keyword.get(opts, :policy_bundle_hash),
-      cedar_schema_ref: Keyword.get(opts, :cedar_schema_ref),
-      cedar_schema_hash: Keyword.get(opts, :cedar_schema_hash),
+      policy_bundle_ref:
+        Keyword.get(opts, :policy_bundle_ref, string_value(tre_policy, "policy_bundle_ref")),
+      policy_bundle_hash:
+        Keyword.get(opts, :policy_bundle_hash, string_value(tre_policy, "policy_bundle_hash")),
+      cedar_schema_ref:
+        Keyword.get(opts, :cedar_schema_ref, string_value(tre_policy, "cedar_schema_ref")),
+      cedar_schema_hash:
+        Keyword.get(opts, :cedar_schema_hash, string_value(tre_policy, "cedar_schema_hash")),
       script_ref: Keyword.get(opts, :script_ref),
       script_hash: Keyword.get(opts, :script_hash),
       script_api_version: Keyword.get(opts, :script_api_version),
-      declared_actions: Keyword.get(opts, :declared_actions, []),
+      declared_actions:
+        Keyword.get(opts, :declared_actions, list_value(tre_policy, "allowed_actions", [])),
       package_refs: Keyword.get(opts, :package_refs, [])
     }
   end
@@ -904,6 +913,21 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
 
     string_value(citadel_extensions, "policy_pack_id") ||
       get_in(request_extensions, ["citadel", "policy_pack_id"])
+  end
+
+  defp tre_policy(authority_packet, execution_governance, request_extensions) do
+    [
+      authority_packet |> optional(:extensions) |> citadel_extension() |> optional("tre_policy"),
+      execution_governance
+      |> optional(:extensions)
+      |> citadel_extension()
+      |> optional("tre_policy"),
+      request_extensions |> citadel_extension() |> optional("tre_policy")
+    ]
+    |> Enum.find_value(%{}, fn
+      %{} = policy -> policy
+      _other -> nil
+    end)
   end
 
   defp artifact_refs(dispatch_result) do
