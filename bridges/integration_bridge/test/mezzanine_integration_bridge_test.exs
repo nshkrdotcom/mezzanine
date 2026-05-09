@@ -538,7 +538,21 @@ defmodule Mezzanine.IntegrationBridgeTest do
        %{
          capability: capability,
          lower_runtime_kind: input.governed_lower_envelope["lower_runtime_kind"],
-         output: %{accepted: true}
+         output: %{
+           accepted: true,
+           execution_plane_receipt: %{
+             "receipt_ref" => "execution-plane-tre-receipt://trace-123/succeeded",
+             "status" => "succeeded",
+             "artifact_refs" => ["tre-artifact://trace-123/runner-output"],
+             "event_refs" => ["tre-event://trace-123/succeeded"]
+           },
+           governed_lower_receipt: %{
+             "lower_receipt_ref" => "lower-receipt://execution-plane-tre/lower-req-1/succeeded",
+             "status" => "succeeded",
+             "artifact_refs" => ["tre-artifact://trace-123/runner-output"],
+             "event_refs" => ["tre-event://trace-123/succeeded"]
+           }
+         }
        }}
     end
 
@@ -552,6 +566,21 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert result.lower_runtime_kind == "tre_rhai"
     assert result.governed_lower_envelope.lower_runtime_kind == :tre_rhai
     assert result.governed_lower_receipt.lower_runtime_kind == :tre_rhai
+
+    assert result.governed_lower_receipt.artifact_refs == [
+             "tre-artifact://trace-123/runner-output"
+           ]
+
+    assert result.governed_lower_receipt.event_refs == ["tre-event://trace-123/succeeded"]
+
+    assert result.governed_lower_receipt.extensions["mezzanine"][
+             "jido_governed_lower_receipt_ref"
+           ] ==
+             "lower-receipt://execution-plane-tre/lower-req-1/succeeded"
+
+    assert result.governed_lower_receipt.extensions["mezzanine"][
+             "execution_plane_receipt_ref"
+           ] == "execution-plane-tre-receipt://trace-123/succeeded"
   end
 
   test "direct lower dispatch returns governed denials before side effects" do

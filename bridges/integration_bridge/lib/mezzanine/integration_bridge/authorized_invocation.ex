@@ -249,11 +249,13 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
       event_refs: event_refs(dispatch_result),
       observed_at: DateTime.utc_now() |> DateTime.to_iso8601(),
       extensions: %{
-        "mezzanine" => %{
-          "dispatch_status" => Atom.to_string(status),
-          "jido_run_ref" => lower_run_ref(dispatch_result),
-          "jido_attempt_ref" => lower_attempt_ref(dispatch_result)
-        }
+        "mezzanine" =>
+          %{
+            "dispatch_status" => Atom.to_string(status),
+            "jido_run_ref" => lower_run_ref(dispatch_result),
+            "jido_attempt_ref" => lower_attempt_ref(dispatch_result)
+          }
+          |> Map.merge(nested_receipt_refs(dispatch_result))
       }
     })
   end
@@ -931,16 +933,68 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
   end
 
   defp artifact_refs(dispatch_result) do
-    dispatch_result
-    |> Map.get(:artifact_refs, Map.get(dispatch_result, "artifact_refs", []))
+    [
+      map_get(dispatch_result, :artifact_refs, []),
+      nested_jido_receipt(dispatch_result) |> map_get(:artifact_refs, []),
+      nested_execution_plane_receipt(dispatch_result) |> map_get(:artifact_refs, [])
+    ]
+    |> List.flatten()
     |> normalize_string_list()
+    |> Enum.uniq()
   end
 
   defp event_refs(dispatch_result) do
-    dispatch_result
-    |> Map.get(:event_refs, Map.get(dispatch_result, "event_refs", []))
-    |> List.wrap()
+    [
+      map_get(dispatch_result, :event_refs, []),
+      nested_jido_receipt(dispatch_result) |> map_get(:event_refs, []),
+      nested_execution_plane_receipt(dispatch_result) |> map_get(:event_refs, [])
+    ]
+    |> List.flatten()
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
   end
+
+  defp nested_receipt_refs(dispatch_result) do
+    jido_receipt = nested_jido_receipt(dispatch_result)
+    execution_plane_receipt = nested_execution_plane_receipt(dispatch_result)
+
+    %{}
+    |> maybe_put_non_empty(
+      "jido_governed_lower_receipt_ref",
+      map_get(jido_receipt, :lower_receipt_ref)
+    )
+    |> maybe_put_non_empty("jido_governed_lower_status", map_get(jido_receipt, :status))
+    |> maybe_put_non_empty(
+      "execution_plane_receipt_ref",
+      map_get(execution_plane_receipt, :receipt_ref)
+    )
+    |> maybe_put_non_empty("execution_plane_status", map_get(execution_plane_receipt, :status))
+  end
+
+  defp nested_jido_receipt(dispatch_result) do
+    dispatch_result
+    |> map_get(:output, %{})
+    |> map_get(:governed_lower_receipt, %{})
+    |> ensure_map()
+  end
+
+  defp nested_execution_plane_receipt(dispatch_result) do
+    dispatch_result
+    |> map_get(:output, %{})
+    |> map_get(:execution_plane_receipt, %{})
+    |> ensure_map()
+  end
+
+  defp map_get(value, key, default \\ nil)
+
+  defp map_get(%{} = map, key, default) do
+    Map.get(map, key, Map.get(map, to_string(key), default))
+  end
+
+  defp map_get(_value, _key, default), do: default
+
+  defp ensure_map(%{} = map), do: map
+  defp ensure_map(_value), do: %{}
 
   defp lower_run_ref(dispatch_result) do
     case Map.get(dispatch_result, :run) || Map.get(dispatch_result, "run") do
