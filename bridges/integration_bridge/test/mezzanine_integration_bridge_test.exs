@@ -451,6 +451,71 @@ defmodule Mezzanine.IntegrationBridgeTest do
              )
   end
 
+  test "Codex Linear and GitHub lower paths do not require a TRE adapter" do
+    invoke_fun = fn capability, input, opts ->
+      refute Keyword.has_key?(opts, :tre_adapter)
+      {:ok, %{capability: capability, input: input, output: %{accepted: true}}}
+    end
+
+    cases = [
+      {
+        authorized_invocation_allowing(["linear.issues.retrieve"]),
+        "linear.issues.retrieve",
+        :direct_connector,
+        "jido/connectors/linear"
+      },
+      {
+        authorized_invocation_allowing(["github.pr.create"]),
+        "github.pr.create",
+        :direct_connector,
+        "jido/connectors/github"
+      },
+      {
+        authorized_invocation_allowing(["codex.session.turn"]),
+        "codex.session.turn",
+        :codex_session,
+        "jido/connectors/codex_cli"
+      }
+    ]
+
+    for {invocation, capability_id, lower_runtime_kind, connector_ref} <- cases do
+      assert {:ok, result} =
+               IntegrationBridge.invoke_run_intent(invocation,
+                 invoke_fun: invoke_fun,
+                 capability_id: capability_id
+               )
+
+      assert result.capability == capability_id
+      assert result.governed_lower_envelope.lower_runtime_kind == lower_runtime_kind
+      assert result.governed_lower_envelope.connector_ref == connector_ref
+      assert result.governed_lower_receipt.lower_runtime_kind == lower_runtime_kind
+    end
+  end
+
+  test "TRE lower dispatch is allowed only when a TRE adapter is explicitly forwarded" do
+    invoke_fun = fn capability, input, opts ->
+      assert Keyword.fetch!(opts, :tre_adapter) == Jido.Integration.V2.ControlPlane.FakeTreAdapter
+
+      {:ok,
+       %{
+         capability: capability,
+         lower_runtime_kind: input.governed_lower_envelope["lower_runtime_kind"],
+         output: %{accepted: true}
+       }}
+    end
+
+    assert {:ok, result} =
+             IntegrationBridge.invoke_run_intent(authorized_invocation(),
+               invoke_fun: invoke_fun,
+               invoke_opts: [tre_adapter: Jido.Integration.V2.ControlPlane.FakeTreAdapter],
+               lower_runtime_kind: :tre_rhai
+             )
+
+    assert result.lower_runtime_kind == "tre_rhai"
+    assert result.governed_lower_envelope.lower_runtime_kind == :tre_rhai
+    assert result.governed_lower_receipt.lower_runtime_kind == :tre_rhai
+  end
+
   test "direct lower dispatch returns governed denials before side effects" do
     never = fn _capability, _input, _opts -> flunk("provider invoke must not run") end
 

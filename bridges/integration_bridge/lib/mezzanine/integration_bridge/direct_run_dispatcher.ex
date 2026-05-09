@@ -20,7 +20,7 @@ defmodule Mezzanine.IntegrationBridge.DirectRunDispatcher do
 
     with {:ok, envelope} <-
            AuthorizedInvocation.governed_lower_envelope(invocation, capability_id, opts),
-         :ok <- require_dispatchable(envelope) do
+         :ok <- require_dispatchable(envelope, invoke_opts) do
       input =
         invocation
         |> AuthorizedInvocation.invoke_input(capability_id)
@@ -34,8 +34,9 @@ defmodule Mezzanine.IntegrationBridge.DirectRunDispatcher do
     end
   end
 
-  defp require_dispatchable(envelope) do
-    if GovernedLowerEnvelope.dispatchable?(envelope) do
+  defp require_dispatchable(envelope, invoke_opts) do
+    if GovernedLowerEnvelope.dispatchable?(envelope) or
+         tre_adapter_enabled?(envelope, invoke_opts) do
       :ok
     else
       {:error,
@@ -46,6 +47,19 @@ defmodule Mezzanine.IntegrationBridge.DirectRunDispatcher do
        )}
     end
   end
+
+  defp tre_adapter_enabled?(%GovernedLowerEnvelope{lower_runtime_kind: :tre_rhai}, invoke_opts)
+       when is_list(invoke_opts) do
+    case Keyword.get(invoke_opts, :tre_adapter) do
+      module when is_atom(module) ->
+        Code.ensure_loaded?(module) and function_exported?(module, :execute, 3)
+
+      _other ->
+        false
+    end
+  end
+
+  defp tre_adapter_enabled?(%GovernedLowerEnvelope{}, _invoke_opts), do: false
 
   defp attach_governed_receipt({:ok, result}, envelope) when is_map(result) do
     receipt = AuthorizedInvocation.governed_lower_receipt!(envelope, :succeeded, result)
