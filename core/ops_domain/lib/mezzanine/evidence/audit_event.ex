@@ -93,6 +93,7 @@ defmodule Mezzanine.Evidence.AuditEvent do
           :work_blocked,
           :work_completed,
           :run_scheduled,
+          :workflow_start_queued,
           :run_started,
           :run_completed,
           :run_failed,

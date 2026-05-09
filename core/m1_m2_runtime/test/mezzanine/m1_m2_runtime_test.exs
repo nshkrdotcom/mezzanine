@@ -2,6 +2,8 @@ defmodule Mezzanine.M1M2RuntimeTest do
   use ExUnit.Case, async: true
 
   alias Mezzanine.M1M2Runtime
+  alias Mezzanine.M1M2Runtime.WorkflowStartHandoff
+  alias Mezzanine.WorkflowRuntime.WorkflowStarterOutbox
 
   test "M1 rejects live providers, connectors, Temporal workers, and credential materializers" do
     assert {:error, {:m1_forbidden_capabilities, forbidden}} =
@@ -100,6 +102,54 @@ defmodule Mezzanine.M1M2RuntimeTest do
     assert receipt.temporal_worker_used? == true
   end
 
+  test "workflow start handoff builds deterministic outbox rows at the M1/M2 boundary" do
+    assert {:ok, row} =
+             WorkflowStartHandoff.outbox_row("tenant-1", started_run(), handoff_attrs())
+
+    assert row.workflow_type == "agent_run"
+    assert row.workflow_version == "agent-run.v1"
+    assert row.resource_ref == "work-object://work-1"
+    assert row.idempotency_key == "idem-run-1"
+    assert row.trace_id == "trace-run-1"
+    assert row.dispatch_state == "queued"
+    assert String.starts_with?(row.outbox_id, "workflow-start:")
+
+    assert WorkflowStartHandoff.workflow_start_ref(row) ==
+             "workflow-start-outbox://#{row.outbox_id}"
+
+    assert row.workflow_id ==
+             WorkflowStarterOutbox.deterministic_workflow_id(%{
+               tenant_ref: row.tenant_ref,
+               resource_ref: row.resource_ref,
+               workflow_type: row.workflow_type,
+               command_id: row.command_id,
+               release_manifest_ref: row.release_manifest_ref
+             })
+
+    assert {:ok, duplicate} =
+             WorkflowStartHandoff.outbox_row("tenant-1", started_run(), handoff_attrs())
+
+    assert duplicate.outbox_id == row.outbox_id
+    assert duplicate.workflow_id == row.workflow_id
+  end
+
+  test "workflow start handoff validates the same local transaction plan without Temporal calls" do
+    assert {:ok, row} =
+             WorkflowStartHandoff.outbox_row("tenant-1", started_run(), handoff_attrs())
+
+    assert {:ok, plan} = WorkflowStarterOutbox.same_transaction_plan(row)
+
+    assert plan.transaction_boundary == :accepted_command_receipt_and_workflow_start_outbox
+
+    assert Enum.map(plan.operations, & &1.op) == [
+             :persist_accepted_command_receipt,
+             :insert_workflow_start_outbox_row,
+             :insert_oban_dispatch_job
+           ]
+
+    assert :temporalex_client_call in plan.forbidden_inside_transaction
+  end
+
   defp valid_m2_attrs do
     %{
       mode: :m2,
@@ -116,6 +166,38 @@ defmodule Mezzanine.M1M2RuntimeTest do
       operation_policy_ref: "operation-policy://tenant-1/claude/chat",
       runtime_substrate_ref: "temporal://namespace/default/task-queue/agents",
       trace_ref: "trace://tenant-1/m2/1"
+    }
+  end
+
+  defp started_run do
+    %{
+      work_object: %{
+        id: "work-1",
+        program_id: "program-1"
+      },
+      plan: %{
+        id: "plan-1"
+      },
+      run: %{
+        id: "run-1",
+        runtime_profile: %{"runtime_profile_ref" => "codex_session"},
+        grant_profile: %{"capability_ids" => ["codex.session.turn"]}
+      },
+      review_unit: nil
+    }
+  end
+
+  defp handoff_attrs do
+    %{
+      trace_id: "trace-run-1",
+      causation_id: "cause-run-1",
+      actor_ref: "actor://ops/lead",
+      installation_ref: "installation://extravaganza/local",
+      idempotency_key: "idem-run-1",
+      runtime_profile_ref: "codex_session",
+      lower_runtime_kind: "codex_session",
+      requested_action_ids: ["codex.session.turn"],
+      runtime_policy_config: %{"run" => %{"capability" => "codex.session.turn"}}
     }
   end
 end

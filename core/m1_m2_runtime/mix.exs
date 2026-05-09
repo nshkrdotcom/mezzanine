@@ -10,6 +10,10 @@ defmodule MezzanineM1M2Runtime.MixProject do
       elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
+      dialyzer: [
+        plt_add_deps: :apps_tree,
+        plt_add_apps: [:mezzanine_audit_engine]
+      ],
       docs: [main: "readme", extras: ["README.md"]],
       name: "Mezzanine M1/M2 Runtime",
       description: "Deterministic M1 readback and live M2 runtime separation contracts",
@@ -34,6 +38,8 @@ defmodule MezzanineM1M2Runtime.MixProject do
       {:mezzanine_lifecycle_engine, path: "../lifecycle_engine", runtime: false},
       {:mezzanine_projection_engine, path: "../projection_engine", runtime: false},
       {:mezzanine_audit_engine, path: "../audit_engine", runtime: false},
+      {:ecto_sql, "~> 3.13"},
+      {:jason, "~> 1.4"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.40.1", only: :dev, runtime: false}
