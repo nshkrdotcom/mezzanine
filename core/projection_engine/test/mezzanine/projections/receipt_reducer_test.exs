@@ -99,6 +99,74 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
 
     assert projection.payload["workpad"]["refs"] == ["source-workpad://linear/tenant-1/subj-1"]
 
+    assert projection.payload["run"] == %{
+             "attempt_ref" => "lower-attempt-completed",
+             "run_ref" => "lower-run-completed",
+             "runtime_profile_kind" => "codex_session",
+             "runtime_profile_ref" => "runtime-profile://codex/default"
+           }
+
+    assert projection.payload["lower_receipt"]["metadata"] == %{
+             "attestation_requirement_ref" => "attestation://local/default",
+             "capability_id" => "codex.session.turn",
+             "denial_refs" => ["lower-denial://capability/linear"],
+             "lower_request_ref" => "lower-request://codex/session-turn",
+             "lower_runtime_kind" => "codex_session",
+             "package_refs" => ["package://extravaganza/coding_ops"],
+             "policy_bundle_refs" => ["policy-bundle://extravaganza/default"],
+             "resource_scope_refs" => ["scope://subject/subj-1"],
+             "sandbox_profile_ref" => "sandbox://local/read-write",
+             "script_refs" => ["script://codex/session-turn"]
+           }
+
+    assert projection.payload["lower_envelope"] == %{
+             "attestation_requirement_ref" => "attestation://local/default",
+             "capability_id" => "codex.session.turn",
+             "denial_refs" => ["lower-denial://capability/linear"],
+             "lower_request_ref" => "lower-request://codex/session-turn",
+             "lower_runtime_kind" => "codex_session",
+             "package_refs" => ["package://extravaganza/coding_ops"],
+             "policy_bundle_refs" => ["policy-bundle://extravaganza/default"],
+             "resource_scope_refs" => ["scope://subject/subj-1"],
+             "sandbox_profile_ref" => "sandbox://local/read-write",
+             "script_refs" => ["script://codex/session-turn"]
+           }
+
+    assert projection.payload["governance"] == %{
+             "authority_decision_hash" => String.duplicate("a", 64),
+             "authority_ref" => "authority-decision://codex/session-turn",
+             "capability_negotiation_refs" => ["cap-neg://codex/session-turn"],
+             "connector_manifest_refs" => ["manifest://jido/connectors/codex_cli@local"],
+             "runtime_profile_kind" => "codex_session",
+             "runtime_profile_ref" => "runtime-profile://codex/default"
+           }
+
+    assert Enum.map(projection.payload["incident_bundles"], & &1["incident_class"]) ==
+             [
+               "policy_denied",
+               "capability_denied",
+               "manifest_stale",
+               "lower_runtime_failed",
+               "receipt_missing",
+               "projection_missing",
+               "source_publication_failed"
+             ]
+
+    assert Enum.map(projection.payload["retry_receipts"], & &1["retry_safety_class"]) ==
+             ["safe", "approval_required", "terminal"]
+
+    assert projection.payload["acceptance"] == %{
+             "scenario_refs" => ["stacklab://scenario/local-single-node"],
+             "claim_refs" => ["claim://extravaganza/local-run"]
+           }
+
+    assert projection.payload["github_pr"] == %{
+             "content_ref" => "github-pr://nshkrdotcom/extravaganza/42",
+             "evidence_ref" => "evidence://github-pr/nshkrdotcom/extravaganza/42",
+             "feedback" => %{"rework_required?" => true},
+             "provider" => "github"
+           }
+
     assert projection.payload["source_publication"] == %{
              "authority_decision_hash" => String.duplicate("b", 64),
              "authority_ref" => "authority-decision://linear/comment",
@@ -371,6 +439,44 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
           "api_key" => "should-drop",
           "redaction" => "ref_only"
         },
+        "runtime_profile" => %{
+          "runtime_profile_ref" => "runtime-profile://codex/default",
+          "runtime_profile_kind" => "codex_session"
+        },
+        "governed_lower_envelope" => %{
+          "lower_request_ref" => "lower-request://codex/session-turn",
+          "lower_runtime_kind" => "codex_session",
+          "capability_id" => "codex.session.turn",
+          "resource_scope_refs" => ["scope://subject/subj-1"],
+          "policy_bundle_refs" => ["policy-bundle://extravaganza/default"],
+          "script_refs" => ["script://codex/session-turn"],
+          "package_refs" => ["package://extravaganza/coding_ops"],
+          "sandbox_profile_ref" => "sandbox://local/read-write",
+          "attestation_requirement_ref" => "attestation://local/default",
+          "denial_refs" => ["lower-denial://capability/linear"]
+        },
+        "authority_decision" => %{
+          "authority_ref" => "authority-decision://codex/session-turn",
+          "authority_decision_hash" => String.duplicate("a", 64)
+        },
+        "connector_manifests" => [
+          %{"connector_manifest_ref" => "manifest://jido/connectors/codex_cli@local"}
+        ],
+        "capability_negotiations" => [
+          %{"capability_negotiation_ref" => "cap-neg://codex/session-turn"}
+        ],
+        "retry_receipts" => retry_receipts(),
+        "incident_bundles" => incident_bundles(),
+        "acceptance" => %{
+          "scenario_refs" => ["stacklab://scenario/local-single-node"],
+          "claim_refs" => ["claim://extravaganza/local-run"]
+        },
+        "github_pr_evidence" => %{
+          "provider" => "github",
+          "evidence_ref" => "evidence://github-pr/nshkrdotcom/extravaganza/42",
+          "content_ref" => "github-pr://nshkrdotcom/extravaganza/42",
+          "feedback" => %{"rework_required?" => true}
+        },
         "source_publication" => %{
           "source_publication_receipt_ref" => "source-publication://linear-primary/receipt",
           "source_publish_ref" => "linear_workpad_review",
@@ -405,6 +511,64 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
       causation_id: "cause-receipt-#{receipt_state}",
       actor_ref: %{kind: :workflow, id: "execution_attempt"}
     }
+  end
+
+  defp retry_receipts do
+    [
+      %{
+        "retry_receipt_ref" => "retry-receipt://safe",
+        "prior_attempt_ref" => "lower-attempt-completed",
+        "failure_class" => "provider_unavailable",
+        "retry_safety_class" => "safe",
+        "policy_hash_before" => "sha256:policy-before",
+        "policy_hash_after" => "sha256:policy-before",
+        "manifest_hash_before" => "sha256:manifest-before",
+        "manifest_hash_after" => "sha256:manifest-before",
+        "next_attempt_ref" => "lower-attempt-retry"
+      },
+      %{
+        "retry_receipt_ref" => "retry-receipt://approval-required",
+        "prior_attempt_ref" => "lower-attempt-completed",
+        "failure_class" => "manifest_stale",
+        "retry_safety_class" => "approval_required",
+        "terminal_denial_ref" => nil
+      },
+      %{
+        "retry_receipt_ref" => "retry-receipt://terminal",
+        "prior_attempt_ref" => "lower-attempt-completed",
+        "failure_class" => "policy_drift",
+        "retry_safety_class" => "terminal",
+        "terminal_denial_ref" => "terminal-denial://policy-drift"
+      }
+    ]
+  end
+
+  defp incident_bundles do
+    [
+      "policy_denied",
+      "capability_denied",
+      "manifest_stale",
+      "lower_runtime_failed",
+      "receipt_missing",
+      "projection_missing",
+      "source_publication_failed"
+    ]
+    |> Enum.map(fn incident_class ->
+      %{
+        "incident_ref" => "incident://#{incident_class}",
+        "incident_class" => incident_class,
+        "run_ref" => "lower-run-completed",
+        "subject_ref" => "subj-1",
+        "runtime_profile_ref" => "runtime-profile://codex/default",
+        "authority_ref" => "authority-decision://codex/session-turn",
+        "connector_manifest_ref" => "manifest://jido/connectors/codex_cli@local",
+        "lower_attempt_ref" => "lower-attempt-completed",
+        "retry_receipt_ref" => "retry-receipt://#{incident_class}",
+        "terminal_receipt_ref" => "lower-receipt://completed",
+        "redaction_manifest_ref" => "redaction://incident/#{incident_class}",
+        "operator_message_ref" => "operator-message://#{incident_class}"
+      }
+    end)
   end
 
   defp evidence_refs(kinds) do

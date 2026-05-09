@@ -92,7 +92,16 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
          projection_name: "operator_subject_runtime",
          lower_receipt_ref: attrs.lower_receipt_ref,
          provider_object_refs: attrs.lower_receipt.provider_object_refs,
-         evidence_artifact_refs: attrs.lower_receipt.evidence_artifact_refs
+         evidence_artifact_refs: attrs.lower_receipt.evidence_artifact_refs,
+         runtime_profile: attrs.lower_receipt.runtime_profile,
+         governed_lower_envelope: attrs.lower_receipt.governed_lower_envelope,
+         authority_decision: attrs.lower_receipt.authority_decision,
+         connector_manifests: attrs.lower_receipt.connector_manifests,
+         capability_negotiations: attrs.lower_receipt.capability_negotiations,
+         retry_receipts: attrs.lower_receipt.retry_receipts,
+         incident_bundles: attrs.lower_receipt.incident_bundles,
+         acceptance: attrs.lower_receipt.acceptance,
+         github_pr_evidence: attrs.lower_receipt.github_pr_evidence
        }}
     end
   end
@@ -117,10 +126,12 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     assert :persist_terminal_receipt in contract.activity_sequence
     assert :cleanup_workspace in contract.activity_sequence
     assert :publish_source in contract.activity_sequence
+    assert :update_runtime_projection in contract.activity_sequence
     assert :materialize_evidence in contract.activity_sequence
     assert :create_review in contract.activity_sequence
     assert contract.activity_owners.cleanup_workspace == :mezzanine
     assert contract.activity_owners.publish_source == :jido_integration
+    assert contract.activity_owners.update_runtime_projection == :mezzanine
     assert contract.activity_owners.materialize_evidence == :mezzanine
     assert contract.activity_owners.create_review == :mezzanine
 
@@ -179,6 +190,8 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
                    &ExecutionLifecycleWorkflow.cleanup_workspace_activity/1,
                  Mezzanine.Activities.PublishSource =>
                    &ExecutionLifecycleWorkflow.publish_source_activity/1,
+                 Mezzanine.Activities.UpdateRuntimeProjection =>
+                   &ExecutionLifecycleWorkflow.update_runtime_projection_activity/1,
                  Mezzanine.Activities.MaterializeEvidence =>
                    &ExecutionLifecycleWorkflow.materialize_evidence_activity/1,
                  Mezzanine.Activities.CreateReview =>
@@ -199,6 +212,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
              "activity://workflow-093/persist-terminal-receipt",
              "activity://workflow-093/cleanup-workspace",
              "activity://workflow-093/publish-source",
+             "activity://workflow-093/update-runtime-projection",
              "activity://workflow-093/materialize-evidence",
              "activity://workflow-093/create-review"
            ]
@@ -208,6 +222,9 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
 
     assert result.terminal_refs.source_publish_ref ==
              "source-publish://workflow-093/resource-work-1"
+
+    assert result.terminal_refs.runtime_projection_ref ==
+             "runtime-projection://workflow-093/lower-receipt-096"
 
     assert result.terminal_refs.evidence_ref == "evidence://workflow-093/lower-receipt-096"
     assert result.terminal_refs.review_ref == "review://workflow-093/lower-receipt-096"
@@ -250,7 +267,59 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
                  lower_attempt_ref: "lower-attempt-095",
                  routing_facts: %{
                    provider_object_refs: ["linear://issue/LIN-101"],
-                   evidence_artifact_refs: ["lower-artifact://github_pr/095"]
+                   evidence_artifact_refs: ["lower-artifact://github_pr/095"],
+                   runtime_profile: %{
+                     runtime_profile_ref: "runtime-profile://codex/default",
+                     runtime_profile_kind: "codex_session"
+                   },
+                   governed_lower_envelope: %{
+                     lower_request_ref: "lower-request://codex/session-turn",
+                     lower_runtime_kind: "codex_session",
+                     capability_id: "codex.session.turn",
+                     resource_scope_refs: ["scope://subject/subject-093"],
+                     policy_bundle_refs: ["policy-bundle://extravaganza/default"],
+                     script_refs: ["script://codex/session-turn"],
+                     package_refs: ["package://extravaganza/coding_ops"],
+                     sandbox_profile_ref: "sandbox://local/read-write",
+                     attestation_requirement_ref: "attestation://local/default",
+                     denial_refs: ["lower-denial://capability/linear"]
+                   },
+                   authority_decision: %{
+                     authority_ref: "authority-decision://codex/session-turn",
+                     authority_decision_hash: String.duplicate("c", 64)
+                   },
+                   connector_manifests: [
+                     %{connector_manifest_ref: "manifest://jido/connectors/codex_cli@local"}
+                   ],
+                   capability_negotiations: [
+                     %{capability_negotiation_ref: "cap-neg://codex/session-turn"}
+                   ],
+                   retry_receipts: [
+                     %{
+                       retry_receipt_ref: "retry-receipt://safe",
+                       prior_attempt_ref: "lower-attempt-095",
+                       failure_class: "provider_unavailable",
+                       retry_safety_class: "safe",
+                       next_attempt_ref: "lower-attempt-096"
+                     }
+                   ],
+                   incident_bundles: [
+                     %{
+                       incident_ref: "incident://lower-runtime-failed",
+                       incident_class: "lower_runtime_failed",
+                       lower_attempt_ref: "lower-attempt-095",
+                       terminal_receipt_ref: "lower-receipt-095"
+                     }
+                   ],
+                   acceptance: %{
+                     scenario_refs: ["stacklab://scenario/local-single-node"],
+                     claim_refs: ["claim://extravaganza/local-run"]
+                   },
+                   github_pr_evidence: %{
+                     provider: "github",
+                     evidence_ref: "evidence://github-pr/nshkrdotcom/extravaganza/95",
+                     content_ref: "github-pr://nshkrdotcom/extravaganza/95"
+                   }
                  }
                })
              )
@@ -260,8 +329,37 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     assert persisted.lower_receipt_ref == "lower-receipt-095"
     assert persisted.lower_receipt.provider_object_refs == ["linear://issue/LIN-101"]
     assert persisted.lower_receipt.evidence_artifact_refs == ["lower-artifact://github_pr/095"]
+    assert persisted.lower_receipt.runtime_profile.runtime_profile_kind == "codex_session"
+
+    assert persisted.lower_receipt.governed_lower_envelope.lower_request_ref ==
+             "lower-request://codex/session-turn"
+
+    assert persisted.lower_receipt.authority_decision.authority_decision_hash ==
+             String.duplicate("c", 64)
+
+    assert persisted.lower_receipt.connector_manifests == [
+             %{connector_manifest_ref: "manifest://jido/connectors/codex_cli@local"}
+           ]
+
+    assert persisted.lower_receipt.capability_negotiations == [
+             %{capability_negotiation_ref: "cap-neg://codex/session-turn"}
+           ]
+
+    assert [%{retry_safety_class: "safe"}] = persisted.lower_receipt.retry_receipts
+    assert [%{incident_class: "lower_runtime_failed"}] = persisted.lower_receipt.incident_bundles
+
+    assert persisted.lower_receipt.acceptance.scenario_refs == [
+             "stacklab://scenario/local-single-node"
+           ]
+
+    assert persisted.lower_receipt.github_pr_evidence.provider == "github"
     assert persisted.projection_result.projection_name == "operator_subject_runtime"
     assert persisted.projection_result.lower_receipt_ref == "lower-receipt-095"
+
+    assert persisted.projection_result.governed_lower_envelope.lower_runtime_kind ==
+             "codex_session"
+
+    assert persisted.projection_result.acceptance.claim_refs == ["claim://extravaganza/local-run"]
 
     terminal_attrs =
       Map.merge(attrs, %{
@@ -278,6 +376,27 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     assert {:ok, publish} = ExecutionLifecycleWorkflow.publish_source_activity(terminal_attrs)
     assert publish.owner_repo == :jido_integration
     assert publish.source_publish_ref == "source-publish://workflow-093/resource-work-1"
+
+    assert {:ok, runtime_projection} =
+             ExecutionLifecycleWorkflow.update_runtime_projection_activity(
+               Map.put(terminal_attrs, :source_publication, %{
+                 source_publication_receipt_ref:
+                   "source-publication://linear-primary/receipt-095",
+                 status: "published",
+                 capability_id: "linear.comments.update",
+                 lower_runtime_kind: "direct_connector",
+                 connector_manifest_ref: "manifest://jido/connectors/linear@local"
+               })
+             )
+
+    assert runtime_projection.owner_repo == :mezzanine
+    assert runtime_projection.activity == :update_runtime_projection
+    assert runtime_projection.result_ref == "runtime-projection://workflow-093/lower-receipt-095"
+
+    assert runtime_projection.lower_receipt.source_publication.status == "published"
+
+    assert runtime_projection.lower_receipt.source_publication.capability_id ==
+             "linear.comments.update"
 
     assert {:ok, evidence} =
              ExecutionLifecycleWorkflow.materialize_evidence_activity(terminal_attrs)

@@ -401,7 +401,19 @@ defmodule Mezzanine.IntegrationBridgeTest do
                invocation,
                invoke_fun: invoke_fun,
                capability_id: "linear.issues.retrieve",
-               lower_runtime_kind: :deterministic_fixture
+               lower_runtime_kind: :deterministic_fixture,
+               policy_bundle_ref: "policy-bundle://extravaganza/default",
+               policy_bundle_hash:
+                 "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+               cedar_schema_ref: "cedar-schema://extravaganza/source",
+               cedar_schema_hash:
+                 "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+               script_ref: "script://linear/retrieve",
+               script_hash:
+                 "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+               package_refs: ["package://extravaganza/coding-ops"],
+               sandbox_profile_ref: "sandbox://local/strict",
+               attestation_requirement_ref: "attestation://local/dev"
              )
 
     assert envelope.capability_id == "linear.issues.retrieve"
@@ -411,6 +423,13 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert envelope.allowed_operations == ["linear.issues.retrieve", "linear.issues.update"]
     assert envelope.resource_scope_refs == ["workspace://work_object/subject-1"]
     assert receipt.status == :succeeded
+    assert receipt.policy_bundle_ref == "policy-bundle://extravaganza/default"
+    assert receipt.cedar_schema_ref == "cedar-schema://extravaganza/source"
+    assert receipt.script_ref == "script://linear/retrieve"
+    assert receipt.package_refs == ["package://extravaganza/coding-ops"]
+    assert receipt.resource_scope_refs == ["workspace://work_object/subject-1"]
+    assert receipt.sandbox_profile_ref == "sandbox://local/strict"
+    assert receipt.attestation_requirement_ref == "attestation://local/dev"
     assert GovernedLowerReceipt.matches_envelope?(receipt, envelope)
 
     assert_received {:invoke, "linear.issues.retrieve", input, opts}

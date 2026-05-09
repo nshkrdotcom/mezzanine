@@ -67,6 +67,7 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecisionTest do
     assert Mezzanine.Activities.CompensateCancelledRun in activity_modules
     assert Mezzanine.Activities.CleanupWorkspace in activity_modules
     assert Mezzanine.Activities.PublishSource in activity_modules
+    assert Mezzanine.Activities.UpdateRuntimeProjection in activity_modules
     assert Mezzanine.Activities.MaterializeEvidence in activity_modules
     assert Mezzanine.Activities.CreateReview in activity_modules
 
@@ -120,6 +121,7 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecisionTest do
       Mezzanine.Activities.SemanticPayloadBoundaryActivity => "mezzanine.semantic",
       Mezzanine.Activities.CleanupWorkspace => "mezzanine.agentic",
       Mezzanine.Activities.PublishSource => "mezzanine.agentic",
+      Mezzanine.Activities.UpdateRuntimeProjection => "mezzanine.agentic",
       Mezzanine.Activities.MaterializeEvidence => "mezzanine.agentic",
       Mezzanine.Activities.CreateReview => "mezzanine.review"
     }

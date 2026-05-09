@@ -284,13 +284,9 @@ defmodule Mezzanine.Projections.ReceiptReducer do
         dispatch_state: Atom.to_string(execution.dispatch_state),
         failure_kind: maybe_atom_to_string(execution.failure_kind)
       },
-      lower_receipt: %{
-        receipt_id: required!(attrs, :receipt_id),
-        receipt_state: receipt_state,
-        lower_receipt_ref: value(attrs, :lower_receipt_ref),
-        run_id: map_value(lower_receipt, :run_id),
-        attempt_id: map_value(lower_receipt, :attempt_id)
-      },
+      run: run_projection(lower_receipt),
+      lower_receipt: lower_receipt_projection(attrs, lower_receipt, receipt_state),
+      lower_envelope: lower_envelope_projection(lower_receipt),
       runtime: %{
         token_totals: map_value(lower_receipt, :token_totals) || %{},
         token_dedupe: token_dedupe_projection(lower_receipt),
@@ -298,6 +294,7 @@ defmodule Mezzanine.Projections.ReceiptReducer do
         retry_queue: retry_queue_projection(lower_receipt),
         event_counts: event_counts(map_value(lower_receipt, :runtime_events) || [])
       },
+      governance: governance_projection(lower_receipt),
       review: %{
         pending_decision_ids: Enum.map(decisions, & &1.id)
       },
@@ -311,11 +308,216 @@ defmodule Mezzanine.Projections.ReceiptReducer do
       workpad: %{refs: string_list(map_value(lower_receipt, :workpad_refs))},
       source_publication: source_publication_projection(lower_receipt),
       source_bindings: source_binding_projections(subject, lower_receipt),
+      incident_bundles: incident_bundle_projections(lower_receipt),
+      retry_receipts: retry_receipt_projections(lower_receipt),
+      acceptance: acceptance_projection(lower_receipt),
+      github_pr: github_pr_projection(lower_receipt),
       diagnostics: %{
         missing_required_evidence: missing_required_evidence,
         review_blocking?: missing_required_evidence != []
       }
     }
+  end
+
+  defp run_projection(lower_receipt) do
+    runtime_profile = map_value(lower_receipt, :runtime_profile) || %{}
+
+    %{}
+    |> maybe_put(
+      "run_ref",
+      string_or_nil(map_value(lower_receipt, :run_ref) || map_value(lower_receipt, :run_id))
+    )
+    |> maybe_put(
+      "attempt_ref",
+      string_or_nil(
+        map_value(lower_receipt, :attempt_ref) || map_value(lower_receipt, :attempt_id)
+      )
+    )
+    |> maybe_put(
+      "runtime_profile_ref",
+      string_or_nil(map_value(runtime_profile, :runtime_profile_ref))
+    )
+    |> maybe_put(
+      "runtime_profile_kind",
+      string_or_nil(map_value(runtime_profile, :runtime_profile_kind))
+    )
+  end
+
+  defp lower_receipt_projection(attrs, lower_receipt, receipt_state) do
+    %{
+      receipt_id: required!(attrs, :receipt_id),
+      receipt_state: receipt_state,
+      lower_receipt_ref: value(attrs, :lower_receipt_ref),
+      run_id: map_value(lower_receipt, :run_id),
+      attempt_id: map_value(lower_receipt, :attempt_id),
+      metadata: lower_receipt_metadata(lower_receipt)
+    }
+  end
+
+  defp lower_receipt_metadata(lower_receipt), do: lower_envelope_projection(lower_receipt)
+
+  defp lower_envelope_projection(lower_receipt) do
+    envelope =
+      map_value(lower_receipt, :governed_lower_envelope) ||
+        map_value(lower_receipt, :lower_envelope) ||
+        %{}
+
+    %{}
+    |> maybe_put("lower_request_ref", string_or_nil(map_value(envelope, :lower_request_ref)))
+    |> maybe_put("lower_runtime_kind", string_or_nil(map_value(envelope, :lower_runtime_kind)))
+    |> maybe_put("capability_id", string_or_nil(map_value(envelope, :capability_id)))
+    |> maybe_put(
+      "resource_scope_refs",
+      string_list_or_nil(map_value(envelope, :resource_scope_refs))
+    )
+    |> maybe_put(
+      "policy_bundle_refs",
+      string_list_or_nil(map_value(envelope, :policy_bundle_refs))
+    )
+    |> maybe_put("script_refs", string_list_or_nil(map_value(envelope, :script_refs)))
+    |> maybe_put("package_refs", string_list_or_nil(map_value(envelope, :package_refs)))
+    |> maybe_put("sandbox_profile_ref", string_or_nil(map_value(envelope, :sandbox_profile_ref)))
+    |> maybe_put(
+      "attestation_requirement_ref",
+      string_or_nil(map_value(envelope, :attestation_requirement_ref))
+    )
+    |> maybe_put("denial_refs", string_list_or_nil(map_value(envelope, :denial_refs)))
+  end
+
+  defp governance_projection(lower_receipt) do
+    runtime_profile = map_value(lower_receipt, :runtime_profile) || %{}
+    authority = map_value(lower_receipt, :authority_decision) || %{}
+
+    %{}
+    |> maybe_put(
+      "runtime_profile_ref",
+      string_or_nil(map_value(runtime_profile, :runtime_profile_ref))
+    )
+    |> maybe_put(
+      "runtime_profile_kind",
+      string_or_nil(map_value(runtime_profile, :runtime_profile_kind))
+    )
+    |> maybe_put("authority_ref", string_or_nil(map_value(authority, :authority_ref)))
+    |> maybe_put(
+      "authority_decision_hash",
+      string_or_nil(map_value(authority, :authority_decision_hash))
+    )
+    |> maybe_put(
+      "connector_manifest_refs",
+      lower_receipt
+      |> map_value(:connector_manifests)
+      |> List.wrap()
+      |> Enum.flat_map(&manifest_ref/1)
+    )
+    |> maybe_put(
+      "capability_negotiation_refs",
+      lower_receipt
+      |> map_value(:capability_negotiations)
+      |> List.wrap()
+      |> Enum.flat_map(&capability_negotiation_ref/1)
+    )
+    |> compact_projection()
+  end
+
+  defp manifest_ref(%{} = manifest),
+    do: manifest |> map_value(:connector_manifest_ref) |> string_or_nil() |> List.wrap()
+
+  defp manifest_ref(value), do: value |> string_or_nil() |> List.wrap()
+
+  defp capability_negotiation_ref(%{} = negotiation),
+    do: negotiation |> map_value(:capability_negotiation_ref) |> string_or_nil() |> List.wrap()
+
+  defp capability_negotiation_ref(value), do: value |> string_or_nil() |> List.wrap()
+
+  defp incident_bundle_projections(lower_receipt) do
+    lower_receipt
+    |> map_value(:incident_bundles)
+    |> List.wrap()
+    |> Enum.flat_map(&incident_bundle_projection/1)
+  end
+
+  defp incident_bundle_projection(%{} = bundle) do
+    [
+      %{}
+      |> maybe_put("incident_ref", string_or_nil(map_value(bundle, :incident_ref)))
+      |> maybe_put("incident_class", string_or_nil(map_value(bundle, :incident_class)))
+      |> maybe_put("run_ref", string_or_nil(map_value(bundle, :run_ref)))
+      |> maybe_put("subject_ref", string_or_nil(map_value(bundle, :subject_ref)))
+      |> maybe_put("runtime_profile_ref", string_or_nil(map_value(bundle, :runtime_profile_ref)))
+      |> maybe_put("authority_ref", string_or_nil(map_value(bundle, :authority_ref)))
+      |> maybe_put(
+        "connector_manifest_ref",
+        string_or_nil(map_value(bundle, :connector_manifest_ref))
+      )
+      |> maybe_put("lower_attempt_ref", string_or_nil(map_value(bundle, :lower_attempt_ref)))
+      |> maybe_put("retry_receipt_ref", string_or_nil(map_value(bundle, :retry_receipt_ref)))
+      |> maybe_put(
+        "terminal_receipt_ref",
+        string_or_nil(map_value(bundle, :terminal_receipt_ref))
+      )
+      |> maybe_put(
+        "redaction_manifest_ref",
+        string_or_nil(map_value(bundle, :redaction_manifest_ref))
+      )
+      |> maybe_put(
+        "operator_message_ref",
+        string_or_nil(map_value(bundle, :operator_message_ref))
+      )
+      |> compact_projection()
+    ]
+  end
+
+  defp incident_bundle_projection(_bundle), do: []
+
+  defp retry_receipt_projections(lower_receipt) do
+    lower_receipt
+    |> map_value(:retry_receipts)
+    |> List.wrap()
+    |> Enum.flat_map(&retry_receipt_projection/1)
+  end
+
+  defp retry_receipt_projection(%{} = receipt) do
+    [
+      %{}
+      |> maybe_put("retry_receipt_ref", string_or_nil(map_value(receipt, :retry_receipt_ref)))
+      |> maybe_put("prior_attempt_ref", string_or_nil(map_value(receipt, :prior_attempt_ref)))
+      |> maybe_put("failure_class", string_or_nil(map_value(receipt, :failure_class)))
+      |> maybe_put("retry_safety_class", string_or_nil(map_value(receipt, :retry_safety_class)))
+      |> maybe_put("policy_hash_before", string_or_nil(map_value(receipt, :policy_hash_before)))
+      |> maybe_put("policy_hash_after", string_or_nil(map_value(receipt, :policy_hash_after)))
+      |> maybe_put(
+        "manifest_hash_before",
+        string_or_nil(map_value(receipt, :manifest_hash_before))
+      )
+      |> maybe_put("manifest_hash_after", string_or_nil(map_value(receipt, :manifest_hash_after)))
+      |> maybe_put("next_attempt_ref", string_or_nil(map_value(receipt, :next_attempt_ref)))
+      |> maybe_put("terminal_denial_ref", string_or_nil(map_value(receipt, :terminal_denial_ref)))
+      |> compact_projection()
+    ]
+  end
+
+  defp retry_receipt_projection(_receipt), do: []
+
+  defp acceptance_projection(lower_receipt) do
+    acceptance = map_value(lower_receipt, :acceptance) || %{}
+
+    %{}
+    |> maybe_put("scenario_refs", string_list_or_nil(map_value(acceptance, :scenario_refs)))
+    |> maybe_put("claim_refs", string_list_or_nil(map_value(acceptance, :claim_refs)))
+  end
+
+  defp github_pr_projection(lower_receipt) do
+    source =
+      map_value(lower_receipt, :github_pr_evidence) ||
+        map_value(lower_receipt, :github_pr) ||
+        %{}
+
+    %{}
+    |> maybe_put("provider", string_or_nil(map_value(source, :provider)))
+    |> maybe_put("evidence_ref", string_or_nil(map_value(source, :evidence_ref)))
+    |> maybe_put("content_ref", string_or_nil(map_value(source, :content_ref)))
+    |> maybe_put("feedback", map_value(source, :feedback))
+    |> compact_projection()
   end
 
   defp source_binding_projections(subject, lower_receipt) do

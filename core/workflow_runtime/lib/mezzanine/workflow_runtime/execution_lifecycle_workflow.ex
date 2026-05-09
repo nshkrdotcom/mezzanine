@@ -33,50 +33,87 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     :allowed_operations,
     :allowed_tools,
     :authority_packet_ref,
+    :authority_decision,
+    :authority_decision_hash,
+    :authority_ref,
     :boundary_class,
     :capability,
+    :capability_id,
+    :capability_negotiation_ref,
+    :capability_negotiation_refs,
+    :capability_negotiations,
     :citadel_authority,
     :command_id,
     :command_receipt_ref,
+    :connector_manifest_ref,
+    :connector_manifest_refs,
+    :connector_manifests,
     :correlation_id,
     :decision_hash,
+    :denial_refs,
     :dispatch_state,
     :downstream_scope,
+    :acceptance,
+    :aitrace,
+    :artifact_refs,
+    :attestation_requirement_ref,
+    :credential,
     :evidence_artifact_refs,
     :evidence_ref,
     :execution_id,
     :expected_installation_revision,
     :failure,
+    :github_pr_evidence,
+    :governed_lower_envelope,
     :id,
     :installation_id,
     :installation_revision,
     :intent_id,
+    :incident_bundles,
     :last_receipt_ref,
     :lower_attempt_ref,
     :lower_event_ref,
+    :lower_envelope,
+    :lower_request_ref,
     :lower_receipt_ref,
+    :lower_runtime_kind,
     :lower_run_ref,
     :lower_submission_ref,
     :max_turns,
+    :package_refs,
     :permission_decision_ref,
+    :policy_bundle_refs,
     :policy_epoch,
     :policy_pack_id,
     :policy_refs,
     :policy_version,
+    :prompt_provenance,
     :program_id,
     :provider_object_refs,
+    :provider_account,
     :raw_history_event,
     :raw_temporalex_result,
     :receipt_state,
     :release_manifest_ref,
     :required_evidence,
     :resource_ref,
+    :resource_scope_refs,
     :review_ref,
     :review_required,
     :risk_hints,
+    :runtime_events,
     :routing_facts,
     :routing_tags,
     :runtime_class,
+    :runtime_profile,
+    :runtime_profile_kind,
+    :runtime_profile_ref,
+    :rate_limit,
+    :retry,
+    :retry_receipts,
+    :sandbox_profile_ref,
+    :script_refs,
+    :semantic_failure,
     :scope_kind,
     :seen_signal_keys,
     :service_id,
@@ -111,7 +148,10 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     :workspace_cleanup_policy,
     :workspace_mutability,
     :workspace_ref,
-    :workspace_root
+    :workspace_root,
+    :workpad_refs,
+    :token_dedupe,
+    :token_totals
   ]
   @key_lookup Map.new(@normalizable_keys, &{Atom.to_string(&1), &1})
   @routing_atom_lookup %{"session" => :session, "workflow" => :workflow}
@@ -123,6 +163,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     :persist_terminal_receipt,
     :cleanup_workspace,
     :publish_source,
+    :update_runtime_projection,
     :materialize_evidence,
     :create_review
   ]
@@ -144,6 +185,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
         persist_terminal_receipt: :mezzanine,
         cleanup_workspace: :mezzanine,
         publish_source: :jido_integration,
+        update_runtime_projection: :mezzanine,
         materialize_evidence: :mezzanine,
         create_review: :mezzanine
       },
@@ -279,6 +321,26 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
   @doc "Terminal receipt persistence activity result."
   @spec persist_terminal_receipt_activity(map() | struct()) :: {:ok, map()} | {:error, term()}
   def persist_terminal_receipt_activity(attrs) do
+    reduce_runtime_projection_activity(
+      attrs,
+      :persist_terminal_receipt,
+      "persist-terminal-receipt",
+      "terminal-receipt"
+    )
+  end
+
+  @doc "Merge terminal side-effect refs into the reducer-owned runtime projection."
+  @spec update_runtime_projection_activity(map() | struct()) :: {:ok, map()} | {:error, term()}
+  def update_runtime_projection_activity(attrs) do
+    reduce_runtime_projection_activity(
+      attrs,
+      :update_runtime_projection,
+      "update-runtime-projection",
+      "runtime-projection"
+    )
+  end
+
+  defp reduce_runtime_projection_activity(attrs, activity, activity_slug, result_scheme) do
     attrs = normalize(attrs)
 
     required = [
@@ -297,8 +359,8 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
 
         {:ok,
          %{
-           activity: :persist_terminal_receipt,
-           activity_call_ref: "activity://#{attrs.workflow_id}/persist-terminal-receipt",
+           activity: activity,
+           activity_call_ref: "activity://#{attrs.workflow_id}/#{activity_slug}",
            owner_repo: :mezzanine,
            terminal_state: attrs.terminal_state,
            terminal_event_ref: attrs.terminal_event_ref,
@@ -307,7 +369,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
            projection_result: projection_result,
            trace_id: attrs.trace_id,
            release_manifest_ref: attrs.release_manifest_ref,
-           result_ref: "terminal-receipt://#{attrs.workflow_id}/#{attrs.lower_receipt_ref}"
+           result_ref: "#{result_scheme}://#{attrs.workflow_id}/#{attrs.lower_receipt_ref}"
          }}
 
       missing ->
@@ -730,15 +792,108 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
       run_id: Map.get(attrs, :lower_run_ref),
       attempt_id: Map.get(attrs, :lower_attempt_ref),
       lower_event_ref: Map.get(attrs, :lower_event_ref),
-      provider_object_refs:
-        Map.get(routing, :provider_object_refs) || Map.get(routing, "provider_object_refs") || [],
-      evidence_artifact_refs:
-        Map.get(routing, :evidence_artifact_refs) || Map.get(routing, "evidence_artifact_refs") ||
-          [],
+      provider_object_refs: payload_value(attrs, routing, :provider_object_refs) || [],
+      evidence_artifact_refs: payload_value(attrs, routing, :evidence_artifact_refs) || [],
+      artifact_refs: payload_value(attrs, routing, :artifact_refs) || [],
+      token_totals: payload_value(attrs, routing, :token_totals),
+      token_dedupe: payload_value(attrs, routing, :token_dedupe),
+      rate_limit: payload_value(attrs, routing, :rate_limit),
+      retry: payload_value(attrs, routing, :retry),
+      retry_receipts: payload_value(attrs, routing, :retry_receipts) || [],
+      runtime_events: payload_value(attrs, routing, :runtime_events) || [],
+      aitrace: payload_value(attrs, routing, :aitrace),
+      prompt_provenance: payload_value(attrs, routing, :prompt_provenance),
+      semantic_failure: payload_value(attrs, routing, :semantic_failure),
+      provider_account: payload_value(attrs, routing, :provider_account),
+      credential: payload_value(attrs, routing, :credential),
+      runtime_profile: runtime_profile_payload(attrs, routing),
+      governed_lower_envelope: lower_envelope_payload(attrs, routing),
+      authority_decision: authority_decision_payload(attrs, routing),
+      connector_manifests: connector_manifest_payload(attrs, routing),
+      capability_negotiations: capability_negotiation_payload(attrs, routing),
+      incident_bundles: payload_value(attrs, routing, :incident_bundles) || [],
+      acceptance: payload_value(attrs, routing, :acceptance),
+      github_pr_evidence: payload_value(attrs, routing, :github_pr_evidence),
+      source_publication: payload_value(attrs, routing, :source_publication),
+      workpad_refs: payload_value(attrs, routing, :workpad_refs) || [],
       trace_id: attrs.trace_id,
       causation_id: attrs.correlation_id,
       idempotency_key: attrs.idempotency_key
     }
+  end
+
+  defp runtime_profile_payload(attrs, routing) do
+    payload_value(attrs, routing, :runtime_profile) ||
+      %{
+        runtime_profile_ref: payload_value(attrs, routing, :runtime_profile_ref),
+        runtime_profile_kind: payload_value(attrs, routing, :runtime_profile_kind)
+      }
+  end
+
+  defp lower_envelope_payload(attrs, routing) do
+    payload_value(attrs, routing, :governed_lower_envelope) ||
+      payload_value(attrs, routing, :lower_envelope) ||
+      %{
+        lower_request_ref: payload_value(attrs, routing, :lower_request_ref),
+        lower_runtime_kind: payload_value(attrs, routing, :lower_runtime_kind),
+        capability_id:
+          payload_value(attrs, routing, :capability_id) ||
+            payload_value(attrs, routing, :capability),
+        resource_scope_refs: payload_value(attrs, routing, :resource_scope_refs),
+        policy_bundle_refs: payload_value(attrs, routing, :policy_bundle_refs),
+        script_refs: payload_value(attrs, routing, :script_refs),
+        package_refs: payload_value(attrs, routing, :package_refs),
+        sandbox_profile_ref: payload_value(attrs, routing, :sandbox_profile_ref),
+        attestation_requirement_ref: payload_value(attrs, routing, :attestation_requirement_ref),
+        denial_refs: payload_value(attrs, routing, :denial_refs)
+      }
+  end
+
+  defp authority_decision_payload(attrs, routing) do
+    payload_value(attrs, routing, :authority_decision) ||
+      %{
+        authority_ref:
+          payload_value(attrs, routing, :authority_ref) ||
+            Map.get(attrs, :permission_decision_ref),
+        authority_decision_hash:
+          payload_value(attrs, routing, :authority_decision_hash) ||
+            Map.get(attrs, :decision_hash)
+      }
+  end
+
+  defp connector_manifest_payload(attrs, routing) do
+    case payload_value(attrs, routing, :connector_manifests) do
+      nil ->
+        attrs
+        |> payload_value(routing, :connector_manifest_refs)
+        |> List.wrap()
+        |> Enum.map(&%{connector_manifest_ref: &1})
+
+      manifests ->
+        manifests
+    end
+  end
+
+  defp capability_negotiation_payload(attrs, routing) do
+    case payload_value(attrs, routing, :capability_negotiations) do
+      nil ->
+        attrs
+        |> payload_value(routing, :capability_negotiation_refs)
+        |> List.wrap()
+        |> Enum.map(&%{capability_negotiation_ref: &1})
+
+      negotiations ->
+        negotiations
+    end
+  end
+
+  defp payload_value(attrs, routing, key) do
+    string_key = Atom.to_string(key)
+
+    Map.get(routing, key) ||
+      Map.get(routing, string_key) ||
+      Map.get(attrs, key) ||
+      Map.get(attrs, string_key)
   end
 
   defp subject_id_from_attrs(attrs) do

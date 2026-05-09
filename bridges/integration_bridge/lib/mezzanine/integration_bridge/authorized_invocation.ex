@@ -201,6 +201,8 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
         "lower-receipt://#{URI.encode_www_form(envelope.lower_request_ref)}/#{status}",
       lower_request_ref: envelope.lower_request_ref,
       lower_runtime_kind: envelope.lower_runtime_kind,
+      runtime_profile_ref: envelope.runtime_profile_ref,
+      runtime_profile_kind: envelope.runtime_profile_kind,
       status: status,
       tenant_ref: envelope.tenant_ref,
       subject_ref: envelope.subject_ref,
@@ -211,17 +213,38 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
       idempotency_key: envelope.idempotency_key,
       authority_ref: envelope.authority_ref,
       authority_decision_hash: envelope.authority_decision_hash,
+      allowed_operations: envelope.allowed_operations,
       capability_id: envelope.capability_id,
       action_id: envelope.action_id,
       connector_ref: envelope.connector_ref,
       connector_manifest_ref: envelope.connector_manifest_ref,
       connector_manifest_hash: envelope.connector_manifest_hash,
+      connector_manifest_state: envelope.connector_manifest_state,
       capability_negotiation_ref: envelope.capability_negotiation_ref,
+      policy_profile_ref: envelope.policy_profile_ref,
+      policy_bundle_ref: envelope.policy_bundle_ref,
       policy_bundle_hash: envelope.policy_bundle_hash,
+      cedar_schema_ref: envelope.cedar_schema_ref,
       cedar_schema_hash: envelope.cedar_schema_hash,
+      script_ref: envelope.script_ref,
       script_hash: envelope.script_hash,
+      script_api_version: envelope.script_api_version,
+      declared_actions: envelope.declared_actions,
+      package_refs: envelope.package_refs,
+      resource_scope_refs: envelope.resource_scope_refs,
       workspace_ref: envelope.workspace_ref,
       target_ref: envelope.target_ref,
+      placement_ref: envelope.placement_ref,
+      sandbox_profile_ref: envelope.sandbox_profile_ref,
+      sandbox_level: envelope.sandbox_level,
+      network_policy_ref: envelope.network_policy_ref,
+      filesystem_policy_ref: envelope.filesystem_policy_ref,
+      acceptable_attestation: envelope.acceptable_attestation,
+      attestation_requirement_ref: envelope.attestation_requirement_ref,
+      evidence_profile_ref: envelope.evidence_profile_ref,
+      redaction_profile_ref: envelope.redaction_profile_ref,
+      input_ref: envelope.input_ref,
+      input_hash: envelope.input_hash,
       artifact_refs: artifact_refs(dispatch_result),
       event_refs: event_refs(dispatch_result),
       observed_at: DateTime.utc_now() |> DateTime.to_iso8601(),
@@ -565,7 +588,8 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
       script_ref: Keyword.get(opts, :script_ref),
       script_hash: Keyword.get(opts, :script_hash),
       script_api_version: Keyword.get(opts, :script_api_version),
-      declared_actions: Keyword.get(opts, :declared_actions, [])
+      declared_actions: Keyword.get(opts, :declared_actions, []),
+      package_refs: Keyword.get(opts, :package_refs, [])
     }
   end
 
@@ -607,7 +631,13 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
         Keyword.get(opts, :network_policy_ref, network_policy_ref(governance_sandbox)),
       filesystem_policy_ref:
         Keyword.get(opts, :filesystem_policy_ref, filesystem_policy_ref(governance_sandbox)),
-      acceptable_attestation: context.acceptable_attestation
+      acceptable_attestation: context.acceptable_attestation,
+      attestation_requirement_ref:
+        Keyword.get(
+          opts,
+          :attestation_requirement_ref,
+          List.first(context.acceptable_attestation)
+        )
     }
   end
 

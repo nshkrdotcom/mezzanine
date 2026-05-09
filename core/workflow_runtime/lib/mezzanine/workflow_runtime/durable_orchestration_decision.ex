@@ -231,6 +231,14 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
       version: "publish-source.v1"
     },
     %{
+      name: :update_runtime_projection,
+      module: Mezzanine.Activities.UpdateRuntimeProjection,
+      owner_repo: :mezzanine,
+      task_queue: "mezzanine.agentic",
+      lease_broker?: false,
+      version: "update-runtime-projection.v1"
+    },
+    %{
       name: :materialize_evidence,
       module: Mezzanine.Activities.MaterializeEvidence,
       owner_repo: :mezzanine,
@@ -821,6 +829,13 @@ defmodule Mezzanine.Workflows.ExecutionAttempt do
                task_queue: "mezzanine.agentic",
                start_to_close_timeout: :timer.seconds(30)
              ),
+           projection_attrs <-
+             terminal_attrs_with_source_publication(terminal_attrs, source_publish),
+           {:ok, runtime_projection} <-
+             execute_activity(Mezzanine.Activities.UpdateRuntimeProjection, projection_attrs,
+               task_queue: "mezzanine.agentic",
+               start_to_close_timeout: :timer.seconds(10)
+             ),
            {:ok, evidence} <-
              execute_activity(Mezzanine.Activities.MaterializeEvidence, terminal_attrs,
                task_queue: "mezzanine.agentic",
@@ -835,6 +850,7 @@ defmodule Mezzanine.Workflows.ExecutionAttempt do
           terminal_receipt_ref: persisted.result_ref,
           workspace_cleanup_ref: cleanup.result_ref,
           source_publish_ref: source_publish.result_ref,
+          runtime_projection_ref: runtime_projection.result_ref,
           evidence_ref: evidence.result_ref,
           review_ref: review.result_ref
         }
@@ -851,6 +867,7 @@ defmodule Mezzanine.Workflows.ExecutionAttempt do
               persisted.activity_call_ref,
               cleanup.activity_call_ref,
               source_publish.activity_call_ref,
+              runtime_projection.activity_call_ref,
               evidence.activity_call_ref,
               review.activity_call_ref
             ],
@@ -880,6 +897,20 @@ defmodule Mezzanine.Workflows.ExecutionAttempt do
       "workflow-event://#{Map.fetch!(result, :workflow_id)}/terminal"
     )
     |> Map.put_new(:lower_receipt_ref, "lower-receipt://unknown")
+  end
+
+  defp terminal_attrs_with_source_publication(terminal_attrs, source_publish) do
+    publication =
+      Map.get(source_publish, :source_publication_receipt) ||
+        Map.get(source_publish, "source_publication_receipt") ||
+        Map.get(source_publish, :source_publication) ||
+        Map.get(source_publish, "source_publication")
+
+    if is_map(publication) do
+      Map.put(terminal_attrs, :source_publication, publication)
+    else
+      terminal_attrs
+    end
   end
 
   defp hold_for_receipt?(input) when is_map(input) do
@@ -1193,6 +1224,20 @@ defmodule Mezzanine.Activities.PublishSource do
 
   @impl Temporalex.Activity
   def perform(input), do: ExecutionLifecycleWorkflow.publish_source_activity(input)
+end
+
+defmodule Mezzanine.Activities.UpdateRuntimeProjection do
+  @moduledoc "Temporal activity for merging terminal side-effect refs into runtime projection."
+
+  use Temporalex.Activity,
+    task_queue: "mezzanine.agentic",
+    start_to_close_timeout: 10_000,
+    retry_policy: [max_attempts: 3]
+
+  alias Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow
+
+  @impl Temporalex.Activity
+  def perform(input), do: ExecutionLifecycleWorkflow.update_runtime_projection_activity(input)
 end
 
 defmodule Mezzanine.Activities.MaterializeEvidence do
