@@ -316,6 +316,63 @@ defmodule Mezzanine.IntegrationBridgeTest do
     end)
   end
 
+  test "authorized invocation builds governed Codex turn input from Citadel execution intent" do
+    attrs =
+      authorized_invocation_attrs()
+      |> put_in([:invocation_request, :allowed_operations], [
+        "codex.session.turn",
+        "linear.comments.update"
+      ])
+      |> put_in([:invocation_request, :execution_governance, :operations], %{
+        "allowed_operations" => ["codex.session.turn", "linear.comments.update"]
+      })
+      |> put_in([:invocation_request, :execution_governance, :sandbox], %{
+        "allowed_tools" => ["codex.session.turn", "linear.api.comments.update"],
+        "file_scope_hint" => "/home/dev/extravaganza",
+        "file_scope_ref" => "workspace://work_object/subject-1"
+      })
+      |> put_in([:invocation_request, :extensions, "citadel", "execution_intent"], %{
+        "prompt" => "Implement the governed slice",
+        "cwd" => "/home/dev/extravaganza",
+        "continuation" => %{"strategy" => "latest"},
+        "provider_metadata" => %{"model" => "gpt-5.4", "app_server" => true},
+        "dynamic_tool_manifest" => %{"tools" => ["linear.comment.update"]},
+        "host_tools" => [
+          %{
+            "name" => "linear_comment_update",
+            "inputSchema" => %{"type" => "object"}
+          }
+        ]
+      })
+
+    invocation = AuthorizedInvocation.new!(attrs)
+    input = AuthorizedInvocation.invoke_input(invocation, "codex.session.turn")
+
+    assert input.prompt == "Implement the governed slice"
+    assert input.cwd == "/home/dev/extravaganza"
+    assert input.continuation == %{"strategy" => "latest"}
+
+    assert input.host_tools == [
+             %{"name" => "linear_comment_update", "inputSchema" => %{"type" => "object"}}
+           ]
+
+    assert input.provider_metadata["model"] == "gpt-5.4"
+    assert input.provider_metadata["app_server"] == true
+
+    assert input.provider_metadata["dynamic_tool_manifest"] == %{
+             "tools" => ["linear.comment.update"]
+           }
+
+    assert input.dynamic_tool_manifest == %{"tools" => ["linear.comment.update"]}
+    assert input.authority_metadata["authority_ref"] == "authority-decision://mock-decision-123"
+    assert input.authority_metadata["authority_decision_hash"] == String.duplicate("a", 64)
+
+    assert input.authority_metadata["allowed_operations"] == [
+             "codex.session.turn",
+             "linear.comments.update"
+           ]
+  end
+
   defp assert_error_contains(fragment, fun) do
     error = assert_raise(ArgumentError, fun)
 

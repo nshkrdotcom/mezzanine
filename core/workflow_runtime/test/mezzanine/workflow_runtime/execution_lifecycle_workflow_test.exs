@@ -44,6 +44,8 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
 
   defmodule FakeIntegrationBridge do
     def invoke_run_intent(%{authorized_invocation_boundary: _boundary} = invocation, _opts) do
+      send(self(), {:fake_integration_invocation, invocation})
+
       {:ok,
        %{
          lower_submission_ref: "jido-lower://#{invocation.submission_dedupe_key}",
@@ -258,6 +260,42 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     assert {:ok, review} = ExecutionLifecycleWorkflow.create_review_activity(terminal_attrs)
     assert review.owner_repo == :mezzanine
     assert review.review_ref == "review://workflow-093/lower-receipt-095"
+  end
+
+  test "workflow lower submission preserves governed Codex turn execution intent" do
+    attrs =
+      lifecycle_attrs()
+      |> put_in([:routing_facts, :allowed_operations], [
+        "codex.session.turn",
+        "linear.comments.update"
+      ])
+      |> put_in([:routing_facts, :allowed_tools], [
+        "codex.session.turn",
+        "linear.api.comments.update"
+      ])
+      |> put_in([:routing_facts, :execution_intent], %{
+        "prompt" => "Implement the governed slice",
+        "cwd" => "/home/dev/extravaganza",
+        "provider_metadata" => %{"model" => "gpt-5.4", "app_server" => true},
+        "dynamic_tool_manifest" => %{"tools" => ["linear.comment.update"]},
+        "continuation" => %{"strategy" => "latest"}
+      })
+
+    assert {:ok, authority} = ExecutionLifecycleWorkflow.compile_citadel_authority_activity(attrs)
+
+    assert {:ok, _lower} =
+             attrs
+             |> Map.put(:citadel_authority, authority)
+             |> ExecutionLifecycleWorkflow.submit_jido_lower_run_activity()
+
+    assert_received {:fake_integration_invocation, invocation}
+
+    execution_intent = invocation.invocation_request.extensions["citadel"]["execution_intent"]
+
+    assert execution_intent["prompt"] == "Implement the governed slice"
+    assert execution_intent["cwd"] == "/home/dev/extravaganza"
+    assert execution_intent["provider_metadata"]["app_server"] == true
+    assert execution_intent["dynamic_tool_manifest"] == %{"tools" => ["linear.comment.update"]}
   end
 
   test "Citadel activity fails closed on explicit rejection" do

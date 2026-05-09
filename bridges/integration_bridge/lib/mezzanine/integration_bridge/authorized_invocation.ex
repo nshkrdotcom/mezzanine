@@ -139,6 +139,9 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
         for_action_ref: invocation.action_ref || authority_for_action_ref(authority_packet)
       }
     }
+    |> Map.merge(
+      codex_turn_input_attrs(request, authority_packet, execution_governance, capability_id)
+    )
   end
 
   @spec governed_lower_envelope(t(), String.t(), keyword()) ::
@@ -313,6 +316,101 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
     |> Map.merge(evidence_attrs(context))
     |> Map.merge(extension_attrs(context))
   end
+
+  defp codex_turn_input_attrs(request, authority_packet, execution_governance, capability_id) do
+    execution_intent = execution_intent(request)
+
+    if execution_intent == %{} do
+      %{}
+    else
+      dynamic_tool_manifest = optional_map(execution_intent, "dynamic_tool_manifest")
+
+      provider_metadata =
+        execution_intent
+        |> optional_map("provider_metadata")
+        |> maybe_put_non_empty("dynamic_tool_manifest", dynamic_tool_manifest)
+
+      %{}
+      |> maybe_put_non_empty(:prompt, string_value(execution_intent, "prompt"))
+      |> maybe_put_non_empty(:cwd, codex_cwd(execution_intent, execution_governance))
+      |> maybe_put_non_empty(:workspace, optional_map(execution_intent, "workspace"))
+      |> maybe_put_non_empty(:host_tools, optional_list(execution_intent, "host_tools"))
+      |> maybe_put_non_empty(:continuation, optional_map(execution_intent, "continuation"))
+      |> maybe_put_non_empty(:provider_metadata, provider_metadata)
+      |> maybe_put_non_empty(:dynamic_tool_manifest, dynamic_tool_manifest)
+      |> maybe_put_non_empty(
+        :authority_metadata,
+        authority_metadata(request, authority_packet, execution_governance, capability_id)
+      )
+    end
+  end
+
+  defp execution_intent(request) do
+    request
+    |> optional(:extensions)
+    |> citadel_extension()
+    |> optional("execution_intent")
+    |> case do
+      %{} = intent -> intent
+      _other -> %{}
+    end
+  end
+
+  defp codex_cwd(execution_intent, execution_governance) do
+    string_value(execution_intent, "cwd") ||
+      string_value(execution_intent, "workspace_root") ||
+      execution_governance
+      |> optional(:sandbox)
+      |> string_value("file_scope_hint")
+  end
+
+  defp authority_metadata(request, authority_packet, execution_governance, capability_id) do
+    governance_operations = optional(execution_governance, :operations) || %{}
+    governance_authority_ref = optional(execution_governance, :authority_ref) || %{}
+
+    %{
+      "authority_ref" => authority_packet_ref(authority_packet),
+      "authority_decision_hash" =>
+        authority_decision_hash(%{
+          authority_packet: authority_packet,
+          governance_authority_ref: governance_authority_ref
+        }),
+      "permission_decision_ref" => required_string!(authority_packet, :decision_id),
+      "policy_version" => required_string!(authority_packet, :policy_version),
+      "execution_governance_id" =>
+        required_string!(execution_governance, :execution_governance_id),
+      "capability_id" => capability_id,
+      "allowed_operations" =>
+        string_list_value(
+          governance_operations,
+          "allowed_operations",
+          required!(request, :allowed_operations)
+        )
+    }
+  end
+
+  defp optional_map(%{} = map, key) do
+    case optional(map, key) do
+      %{} = value -> value
+      _other -> %{}
+    end
+  end
+
+  defp optional_map(_map, _key), do: %{}
+
+  defp optional_list(%{} = map, key) do
+    case optional(map, key) do
+      value when is_list(value) -> value
+      _other -> []
+    end
+  end
+
+  defp optional_list(_map, _key), do: []
+
+  defp maybe_put_non_empty(map, _key, nil), do: map
+  defp maybe_put_non_empty(map, _key, []), do: map
+  defp maybe_put_non_empty(map, _key, value) when value == %{}, do: map
+  defp maybe_put_non_empty(map, key, value), do: Map.put(map, key, value)
 
   defp lower_envelope_context(
          invocation,
