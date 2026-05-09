@@ -290,6 +290,33 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     assert review.review_ref == "review://workflow-093/lower-receipt-095"
   end
 
+  test "materialize evidence activity carries GitHub PR evidence refs when supplied" do
+    attrs =
+      lifecycle_attrs()
+      |> Map.merge(%{
+        lower_receipt_ref: "lower-receipt-097",
+        github_pr_evidence: %{
+          evidence_ref: "evidence://github-pr/nshkrdotcom/extravaganza/17",
+          evidence_kind: "github_pr",
+          content_ref: "github-pr://nshkrdotcom/extravaganza/17",
+          metadata: %{
+            "authority_refs" => ["authority-decision://github"],
+            "connector_manifest_refs" => ["manifest://jido/connectors/github@local"]
+          }
+        }
+      })
+
+    assert {:ok, evidence} = ExecutionLifecycleWorkflow.materialize_evidence_activity(attrs)
+
+    assert evidence.evidence_kind == "github_pr"
+    assert evidence.content_ref == "github-pr://nshkrdotcom/extravaganza/17"
+    assert evidence.result_ref == "evidence://github-pr/nshkrdotcom/extravaganza/17"
+
+    assert evidence.github_pr_evidence.metadata["authority_refs"] == [
+             "authority-decision://github"
+           ]
+  end
+
   test "workflow lower submission preserves governed Codex turn execution intent" do
     attrs =
       lifecycle_attrs()

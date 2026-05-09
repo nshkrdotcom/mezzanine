@@ -390,17 +390,18 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
             "evidence://#{attrs.workflow_id}/#{attrs.lower_receipt_ref}"
           )
 
-        {:ok,
-         %{
-           activity: :materialize_evidence,
-           activity_call_ref: "activity://#{attrs.workflow_id}/materialize-evidence",
-           owner_repo: :mezzanine,
-           evidence_ref: evidence_ref,
-           lower_receipt_ref: attrs.lower_receipt_ref,
-           trace_id: attrs.trace_id,
-           release_manifest_ref: attrs.release_manifest_ref,
-           result_ref: evidence_ref
-         }}
+        result = %{
+          activity: :materialize_evidence,
+          activity_call_ref: "activity://#{attrs.workflow_id}/materialize-evidence",
+          owner_repo: :mezzanine,
+          evidence_ref: evidence_ref,
+          lower_receipt_ref: attrs.lower_receipt_ref,
+          trace_id: attrs.trace_id,
+          release_manifest_ref: attrs.release_manifest_ref,
+          result_ref: evidence_ref
+        }
+
+        {:ok, maybe_attach_github_pr_evidence(result, attrs)}
 
       missing ->
         {:error, {:missing_required_fields, missing}}
@@ -933,6 +934,21 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
 
   defp source_publication_receipt_ref(publication) do
     get_in(publication, [:source_publication_receipt, :source_publication_receipt_ref])
+  end
+
+  defp maybe_attach_github_pr_evidence(result, attrs) do
+    case Map.get(attrs, :github_pr_evidence) || Map.get(attrs, "github_pr_evidence") do
+      %{} = evidence ->
+        result
+        |> Map.put(:evidence_kind, Map.get(evidence, :evidence_kind, "github_pr"))
+        |> Map.put(:content_ref, Map.get(evidence, :content_ref))
+        |> Map.put(:evidence_metadata, Map.get(evidence, :metadata, %{}))
+        |> Map.put(:github_pr_evidence, evidence)
+        |> Map.put(:result_ref, Map.get(evidence, :evidence_ref, result.result_ref))
+
+      _other ->
+        result
+    end
   end
 
   defp invoke_source_publication(invocation, request, attrs) do

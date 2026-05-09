@@ -276,6 +276,114 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert result.source_publication_receipt.workpad_refs == ["linear-comment://comment-created"]
   end
 
+  test "GitHub PR creation uses governed direct connector dispatch" do
+    invocation = authorized_invocation_allowing(["github.pr.create"])
+
+    invoke_fun = fn capability, input, opts ->
+      send(self(), {:invoke, capability, input, opts})
+      {:ok, %{output: github_pr(), artifact_refs: ["artifact://github/pr-create"]}}
+    end
+
+    assert {:ok, result} =
+             IntegrationBridge.create_github_pr(
+               invocation,
+               %{
+                 repo: "nshkrdotcom/extravaganza",
+                 title: "Governed GitHub PR",
+                 body: "Created through the direct connector lane",
+                 head: "phase-7",
+                 base: "main",
+                 draft: true
+               },
+               invoke_fun: invoke_fun
+             )
+
+    assert_received {:invoke, "github.pr.create", input, opts}
+    assert input.repo == "nshkrdotcom/extravaganza"
+    assert input.governed_lower_envelope["lower_runtime_kind"] == "direct_connector"
+
+    assert input.governed_lower_envelope["connector_manifest_ref"] ==
+             "manifest://jido/connectors/github@local"
+
+    envelope = Keyword.fetch!(opts, :governed_lower_envelope)
+    assert envelope.capability_id == "github.pr.create"
+    assert envelope.connector_ref == "jido/connectors/github"
+
+    assert result.github_operation_receipt.capability_id == "github.pr.create"
+    assert result.github_operation_receipt.capability_negotiation_ref =~ "cap-neg://"
+    assert result.github_operation_receipt.provider_response_ref == "artifact://github/pr-create"
+  end
+
+  test "GitHub PR feedback sweep reads reviews, comments, statuses, and checks" do
+    capabilities = [
+      "github.pr.reviews.list",
+      "github.pr.review_comments.list",
+      "github.commit.statuses.get_combined",
+      "github.check_runs.list_for_ref"
+    ]
+
+    invocation = authorized_invocation_allowing(capabilities)
+
+    invoke_fun = fn
+      "github.pr.reviews.list", input, _opts ->
+        send(self(), {:invoke, "github.pr.reviews.list", input})
+        {:ok, %{output: github_reviews(), artifact_refs: ["artifact://github/reviews"]}}
+
+      "github.pr.review_comments.list", input, _opts ->
+        send(self(), {:invoke, "github.pr.review_comments.list", input})
+        {:ok, %{output: github_review_comments(), artifact_refs: ["artifact://github/comments"]}}
+
+      "github.commit.statuses.get_combined", input, _opts ->
+        send(self(), {:invoke, "github.commit.statuses.get_combined", input})
+        {:ok, %{output: github_status(), artifact_refs: ["artifact://github/status"]}}
+
+      "github.check_runs.list_for_ref", input, _opts ->
+        send(self(), {:invoke, "github.check_runs.list_for_ref", input})
+        {:ok, %{output: github_checks(), artifact_refs: ["artifact://github/checks"]}}
+    end
+
+    assert {:ok, %{github_feedback_sweep: sweep}} =
+             IntegrationBridge.sweep_github_pr_feedback(
+               invocation,
+               %{repo: "nshkrdotcom/extravaganza", pull_number: 17, ref: "head-sha"},
+               invoke_fun: invoke_fun
+             )
+
+    assert_received {:invoke, "github.pr.reviews.list",
+                     %{repo: "nshkrdotcom/extravaganza", pull_number: 17}}
+
+    assert_received {:invoke, "github.commit.statuses.get_combined",
+                     %{repo: "nshkrdotcom/extravaganza", ref: "head-sha"}}
+
+    assert sweep.review_count == 2
+    assert sweep.review_comment_count == 1
+    assert sweep.combined_state == "success"
+    assert sweep.check_run_count == 1
+    assert Enum.map(sweep.operation_receipts, & &1.capability_id) == capabilities
+  end
+
+  test "GitHub branch cleanup is a governed delete-ref operation" do
+    invocation = authorized_invocation_allowing(["github.git.ref.delete"])
+
+    invoke_fun = fn capability, input, _opts ->
+      send(self(), {:invoke, capability, input})
+      {:ok, %{output: %{repo: input.repo, ref: input.ref, deleted?: true}}}
+    end
+
+    assert {:ok, result} =
+             IntegrationBridge.cleanup_github_branch(
+               invocation,
+               %{repo: "nshkrdotcom/extravaganza", ref: "heads/phase-7"},
+               invoke_fun: invoke_fun
+             )
+
+    assert_received {:invoke, "github.git.ref.delete",
+                     %{repo: "nshkrdotcom/extravaganza", ref: "heads/phase-7"}}
+
+    assert result.github_operation_receipt.capability_id == "github.git.ref.delete"
+    assert result.github_operation_receipt.lower_runtime_kind == "direct_connector"
+  end
+
   test "invoke_run_intent builds a governed lower envelope and receipt around dispatch" do
     invocation = authorized_invocation()
 
@@ -913,6 +1021,54 @@ defmodule Mezzanine.IntegrationBridgeTest do
       state: %{id: "state-todo", name: "Todo", type: "unstarted"},
       assignee: %{id: "usr-linear-viewer", name: "Taylor Automation"},
       blockers: []
+    }
+  end
+
+  defp github_pr do
+    %{
+      repo: "nshkrdotcom/extravaganza",
+      pull_number: 17,
+      title: "Governed GitHub PR",
+      state: "open",
+      html_url: "https://github.com/nshkrdotcom/extravaganza/pull/17",
+      head: %{ref: "phase-7", sha: "head-sha"},
+      base: %{ref: "main", sha: "base-sha"}
+    }
+  end
+
+  defp github_reviews do
+    %{
+      repo: "nshkrdotcom/extravaganza",
+      pull_number: 17,
+      reviews: [
+        %{review_id: 1, state: "APPROVED"},
+        %{review_id: 2, state: "CHANGES_REQUESTED"}
+      ]
+    }
+  end
+
+  defp github_review_comments do
+    %{
+      repo: "nshkrdotcom/extravaganza",
+      pull_number: 17,
+      comments: [%{comment_id: 11, path: "lib/extravaganza.ex"}]
+    }
+  end
+
+  defp github_status do
+    %{
+      repo: "nshkrdotcom/extravaganza",
+      ref: "head-sha",
+      state: "success",
+      statuses: [%{context: "mix ci", state: "success"}]
+    }
+  end
+
+  defp github_checks do
+    %{
+      repo: "nshkrdotcom/extravaganza",
+      ref: "head-sha",
+      check_runs: [%{name: "mix ci", status: "completed", conclusion: "success"}]
     }
   end
 end

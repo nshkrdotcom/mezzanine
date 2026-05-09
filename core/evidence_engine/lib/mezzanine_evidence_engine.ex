@@ -9,6 +9,7 @@ defmodule MezzanineEvidenceEngine do
       Mezzanine.EvidenceLedger.Store,
       Mezzanine.EvidenceLedger,
       Mezzanine.EvidenceLedger.EvidenceRecord,
+      Mezzanine.EvidenceLedger.GitHubPrEvidence,
       Mezzanine.EvidenceLedger.Summary
     ]
   end

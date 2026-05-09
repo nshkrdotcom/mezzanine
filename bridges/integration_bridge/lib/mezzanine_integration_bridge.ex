@@ -8,6 +8,7 @@ defmodule Mezzanine.IntegrationBridge do
     DirectRunDispatcher,
     EffectDispatcher,
     EventTranslator,
+    GitHubPrDispatcher,
     LinearSourceDispatcher,
     ReadDispatcher
   }
@@ -46,6 +47,78 @@ defmodule Mezzanine.IntegrationBridge do
   defdelegate update_linear_issue_state(invocation, attrs, opts \\ []),
     to: LinearSourceDispatcher,
     as: :update_issue_state
+
+  @spec create_github_pr(AuthorizedInvocation.t(), map() | keyword(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  defdelegate create_github_pr(invocation, attrs, opts \\ []),
+    to: GitHubPrDispatcher,
+    as: :create_pr
+
+  @spec fetch_github_pr(AuthorizedInvocation.t(), map() | keyword(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  defdelegate fetch_github_pr(invocation, attrs, opts \\ []),
+    to: GitHubPrDispatcher,
+    as: :fetch_pr
+
+  @spec list_github_prs(AuthorizedInvocation.t(), map() | keyword(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  defdelegate list_github_prs(invocation, attrs, opts \\ []),
+    to: GitHubPrDispatcher,
+    as: :list_prs
+
+  @spec update_github_pr(AuthorizedInvocation.t(), map() | keyword(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  defdelegate update_github_pr(invocation, attrs, opts \\ []),
+    to: GitHubPrDispatcher,
+    as: :update_pr
+
+  @spec list_github_pr_reviews(AuthorizedInvocation.t(), map() | keyword(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  defdelegate list_github_pr_reviews(invocation, attrs, opts \\ []),
+    to: GitHubPrDispatcher,
+    as: :list_reviews
+
+  @spec list_github_pr_review_comments(AuthorizedInvocation.t(), map() | keyword(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  defdelegate list_github_pr_review_comments(invocation, attrs, opts \\ []),
+    to: GitHubPrDispatcher,
+    as: :list_review_comments
+
+  @spec create_github_pr_review(AuthorizedInvocation.t(), map() | keyword(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  defdelegate create_github_pr_review(invocation, attrs, opts \\ []),
+    to: GitHubPrDispatcher,
+    as: :create_review
+
+  @spec create_github_pr_review_comment(AuthorizedInvocation.t(), map() | keyword(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  defdelegate create_github_pr_review_comment(invocation, attrs, opts \\ []),
+    to: GitHubPrDispatcher,
+    as: :create_review_comment
+
+  @spec fetch_github_combined_status(AuthorizedInvocation.t(), map() | keyword(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  defdelegate fetch_github_combined_status(invocation, attrs, opts \\ []),
+    to: GitHubPrDispatcher,
+    as: :fetch_combined_status
+
+  @spec list_github_check_runs(AuthorizedInvocation.t(), map() | keyword(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  defdelegate list_github_check_runs(invocation, attrs, opts \\ []),
+    to: GitHubPrDispatcher,
+    as: :list_check_runs
+
+  @spec sweep_github_pr_feedback(AuthorizedInvocation.t(), map() | keyword(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  defdelegate sweep_github_pr_feedback(invocation, attrs, opts \\ []),
+    to: GitHubPrDispatcher,
+    as: :feedback_sweep
+
+  @spec cleanup_github_branch(AuthorizedInvocation.t(), map() | keyword(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  defdelegate cleanup_github_branch(invocation, attrs, opts \\ []),
+    to: GitHubPrDispatcher,
+    as: :cleanup_branch
 
   @spec to_audit_attrs(map(), map()) :: map()
   defdelegate to_audit_attrs(event, attrs \\ %{}), to: EventTranslator
