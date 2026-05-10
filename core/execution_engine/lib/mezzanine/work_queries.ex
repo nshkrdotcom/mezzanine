@@ -462,13 +462,22 @@ defmodule Mezzanine.WorkQueries do
       "recipe_ref" => execution.recipe_ref,
       "submission_dedupe_key" => execution.submission_dedupe_key,
       "updated_at" => runtime_timestamp(execution.updated_at || execution.inserted_at),
-      "metadata" => %{
-        "installation_id" => execution.installation_id,
-        "compiled_pack_revision" => execution.compiled_pack_revision,
-        "dispatch_attempt_count" => execution.dispatch_attempt_count,
-        "workflow_start_ref" => map_value(execution.dispatch_envelope, :workflow_start_ref),
-        "workflow_ref" => map_value(execution.dispatch_envelope, :workflow_id)
-      }
+      "metadata" =>
+        %{
+          "installation_id" => execution.installation_id,
+          "compiled_pack_revision" => execution.compiled_pack_revision,
+          "dispatch_attempt_count" => execution.dispatch_attempt_count,
+          "scheduler_state" => scheduler_state(execution),
+          "claim_state" => claim_state(execution),
+          "running_state" => running_state(execution),
+          "retry_state" => retry_state(execution),
+          "completion_state" => completion_state(execution),
+          "next_dispatch_at" => runtime_timestamp(execution.next_dispatch_at),
+          "last_dispatch_error_kind" => execution.last_dispatch_error_kind,
+          "workflow_start_ref" => map_value(execution.dispatch_envelope, :workflow_start_ref),
+          "workflow_ref" => map_value(execution.dispatch_envelope, :workflow_id)
+        }
+        |> compact_map()
     }
     |> compact_map()
   end
@@ -528,20 +537,122 @@ defmodule Mezzanine.WorkQueries do
       "token_totals" => %{},
       "token_dedupe" => %{},
       "rate_limit" => %{},
-      "retry_queue" => [],
-      "event_counts" => %{
-        "workflow_start_queued" => 1,
-        "execution_#{normalize_state(execution.dispatch_state)}" => 1
-      },
-      "metadata" => %{
-        "work_object_id" => work_object.id,
-        "plan_id" => current_plan_id(current_plan),
-        "run_id" => active_run_id(active_run),
-        "projection_source" => "mezzanine_work_queries",
-        "projection_mode" => Keyword.get(opts, :projection_mode, "same_run_readback")
-      }
+      "retry_queue" => retry_queue_projection(execution),
+      "event_counts" => runtime_event_counts(execution),
+      "metadata" =>
+        %{
+          "work_object_id" => work_object.id,
+          "plan_id" => current_plan_id(current_plan),
+          "run_id" => active_run_id(active_run),
+          "scheduler_state" => scheduler_state(execution),
+          "claim_state" => claim_state(execution),
+          "running_state" => running_state(execution),
+          "retry_state" => retry_state(execution),
+          "completion_state" => completion_state(execution),
+          "projection_source" => "mezzanine_work_queries",
+          "projection_mode" => Keyword.get(opts, :projection_mode, "same_run_readback")
+        }
+        |> compact_map()
     }
   end
+
+  defp runtime_event_counts(execution) do
+    %{
+      "workflow_start_queued" => 1,
+      "execution_#{normalize_state(execution.dispatch_state)}" => 1
+    }
+    |> Map.put("scheduler_#{scheduler_state(execution)}", 1)
+  end
+
+  defp retry_queue_projection(execution) do
+    if retry_scheduled?(execution) do
+      attempt_number = retry_attempt_number(execution)
+
+      [
+        %{
+          "retry_ref" => "retry://#{execution.id}/#{attempt_number}",
+          "attempt_ref" => "attempt://#{execution.id}/#{attempt_number}",
+          "status" => "scheduled",
+          "reason" => execution.last_dispatch_error_kind,
+          "scheduled_at" => runtime_timestamp(execution.next_dispatch_at),
+          "last_error_ref" =>
+            "execution-error://#{execution.id}/#{execution.last_dispatch_error_kind}",
+          "metadata" => normalize_value(execution.last_dispatch_error_payload || %{})
+        }
+        |> compact_map()
+      ]
+    else
+      []
+    end
+  end
+
+  defp scheduler_state(execution) do
+    cond do
+      retry_scheduled?(execution) ->
+        "retry_scheduled"
+
+      execution.dispatch_state == :queued ->
+        "claim_queued"
+
+      execution.dispatch_state in [:in_flight, :accepted_active] ->
+        "running"
+
+      execution.dispatch_state == :completed ->
+        "completed"
+
+      execution.dispatch_state == :failed ->
+        "failed"
+
+      execution.dispatch_state == :cancelled ->
+        "cancelled"
+
+      execution.dispatch_state == :rejected ->
+        "rejected"
+
+      true ->
+        normalize_state(execution.dispatch_state)
+    end
+  end
+
+  defp claim_state(execution) do
+    cond do
+      retry_scheduled?(execution) ->
+        "released"
+
+      execution.dispatch_state in [:queued, :in_flight, :accepted_active] ->
+        "claimed"
+
+      execution.dispatch_state == :completed ->
+        "completed"
+
+      execution.dispatch_state in [:cancelled, :failed, :rejected] ->
+        "released"
+
+      true ->
+        normalize_state(execution.dispatch_state)
+    end
+  end
+
+  defp running_state(execution) do
+    cond do
+      retry_scheduled?(execution) -> "not_running"
+      execution.dispatch_state in [:in_flight, :accepted_active] -> "running"
+      true -> "not_running"
+    end
+  end
+
+  defp retry_state(execution), do: if(retry_scheduled?(execution), do: "scheduled", else: "none")
+
+  defp completion_state(%ExecutionRecord{dispatch_state: :completed}), do: "completed"
+  defp completion_state(_execution), do: nil
+
+  defp retry_scheduled?(execution) do
+    not is_nil(execution.next_dispatch_at) and
+      is_binary(execution.last_dispatch_error_kind) and
+      execution.last_dispatch_error_kind != ""
+  end
+
+  defp retry_attempt_number(execution), do: (execution.dispatch_attempt_count || 0) + 1
 
   defp evidence_projection(execution) do
     %{

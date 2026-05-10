@@ -154,6 +154,12 @@ defmodule Mezzanine.WorkControlTest do
     assert projection.projection_name == "operator_subject_runtime"
     assert projection.execution["execution_id"] == handoff.execution.id
     assert projection.execution["dispatch_state"] == "queued"
+    assert projection.execution["metadata"]["scheduler_state"] == "claim_queued"
+    assert projection.execution["metadata"]["claim_state"] == "claimed"
+    assert projection.execution["metadata"]["running_state"] == "not_running"
+    assert projection.execution["metadata"]["retry_state"] == "none"
+    assert projection.runtime["event_counts"]["scheduler_claim_queued"] == 1
+    assert projection.runtime["retry_queue"] == []
     refute Map.has_key?(projection.execution["metadata"], "workflow_id")
     assert projection.execution["metadata"]["workflow_ref"] == "workflow:test-execution-handoff"
 
@@ -162,6 +168,70 @@ defmodule Mezzanine.WorkControlTest do
 
     assert [%{"source_ref" => source_ref}] = projection.source_bindings
     assert String.contains?(source_ref, "linear")
+
+    retry_at = ~U[2026-05-10 22:30:00Z]
+
+    Repo.query!(
+      """
+      UPDATE execution_records
+      SET dispatch_state = 'in_flight',
+          next_dispatch_at = $2,
+          last_dispatch_error_kind = 'restart_recovery',
+          last_dispatch_error_payload = jsonb_build_object('reason', 'dispatch_worker_restarted'),
+          updated_at = $3
+      WHERE id::text = $1
+      """,
+      [handoff.execution.id, retry_at, retry_at]
+    )
+
+    assert {:ok, retry_projection} =
+             WorkQueries.get_subject_runtime_projection(tenant_id, work_object.id)
+
+    assert retry_projection.execution["dispatch_state"] == "in_flight"
+    assert retry_projection.execution["metadata"]["scheduler_state"] == "retry_scheduled"
+    assert retry_projection.execution["metadata"]["claim_state"] == "released"
+    assert retry_projection.execution["metadata"]["running_state"] == "not_running"
+    assert retry_projection.execution["metadata"]["retry_state"] == "scheduled"
+    assert retry_projection.runtime["event_counts"]["scheduler_retry_scheduled"] == 1
+
+    expected_attempt_ref = "attempt://#{handoff.execution.id}/1"
+
+    assert [
+             %{
+               "attempt_ref" => ^expected_attempt_ref,
+               "status" => "scheduled",
+               "reason" => "restart_recovery",
+               "scheduled_at" => scheduled_at
+             }
+           ] = retry_projection.runtime["retry_queue"]
+
+    assert DateTime.compare(scheduled_at, retry_at) == :eq
+
+    completed_at = ~U[2026-05-10 22:40:00Z]
+
+    Repo.query!(
+      """
+      UPDATE execution_records
+      SET dispatch_state = 'completed',
+          next_dispatch_at = NULL,
+          last_dispatch_error_kind = NULL,
+          last_dispatch_error_payload = '{}'::jsonb,
+          updated_at = $2
+      WHERE id::text = $1
+      """,
+      [handoff.execution.id, completed_at]
+    )
+
+    assert {:ok, completed_projection} =
+             WorkQueries.get_subject_runtime_projection(tenant_id, work_object.id)
+
+    assert completed_projection.lifecycle_state == "completed"
+    assert completed_projection.execution["dispatch_state"] == "completed"
+    assert completed_projection.execution["metadata"]["scheduler_state"] == "completed"
+    assert completed_projection.execution["metadata"]["claim_state"] == "completed"
+    assert completed_projection.execution["metadata"]["running_state"] == "not_running"
+    assert completed_projection.execution["metadata"]["retry_state"] == "none"
+    assert completed_projection.execution["metadata"]["completion_state"] == "completed"
   end
 
   defp fixture_stack(tenant_id) do
