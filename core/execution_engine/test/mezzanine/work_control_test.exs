@@ -1,10 +1,13 @@
 defmodule Mezzanine.WorkControlTest do
   use Mezzanine.Execution.DataCase, async: false
 
+  alias Mezzanine.Execution.ExecutionRecord
   alias Mezzanine.Programs.{PolicyBundle, Program}
   alias Mezzanine.Work.WorkClass
   alias Mezzanine.Work.WorkObject
   alias Mezzanine.WorkControl
+  alias Mezzanine.WorkExecutionHandoff
+  alias Mezzanine.WorkQueries
 
   test "ensure_control_session opens a durable control session once and reuses it" do
     %{tenant_id: tenant_id, work_object: work_object} = fixture_stack("tenant-work-control")
@@ -80,6 +83,85 @@ defmodule Mezzanine.WorkControlTest do
     assert started.run.runtime_profile["idempotency_key"] == "idem-phase2"
     assert started.run.runtime_profile["pack_revision"] == 9
     assert "linear.comments.update" in started.run.grant_profile["capability_ids"]
+  end
+
+  test "work execution handoff creates a current execution row for AppKit readback" do
+    %{tenant_id: tenant_id, work_object: work_object} =
+      fixture_stack("tenant-work-control-execution-handoff")
+
+    attrs = %{
+      trace_id: "trace-execution-handoff",
+      actor_ref: "ops_lead",
+      installation_ref: "installation://tenant-work-control-execution-handoff/default",
+      recipe_ref: "coding_operations",
+      idempotency_key: "idem-execution-handoff",
+      pack_revision: 3,
+      runtime_profile_ref: "codex_session",
+      runtime_profile_kind: "temporal_local",
+      lower_runtime_kind: "codex_session",
+      requested_capability_ids: ["codex.session.turn"],
+      requested_action_ids: ["codex.session.turn"],
+      source_binding_refs: ["linear_primary"],
+      resource_scope_refs: ["source_binding://linear_primary"],
+      live_provider_allowed: false
+    }
+
+    assert {:ok, started} = WorkControl.start_run_for_subject(tenant_id, work_object.id, attrs)
+
+    workflow_handoff = %{
+      outbox_row: %{
+        outbox_id: "workflow-start:test-execution-handoff",
+        workflow_id: "workflow:test-execution-handoff",
+        dispatch_state: "queued"
+      },
+      workflow_start_ref: "workflow-start-outbox://workflow-start:test-execution-handoff",
+      evidence_ref: "audit-event://workflow-start:test-execution-handoff"
+    }
+
+    assert {:ok, handoff} =
+             WorkExecutionHandoff.ensure_current_execution(
+               tenant_id,
+               started,
+               workflow_handoff,
+               attrs
+             )
+
+    assert handoff.status == :created
+    assert handoff.execution.subject_id == work_object.id
+    assert handoff.execution.dispatch_state == :queued
+    assert handoff.execution.submission_dedupe_key == "idem-execution-handoff"
+
+    assert handoff.execution.dispatch_envelope["workflow_start_ref"] ==
+             workflow_handoff.workflow_start_ref
+
+    assert {:ok, [active_execution]} = ExecutionRecord.active_for_subject(work_object.id)
+    assert active_execution.id == handoff.execution.id
+
+    assert {:ok, reused} =
+             WorkExecutionHandoff.ensure_current_execution(
+               tenant_id,
+               started,
+               workflow_handoff,
+               attrs
+             )
+
+    assert reused.status == :reused
+    assert reused.execution.id == handoff.execution.id
+
+    assert {:ok, projection} =
+             WorkQueries.get_subject_runtime_projection(tenant_id, work_object.id)
+
+    assert projection.projection_name == "operator_subject_runtime"
+    assert projection.execution["execution_id"] == handoff.execution.id
+    assert projection.execution["dispatch_state"] == "queued"
+    refute Map.has_key?(projection.execution["metadata"], "workflow_id")
+    assert projection.execution["metadata"]["workflow_ref"] == "workflow:test-execution-handoff"
+
+    assert projection.lower_receipt["lower_receipt_ref"] ==
+             "lower-receipt://pending/#{handoff.execution.id}"
+
+    assert [%{"source_ref" => source_ref}] = projection.source_bindings
+    assert String.contains?(source_ref, "linear")
   end
 
   defp fixture_stack(tenant_id) do

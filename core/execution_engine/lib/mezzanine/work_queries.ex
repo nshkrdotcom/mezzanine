@@ -17,6 +17,7 @@ defmodule Mezzanine.WorkQueries do
   alias Mezzanine.WorkProjectionFacts
 
   @active_statuses [:pending, :planning, :planned, :running, :awaiting_review, :blocked]
+  @runtime_projection_name "operator_subject_runtime"
 
   @spec ingest_subject(map(), keyword()) :: {:ok, map()} | {:error, term()}
   def ingest_subject(attrs, opts \\ []) when is_map(attrs) and is_list(opts) do
@@ -148,6 +149,48 @@ defmodule Mezzanine.WorkQueries do
          next_step_preview: projection_facts.next_step_preview,
          last_event_at: timeline_projection.last_event_at
        }}
+    end
+  end
+
+  @spec get_subject_runtime_projection(String.t(), Ecto.UUID.t(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  def get_subject_runtime_projection(tenant_id, subject_id, opts \\ [])
+      when is_binary(tenant_id) and is_binary(subject_id) and is_list(opts) do
+    with {:ok, work_object} <- fetch_work_object(tenant_id, subject_id),
+         {:ok, current_plan} <- fetch_current_plan(tenant_id, work_object.current_plan_id),
+         {:ok, run_series} <- list_run_series(tenant_id, work_object.id),
+         {:ok, active_run} <- fetch_active_run(tenant_id, run_series),
+         {:ok, active_execution} <- fetch_active_execution(work_object.id),
+         {:ok, latest_execution} <- fetch_latest_execution(work_object.id),
+         {:ok, execution} <- runtime_execution(active_execution, latest_execution),
+         {:ok, pending_reviews} <- list_pending_reviews_for_work(tenant_id, work_object.id),
+         {:ok, control_session} <- fetch_control_session(tenant_id, work_object.id),
+         {:ok, gate_status} <- Reviews.gate_status(tenant_id, work_object.id) do
+      projection_facts =
+        WorkProjectionFacts.build(
+          work_object,
+          current_plan,
+          active_run,
+          pending_reviews,
+          control_session,
+          gate_status
+        )
+
+      {:ok,
+       runtime_projection(%{
+         tenant_id: tenant_id,
+         work_object: work_object,
+         current_plan: current_plan,
+         active_run: active_run,
+         execution: execution,
+         pending_reviews: pending_reviews,
+         gate_status: gate_status,
+         projection_facts: projection_facts,
+         opts: opts
+       })}
+    else
+      {:error, :not_found} -> {:error, :runtime_projection_not_found}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -309,6 +352,235 @@ defmodule Mezzanine.WorkQueries do
       {:ok, [work_object]} -> {:ok, work_object}
       {:ok, []} -> {:error, :not_found}
       {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp runtime_execution(%ExecutionRecord{} = execution, _latest_execution), do: {:ok, execution}
+  defp runtime_execution(nil, %ExecutionRecord{} = execution), do: {:ok, execution}
+  defp runtime_execution(nil, nil), do: {:error, :runtime_projection_not_found}
+
+  defp runtime_projection(%{
+         tenant_id: tenant_id,
+         work_object: work_object,
+         current_plan: current_plan,
+         active_run: active_run,
+         execution: execution,
+         pending_reviews: pending_reviews,
+         gate_status: gate_status,
+         projection_facts: projection_facts,
+         opts: opts
+       }) do
+    computed_at =
+      execution.updated_at
+      |> Kernel.||(execution.inserted_at)
+      |> Kernel.||(work_object.updated_at)
+      |> Kernel.||(DateTime.utc_now())
+      |> runtime_timestamp()
+
+    %{
+      subject_id: work_object.id,
+      subject_kind: work_object.source_kind || "work_object",
+      lifecycle_state: lifecycle_state(work_object, active_run, execution),
+      work_status: work_object.status,
+      run_status: active_run_status(active_run),
+      review_status: gate_status.status,
+      projection_name: @runtime_projection_name,
+      projection_version: 1,
+      projection_kind: "mezzanine_current_execution",
+      computed_at: computed_at,
+      updated_at: computed_at,
+      subject: runtime_subject(work_object),
+      source_binding: source_binding_projection(tenant_id, work_object, execution),
+      source_bindings: [source_binding_projection(tenant_id, work_object, execution)],
+      execution: execution_projection(execution),
+      lower_receipt: lower_receipt_projection(execution),
+      runtime: runtime_projection_facts(work_object, current_plan, active_run, execution, opts),
+      evidence: evidence_projection(execution),
+      review: review_projection(pending_reviews, gate_status),
+      available_actions: [],
+      queue: %{
+        "pending_obligations" => normalize_value(projection_facts.pending_obligations),
+        "blocking_conditions" => normalize_value(projection_facts.blocking_conditions),
+        "next_step_preview" => normalize_value(projection_facts.next_step_preview)
+      }
+    }
+  end
+
+  defp runtime_subject(work_object) do
+    %{
+      "subject_id" => work_object.id,
+      "subject_kind" => work_object.source_kind || "work_object",
+      "lifecycle_state" => normalize_state(work_object.status),
+      "status" => normalize_state(work_object.status),
+      "title" => work_object.title,
+      "external_ref" => work_object.external_ref
+    }
+    |> compact_map()
+  end
+
+  defp source_binding_projection(tenant_id, work_object, execution) do
+    binding_ref =
+      execution.binding_snapshot
+      |> map_value(:source_binding_refs)
+      |> List.wrap()
+      |> List.first()
+
+    source_kind = work_object.source_kind || "source"
+
+    %{
+      "binding_ref" => binding_ref || "#{source_kind}_primary",
+      "source_ref" => source_ref(tenant_id, work_object),
+      "source_kind" => source_kind,
+      "external_system" => source_kind,
+      "source_state" => normalize_state(work_object.status),
+      "workpad_refs" => [],
+      "metadata" => %{
+        "external_ref" => work_object.external_ref,
+        "work_class_id" => work_object.work_class_id,
+        "program_id" => work_object.program_id
+      }
+    }
+    |> compact_map()
+  end
+
+  defp source_ref(tenant_id, work_object) do
+    case work_object.external_ref do
+      value when is_binary(value) and value != "" ->
+        "source://#{work_object.source_kind || "source"}/#{tenant_id}/#{value}"
+
+      _other ->
+        "source://#{work_object.source_kind || "source"}/#{tenant_id}/#{work_object.id}"
+    end
+  end
+
+  defp execution_projection(execution) do
+    %{
+      "execution_id" => execution.id,
+      "dispatch_state" => normalize_state(execution.dispatch_state),
+      "trace_id" => execution.trace_id,
+      "causation_id" => execution.causation_id,
+      "recipe_ref" => execution.recipe_ref,
+      "submission_dedupe_key" => execution.submission_dedupe_key,
+      "updated_at" => runtime_timestamp(execution.updated_at || execution.inserted_at),
+      "metadata" => %{
+        "installation_id" => execution.installation_id,
+        "compiled_pack_revision" => execution.compiled_pack_revision,
+        "dispatch_attempt_count" => execution.dispatch_attempt_count,
+        "workflow_start_ref" => map_value(execution.dispatch_envelope, :workflow_start_ref),
+        "workflow_ref" => map_value(execution.dispatch_envelope, :workflow_id)
+      }
+    }
+    |> compact_map()
+  end
+
+  defp lower_receipt_projection(%ExecutionRecord{lower_receipt: receipt} = execution)
+       when is_map(receipt) and map_size(receipt) > 0 do
+    refs = lower_receipt_refs(receipt, execution)
+
+    %{
+      "receipt_ref" => refs.receipt_ref,
+      "receipt_id" => refs.receipt_id,
+      "receipt_state" => refs.receipt_state,
+      "lower_receipt_ref" => refs.lower_receipt_ref,
+      "run_id" => map_value(receipt, :run_id),
+      "attempt_id" => map_value(receipt, :attempt_id),
+      "metadata" => Map.drop(receipt, ["provider_response", :provider_response])
+    }
+    |> compact_map()
+  end
+
+  defp lower_receipt_projection(%ExecutionRecord{} = execution) do
+    %{
+      "receipt_ref" => "lower-receipt://pending/#{execution.id}",
+      "receipt_id" => "lower-receipt://pending/#{execution.id}",
+      "receipt_state" => normalize_state(execution.dispatch_state),
+      "lower_receipt_ref" => "lower-receipt://pending/#{execution.id}",
+      "metadata" => %{
+        "pending_reason" => "workflow_start_queued",
+        "workflow_start_ref" => map_value(execution.dispatch_envelope, :workflow_start_ref)
+      }
+    }
+  end
+
+  defp lower_receipt_refs(receipt, execution) do
+    fallback_ref = "lower-receipt://#{execution.id}"
+    receipt_ref = receipt_value(receipt, [:receipt_ref, :receipt_id], fallback_ref)
+
+    %{
+      receipt_ref: receipt_ref,
+      receipt_id: receipt_value(receipt, [:receipt_id, :receipt_ref], receipt_ref),
+      receipt_state:
+        receipt_value(
+          receipt,
+          [:receipt_state, :state],
+          normalize_state(execution.dispatch_state)
+        ),
+      lower_receipt_ref: receipt_value(receipt, [:lower_receipt_ref, :receipt_ref], receipt_ref)
+    }
+  end
+
+  defp receipt_value(receipt, keys, default) do
+    Enum.find_value(keys, &map_value(receipt, &1)) || default
+  end
+
+  defp runtime_projection_facts(work_object, current_plan, active_run, execution, opts) do
+    %{
+      "token_totals" => %{},
+      "token_dedupe" => %{},
+      "rate_limit" => %{},
+      "retry_queue" => [],
+      "event_counts" => %{
+        "workflow_start_queued" => 1,
+        "execution_#{normalize_state(execution.dispatch_state)}" => 1
+      },
+      "metadata" => %{
+        "work_object_id" => work_object.id,
+        "plan_id" => current_plan_id(current_plan),
+        "run_id" => active_run_id(active_run),
+        "projection_source" => "mezzanine_work_queries",
+        "projection_mode" => Keyword.get(opts, :projection_mode, "same_run_readback")
+      }
+    }
+  end
+
+  defp evidence_projection(execution) do
+    %{
+      "evidence_refs" => [
+        %{
+          "evidence_ref" =>
+            map_value(execution.dispatch_envelope, :workflow_start_evidence_ref) ||
+              "execution-evidence://#{execution.id}/workflow-start",
+          "evidence_kind" => "workflow_start",
+          "status" => "present",
+          "metadata" => %{
+            "workflow_start_ref" => map_value(execution.dispatch_envelope, :workflow_start_ref)
+          }
+        }
+      ]
+    }
+  end
+
+  defp review_projection(pending_reviews, gate_status) do
+    %{
+      "status" => normalize_state(gate_status.status),
+      "pending_decision_ids" => Enum.map(pending_reviews, & &1.id),
+      "metadata" => %{
+        "release_ready" => gate_status.release_ready?
+      }
+    }
+  end
+
+  defp lifecycle_state(_work_object, %Run{status: :running}, _execution), do: "running"
+
+  defp lifecycle_state(work_object, _active_run, execution) do
+    case execution.dispatch_state do
+      :queued -> "queued"
+      :in_flight -> "running"
+      :accepted_active -> "running"
+      :completed -> "completed"
+      :failed -> "failed"
+      :cancelled -> "cancelled"
+      _other -> normalize_state(work_object.status)
     end
   end
 
@@ -516,6 +788,32 @@ defmodule Mezzanine.WorkQueries do
   defp fetch_string(attrs, opts, key) do
     ServiceSupport.fetch_string(attrs, opts, key, {:missing_required, key})
   end
+
+  defp normalize_state(nil), do: nil
+  defp normalize_state(value) when is_atom(value), do: Atom.to_string(value)
+  defp normalize_state(value), do: value
+
+  defp compact_map(map), do: Map.reject(map, fn {_key, value} -> value in [nil, [], %{}] end)
+
+  defp runtime_timestamp(nil), do: nil
+  defp runtime_timestamp(%DateTime{} = value), do: value
+
+  defp runtime_timestamp(%NaiveDateTime{} = value),
+    do: DateTime.from_naive!(value, "Etc/UTC")
+
+  defp runtime_timestamp(value), do: value
+
+  defp normalize_value(%DateTime{} = value), do: DateTime.to_iso8601(value)
+  defp normalize_value(%NaiveDateTime{} = value), do: NaiveDateTime.to_iso8601(value)
+  defp normalize_value(value) when is_boolean(value), do: value
+  defp normalize_value(value) when is_atom(value), do: Atom.to_string(value)
+
+  defp normalize_value(value) when is_map(value) do
+    Map.new(value, fn {key, nested_value} -> {key, normalize_value(nested_value)} end)
+  end
+
+  defp normalize_value(value) when is_list(value), do: Enum.map(value, &normalize_value/1)
+  defp normalize_value(value), do: value
 
   defp map_value(map, key), do: ServiceSupport.map_value(map, key)
   defp actor(tenant_id), do: ServiceSupport.actor(tenant_id)
