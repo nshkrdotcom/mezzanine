@@ -5,10 +5,11 @@ defmodule MezzanineRuntimeScheduler do
   """
 
   alias Mezzanine.RuntimeScheduler.{InstallationLease, InstallationLeaseStore, ReconcileOnStart}
+  alias Mezzanine.WorkScheduler
 
   @spec components() :: [module()]
   def components do
-    [InstallationLeaseStore, ReconcileOnStart]
+    [InstallationLeaseStore, ReconcileOnStart, WorkScheduler]
   end
 
   @spec acquire_installation_lease(
