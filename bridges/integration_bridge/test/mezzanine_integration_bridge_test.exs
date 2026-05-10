@@ -586,6 +586,21 @@ defmodule Mezzanine.IntegrationBridgeTest do
   test "direct lower dispatch returns governed denials before side effects" do
     never = fn _capability, _input, _opts -> flunk("provider invoke must not run") end
 
+    assert {:error, %GovernedLowerDenial{denial_class: :capability_denied}} =
+             IntegrationBridge.invoke_run_intent(authorized_invocation(),
+               invoke_fun: never,
+               capability_id: "linear.issues.delete"
+             )
+
+    assert {:error, %GovernedLowerDenial{denial_class: :manifest_stale}} =
+             IntegrationBridge.invoke_run_intent(authorized_invocation(),
+               invoke_fun: never,
+               capability_id: "linear.issues.update",
+               side_effect_class: :write,
+               idempotency_class: :non_idempotent,
+               connector_manifest_state: :stale
+             )
+
     assert {:error,
             %GovernedLowerDenial{
               denial_class: :lower_runtime_unavailable,
@@ -654,12 +669,11 @@ defmodule Mezzanine.IntegrationBridgeTest do
       IntegrationBridge.dispatch_effect(intent, invoke_fun: invoke_fun)
     end
 
-    assert_error_contains("not present in Citadel authority", fn ->
-      IntegrationBridge.dispatch_effect(authorized_invocation(),
-        invoke_fun: invoke_fun,
-        capability_id: "github.pr.merge"
-      )
-    end)
+    assert {:error, %GovernedLowerDenial{denial_class: :capability_denied}} =
+             IntegrationBridge.dispatch_effect(authorized_invocation(),
+               invoke_fun: invoke_fun,
+               capability_id: "github.pr.merge"
+             )
   end
 
   test "authorized invocation requires mock-valid authority and governance packets" do

@@ -16,8 +16,6 @@ defmodule Mezzanine.IntegrationBridge.DirectRunDispatcher do
     capability_id =
       Keyword.get(opts, :capability_id, AuthorizedInvocation.default_capability!(invocation))
 
-    :ok = AuthorizedInvocation.authorize_capability!(invocation, capability_id)
-
     with {:ok, envelope} <-
            AuthorizedInvocation.governed_lower_envelope(invocation, capability_id, opts),
          :ok <- require_dispatchable(envelope, invoke_opts) do

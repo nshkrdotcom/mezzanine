@@ -148,8 +148,6 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
           {:ok, GovernedLowerEnvelope.t()} | {:error, GovernedLowerDenial.t() | Exception.t()}
   def governed_lower_envelope(%__MODULE__{} = invocation, capability_id, opts \\ [])
       when is_binary(capability_id) and is_list(opts) do
-    :ok = authorize_capability!(invocation, capability_id)
-
     request = normalized_request!(invocation.invocation_request)
     authority_packet = required!(request, :authority_packet)
     execution_governance = required!(request, :execution_governance)
@@ -166,7 +164,9 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
         opts
       )
 
-    with :ok <- validate_resource_scope_refs(attrs),
+    with :ok <- validate_authorized_capability(attrs),
+         :ok <- validate_connector_manifest(attrs),
+         :ok <- validate_resource_scope_refs(attrs),
          :ok <- validate_sandbox_posture(attrs, execution_governance, opts),
          :ok <- validate_attestation_posture(attrs, execution_governance, opts) do
       GovernedLowerEnvelope.new(attrs)
@@ -743,6 +743,51 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
       :ok
     end
   end
+
+  defp validate_authorized_capability(attrs) do
+    if attrs.capability_id in attrs.allowed_operations do
+      :ok
+    else
+      {:error,
+       lower_denial_from_attrs(
+         attrs,
+         :capability_denied,
+         "capability must be present in Citadel authority allowed_operations"
+       )}
+    end
+  end
+
+  defp validate_connector_manifest(
+         %{
+           side_effect_class: side_effect_class,
+           idempotency_class: idempotency_class,
+           connector_manifest_state: connector_manifest_state
+         } = attrs
+       )
+       when side_effect_class in [:write, "write"] and
+              idempotency_class in [:non_idempotent, "non_idempotent"] do
+    case normalize_atomish(connector_manifest_state) do
+      :active ->
+        :ok
+
+      state ->
+        {:error,
+         lower_denial_from_attrs(
+           attrs,
+           manifest_denial_class(state),
+           "non-idempotent writes require an active connector manifest before lower dispatch"
+         )}
+    end
+  end
+
+  defp validate_connector_manifest(_attrs), do: :ok
+
+  defp manifest_denial_class(nil), do: :manifest_missing
+  defp manifest_denial_class(:stale), do: :manifest_stale
+  defp manifest_denial_class(:refresh_required), do: :manifest_stale
+  defp manifest_denial_class(:invalid), do: :manifest_invalid
+  defp manifest_denial_class(:quarantined), do: :manifest_quarantined
+  defp manifest_denial_class(_state), do: :manifest_invalid
 
   defp validate_sandbox_posture(attrs, execution_governance, opts) do
     requested = posture_sandbox_level(Keyword.get(opts, :sandbox_level))
