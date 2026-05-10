@@ -2,8 +2,67 @@ defmodule Mezzanine.M1M2RuntimeTest do
   use ExUnit.Case, async: true
 
   alias Mezzanine.M1M2Runtime
+  alias Mezzanine.M1M2Runtime.WorkflowLowerGateway
+  alias Mezzanine.LowerGateway
   alias Mezzanine.M1M2Runtime.WorkflowStartHandoff
   alias Mezzanine.WorkflowRuntime.WorkflowStarterOutbox
+
+  defmodule FakeGovernedIntegrationBridge do
+    def invoke_run_intent(%{authorized_invocation_boundary: _boundary} = invocation, opts) do
+      invoke_fun = Keyword.fetch!(opts, :invoke_fun)
+      capability_id = Keyword.fetch!(opts, :capability_id)
+      lower_runtime_kind = Keyword.fetch!(opts, :lower_runtime_kind)
+
+      governed_lower_envelope = %{
+        "lower_request_ref" => "lower-request://#{invocation.execution_id}/#{capability_id}",
+        "lower_runtime_kind" => Atom.to_string(lower_runtime_kind),
+        "capability_id" => capability_id,
+        "resource_scope_refs" => Keyword.fetch!(opts, :resource_scope_refs),
+        "policy_bundle_ref" => Keyword.fetch!(opts, :policy_bundle_ref),
+        "script_ref" => Keyword.fetch!(opts, :script_ref),
+        "package_refs" => Keyword.fetch!(opts, :package_refs),
+        "sandbox_profile_ref" => Keyword.fetch!(opts, :sandbox_profile_ref),
+        "attestation_requirement_ref" => Keyword.fetch!(opts, :attestation_requirement_ref)
+      }
+
+      input = %{
+        governed_lower_envelope: governed_lower_envelope,
+        authority: %{
+          permission_decision_ref: authority_decision_id(invocation)
+        }
+      }
+
+      invoke_opts = [governed_lower_envelope: %{capability_id: capability_id}]
+
+      with {:ok, result} <- invoke_fun.(capability_id, input, invoke_opts) do
+        {:ok,
+         result
+         |> Map.put(:governed_lower_envelope, governed_lower_envelope)
+         |> Map.put(:governed_lower_receipt, %{
+           "lower_receipt_ref" =>
+             "lower-receipt://#{governed_lower_envelope["lower_request_ref"]}/succeeded",
+           "lower_request_ref" => governed_lower_envelope["lower_request_ref"],
+           "lower_runtime_kind" => Atom.to_string(lower_runtime_kind),
+           "status" => "succeeded",
+           "capability_id" => capability_id
+         })}
+      end
+    end
+
+    defp authority_decision_id(invocation) do
+      invocation
+      |> Map.fetch!(:invocation_request)
+      |> map_value(:authority_packet)
+      |> map_value(:decision_id)
+    end
+
+    defp map_value(%_{} = struct, key), do: struct |> Map.from_struct() |> map_value(key)
+
+    defp map_value(map, key) when is_map(map),
+      do: Map.get(map, key) || Map.get(map, to_string(key))
+
+    defp map_value(_value, _key), do: nil
+  end
 
   test "M1 rejects live providers, connectors, Temporal workers, and credential materializers" do
     assert {:error, {:m1_forbidden_capabilities, forbidden}} =
@@ -150,6 +209,56 @@ defmodule Mezzanine.M1M2RuntimeTest do
     assert :temporalex_client_call in plan.forbidden_inside_transaction
   end
 
+  test "explicit workflow lower gateway dispatches through Citadel and governed integration bridge" do
+    invoke_fun = fn capability_id, input, opts ->
+      send(self(), {:jido_invoke, capability_id, input, opts})
+
+      {:ok,
+       %{
+         capability_id: capability_id,
+         run_id: "jido-run-lower-gateway",
+         attempt_id: "jido-attempt-lower-gateway",
+         output: %{"status" => "accepted"}
+       }}
+    end
+
+    claim =
+      lower_gateway_claim(%{
+        lower_gateway_impl: WorkflowLowerGateway,
+        runtime_modules: %{integration_bridge: FakeGovernedIntegrationBridge},
+        lower_dispatch_opts: [
+          invoke_fun: invoke_fun,
+          lower_runtime_kind: :deterministic_fixture,
+          runtime_profile_ref: "runtime-profile://extravaganza/deterministic",
+          runtime_profile_kind: :temporal_local,
+          policy_bundle_ref: "policy-bundle://extravaganza/default",
+          policy_bundle_hash: "sha256:" <> String.duplicate("1", 64),
+          cedar_schema_ref: "cedar-schema://extravaganza/default",
+          cedar_schema_hash: "sha256:" <> String.duplicate("2", 64),
+          script_ref: "script://codex/session-turn",
+          script_hash: "sha256:" <> String.duplicate("3", 64),
+          package_refs: ["package://extravaganza/coding-ops"],
+          sandbox_profile_ref: "sandbox://local/strict",
+          attestation_requirement_ref: "attestation://local/deterministic"
+        ]
+      })
+
+    assert {:accepted, accepted} = LowerGateway.dispatch(claim)
+
+    assert accepted.owner_repo == :jido_integration
+    assert accepted.authority.owner_repo == :citadel
+    assert accepted.submission_ref["lower_submission_ref"] == "lower-submission-101"
+    assert accepted.submission_ref["run_id"] == "jido-run-lower-gateway"
+    assert accepted.lower_receipt["lower_runtime_kind"] == "deterministic_fixture"
+    assert accepted.lower_receipt["status"] == "succeeded"
+    assert accepted.lower_receipt["capability_id"] == "codex.session.turn"
+
+    assert_received {:jido_invoke, "codex.session.turn", input, opts}
+    assert input.governed_lower_envelope["lower_runtime_kind"] == "deterministic_fixture"
+    assert input.authority.permission_decision_ref == "decision/execution-101"
+    assert Keyword.fetch!(opts, :governed_lower_envelope).capability_id == "codex.session.turn"
+  end
+
   defp valid_m2_attrs do
     %{
       mode: :m2,
@@ -199,5 +308,59 @@ defmodule Mezzanine.M1M2RuntimeTest do
       requested_action_ids: ["codex.session.turn"],
       runtime_policy_config: %{"run" => %{"capability" => "codex.session.turn"}}
     }
+  end
+
+  defp lower_gateway_claim(extra_attrs) do
+    Map.merge(
+      %{
+        execution_id: "execution-101",
+        tenant_id: "tenant-lower-gateway",
+        installation_id: "installation-lower-gateway",
+        subject_id: "subject-101",
+        trace_id: "trace-lower-gateway",
+        causation_id: "cause-lower-gateway",
+        submission_dedupe_key: "lower-idem-101",
+        compiled_pack_revision: 1,
+        binding_snapshot: %{
+          "runtime_profile_ref" => "runtime-profile://extravaganza/deterministic",
+          "runtime_profile_kind" => "temporal_local",
+          "lower_runtime_kind" => "deterministic_fixture",
+          "resource_scope_refs" => ["workspace://tenant-lower-gateway/subject-101"],
+          "workspace_ref" => "workspace://tenant-lower-gateway/subject-101",
+          "workspace_root" => "/tmp/extravaganza/subject-101"
+        },
+        dispatch_envelope: %{
+          "workflow_id" => "workflow-101",
+          "workflow_type" => "execution_attempt",
+          "workflow_version" => "execution-attempt.v1",
+          "command_id" => "cmd-101",
+          "command_receipt_ref" => "command-receipt-101",
+          "workflow_input_ref" => "workflow-input-101",
+          "lower_submission_ref" => "lower-submission-101",
+          "authority_packet_ref" => "authpkt-101",
+          "permission_decision_ref" => "decision-101",
+          "principal_ref" => "principal-operator",
+          "resource_ref" => "resource-work-101",
+          "capability" => "codex.session.turn",
+          "requested_capability_ids" => ["codex.session.turn"],
+          "requested_action_ids" => ["codex.session.turn"],
+          "installation_revision" => 4,
+          "actor_ref" => "principal-operator",
+          "target_id" => "workspace_runtime",
+          "service_id" => "workspace_runtime",
+          "boundary_class" => "workspace_session",
+          "policy_refs" => ["policy-v1"],
+          "policy_version" => "policy-v1",
+          "policy_epoch" => 1,
+          "workspace_mutability" => "read_write",
+          "downstream_scope" => "subject:subject-101",
+          "execution_intent" => %{
+            "prompt" => "Run deterministic lower gateway proof",
+            "cwd" => "/tmp/extravaganza/subject-101"
+          }
+        }
+      },
+      extra_attrs
+    )
   end
 end

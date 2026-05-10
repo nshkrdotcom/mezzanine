@@ -43,8 +43,9 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
   end
 
   defmodule FakeIntegrationBridge do
-    def invoke_run_intent(%{authorized_invocation_boundary: _boundary} = invocation, _opts) do
+    def invoke_run_intent(%{authorized_invocation_boundary: _boundary} = invocation, opts) do
       send(self(), {:fake_integration_invocation, invocation})
+      send(self(), {:fake_integration_invocation, invocation, opts})
 
       {:ok,
        %{
@@ -470,6 +471,49 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     assert execution_intent["cwd"] == "/home/dev/extravaganza"
     assert execution_intent["provider_metadata"]["app_server"] == true
     assert execution_intent["dynamic_tool_manifest"] == %{"tools" => ["linear.comment.update"]}
+  end
+
+  test "lower dispatch forwards governed envelope options to the integration bridge" do
+    attrs =
+      lifecycle_attrs()
+      |> put_in([:routing_facts, :lower_runtime_kind], :deterministic_fixture)
+      |> put_in(
+        [:routing_facts, :runtime_profile_ref],
+        "runtime-profile://extravaganza/deterministic"
+      )
+      |> put_in([:routing_facts, :resource_scope_refs], [
+        "workspace://tenant-acme/subject-093"
+      ])
+      |> Map.put(:lower_dispatch_opts, %{
+        "policy_bundle_ref" => "policy-bundle://extravaganza/default",
+        "script_ref" => "script://codex/session-turn",
+        "package_refs" => ["package://extravaganza/coding-ops"],
+        "sandbox_profile_ref" => "sandbox://local/strict",
+        "attestation_requirement_ref" => "attestation://local/deterministic"
+      })
+
+    assert {:ok, authority} = ExecutionLifecycleWorkflow.compile_citadel_authority_activity(attrs)
+
+    assert {:ok, _lower} =
+             attrs
+             |> Map.put(:citadel_authority, authority)
+             |> ExecutionLifecycleWorkflow.submit_jido_lower_run_activity()
+
+    assert_received {:fake_integration_invocation, _invocation, opts}
+    assert Keyword.fetch!(opts, :capability_id) == "codex.session.turn"
+    assert Keyword.fetch!(opts, :lower_runtime_kind) == :deterministic_fixture
+
+    assert Keyword.fetch!(opts, :runtime_profile_ref) ==
+             "runtime-profile://extravaganza/deterministic"
+
+    assert Keyword.fetch!(opts, :resource_scope_refs) == ["workspace://tenant-acme/subject-093"]
+    assert Keyword.fetch!(opts, :policy_bundle_ref) == "policy-bundle://extravaganza/default"
+    assert Keyword.fetch!(opts, :script_ref) == "script://codex/session-turn"
+    assert Keyword.fetch!(opts, :package_refs) == ["package://extravaganza/coding-ops"]
+    assert Keyword.fetch!(opts, :sandbox_profile_ref) == "sandbox://local/strict"
+
+    assert Keyword.fetch!(opts, :attestation_requirement_ref) ==
+             "attestation://local/deterministic"
   end
 
   test "source publication activity dispatches Linear write through the governed bridge when requested" do

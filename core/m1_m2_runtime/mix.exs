@@ -12,7 +12,7 @@ defmodule MezzanineM1M2Runtime.MixProject do
       deps: deps(),
       dialyzer: [
         plt_add_deps: :apps_tree,
-        plt_add_apps: [:mezzanine_audit_engine]
+        plt_add_apps: [:mezzanine_audit_engine, :mezzanine_execution_engine]
       ],
       docs: [main: "readme", extras: ["README.md"]],
       name: "Mezzanine M1/M2 Runtime",

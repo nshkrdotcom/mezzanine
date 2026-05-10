@@ -75,6 +75,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     :lower_event_ref,
     :lower_envelope,
     :lower_request_ref,
+    :lower_dispatch_opts,
     :lower_receipt_ref,
     :lower_runtime_kind,
     :lower_run_ref,
@@ -151,7 +152,34 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     :workspace_root,
     :workpad_refs,
     :token_dedupe,
-    :token_totals
+    :token_totals,
+    :acceptable_attestation,
+    :action_id,
+    :attempt_ref,
+    :cedar_schema_hash,
+    :cedar_schema_ref,
+    :connector_manifest_hash,
+    :connector_manifest_state,
+    :declared_actions,
+    :evidence_profile_ref,
+    :filesystem_policy_ref,
+    :idempotency_class,
+    :input_hash,
+    :input_ref,
+    :network_policy_ref,
+    :placement_ref,
+    :policy_bundle_hash,
+    :policy_bundle_ref,
+    :policy_profile_ref,
+    :redaction_profile_ref,
+    :run_ref,
+    :sandbox_level,
+    :script_api_version,
+    :script_hash,
+    :script_ref,
+    :side_effect_class,
+    :target_ref,
+    :workflow_ref
   ]
   @key_lookup Map.new(@normalizable_keys, &{Atom.to_string(&1), &1})
   @routing_atom_lookup %{"session" => :session, "workflow" => :workflow}
@@ -1061,8 +1089,89 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
         governed_default?: true
       )
 
-    bridge.invoke_run_intent(invocation, [])
+    bridge.invoke_run_intent(invocation, lower_dispatch_opts(attrs))
   end
+
+  defp lower_dispatch_opts(attrs) do
+    routing = Map.get(attrs, :routing_facts, %{}) || %{}
+
+    envelope_opts =
+      [
+        :acceptable_attestation,
+        :action_id,
+        :attempt_ref,
+        :attestation_requirement_ref,
+        :capability_id,
+        :capability_negotiation_ref,
+        :cedar_schema_hash,
+        :cedar_schema_ref,
+        :connector_manifest_hash,
+        :connector_manifest_ref,
+        :connector_manifest_state,
+        :connector_ref,
+        :declared_actions,
+        :evidence_profile_ref,
+        :filesystem_policy_ref,
+        :idempotency_class,
+        :input_hash,
+        :input_ref,
+        :lower_request_ref,
+        :lower_runtime_kind,
+        :network_policy_ref,
+        :package_refs,
+        :placement_ref,
+        :policy_bundle_hash,
+        :policy_bundle_ref,
+        :policy_profile_ref,
+        :redaction_profile_ref,
+        :resource_scope_refs,
+        :run_ref,
+        :runtime_class,
+        :runtime_profile_kind,
+        :runtime_profile_ref,
+        :sandbox_level,
+        :sandbox_profile_ref,
+        :script_api_version,
+        :script_hash,
+        :script_ref,
+        :side_effect_class,
+        :target_ref,
+        :workflow_ref,
+        :workspace_ref
+      ]
+      |> Enum.reduce([], fn key, opts ->
+        case payload_value(attrs, routing, key) do
+          nil -> opts
+          value -> Keyword.put(opts, key, value)
+        end
+      end)
+
+    envelope_opts
+    |> Keyword.put_new(:capability_id, payload_value(attrs, routing, :capability))
+    |> Keyword.merge(normalize_keyword_opts(Map.get(attrs, :lower_dispatch_opts, [])))
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+  end
+
+  defp normalize_keyword_opts(opts) when is_list(opts) do
+    Enum.flat_map(opts, &normalize_keyword_pair/1)
+  end
+
+  defp normalize_keyword_opts(opts) when is_map(opts) do
+    Enum.flat_map(opts, &normalize_keyword_pair/1)
+  end
+
+  defp normalize_keyword_opts(_opts), do: []
+
+  defp normalize_keyword_pair({key, value}) when is_atom(key), do: [{key, value}]
+
+  defp normalize_keyword_pair({key, value}) when is_binary(key) do
+    case Map.fetch(@key_lookup, key) do
+      {:ok, normalized_key} -> [{normalized_key, value}]
+      :error -> []
+    end
+  end
+
+  defp normalize_keyword_pair(_pair), do: []
 
   defp maybe_publish_source(base_result, attrs, source_publish_ref) do
     case source_publication_request(attrs, source_publish_ref) do
