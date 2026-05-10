@@ -55,7 +55,7 @@ defmodule Mezzanine.Workspace.MixProject do
   defp deps do
     [
       {:blitz, "~> 0.3.0", runtime: false},
-      {:weld, "~> 0.8.1", only: [:dev, :test], runtime: false},
+      {:weld, "~> 0.8.2", only: [:dev, :test], runtime: false},
       DependencySources.dep(:temporalex, @repo_root),
       {:opentelemetry, "~> 1.5"},
       {:opentelemetry_api, "~> 1.4"},
