@@ -488,19 +488,21 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
     }
   end
 
-  @doc "Consuming mix.exs files and their relative Temporalex path dependency."
+  @doc "Consuming mix.exs files that load Temporalex through dependency sources."
   @spec temporalex_dependency_paths() :: [map()]
   def temporalex_dependency_paths do
     [
       %{
         mix_exs: "mix.exs",
         from_dir: "/home/home/p/g/n/mezzanine",
-        dependency: {:temporalex, path: "../temporalex"}
+        dependency: {:temporalex, :dependency_sources},
+        manifest_app: :temporalex
       },
       %{
         mix_exs: "core/workflow_runtime/mix.exs",
         from_dir: "/home/home/p/g/n/mezzanine/core/workflow_runtime",
-        dependency: {:temporalex, path: "../../../temporalex"}
+        dependency: {:temporalex, :dependency_sources},
+        manifest_app: :temporalex
       }
     ]
   end

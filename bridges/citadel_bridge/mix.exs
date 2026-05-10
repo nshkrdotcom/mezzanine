@@ -1,5 +1,11 @@
+unless Code.ensure_loaded?(DependencySources) do
+  Code.require_file("../../build_support/dependency_sources.exs", __DIR__)
+end
+
 defmodule MezzanineCitadelBridge.MixProject do
   use Mix.Project
+
+  @repo_root Path.expand("../..", __DIR__)
 
   def project do
     [
@@ -42,8 +48,9 @@ defmodule MezzanineCitadelBridge.MixProject do
   defp deps do
     [
       {:mezzanine_core, path: "../../core/mezzanine_core"},
-      {:citadel_governance, path: "../../../citadel/core/citadel_governance"},
-      {:execution_plane, path: "../../../execution_plane/core/execution_plane", override: true},
+      DependencySources.dep(:citadel_governance, @repo_root),
+      DependencySources.dep(:execution_plane, @repo_root, override: true),
+      DependencySources.dep(:ground_plane_persistence_policy, @repo_root, override: true),
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.40.1", only: :dev, runtime: false}

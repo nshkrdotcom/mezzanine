@@ -48,6 +48,20 @@ just temporal-ui
 
 Do not invent raw `temporal server start-dev` commands for normal work. Do not reset local Temporal state unless the user explicitly approves `just temporal-reset-confirm`.
 
+## Dependency Sources
+
+- Dependency source selection is handled by `build_support/dependency_sources.exs` and `build_support/dependency_sources.config.exs`.
+- Local dependency overrides use `.dependency_sources.local.exs`.
+- Dependency source selection must not use environment variables.
+- Same-repo workspace package paths may stay in their local `mix.exs` files; cross-repo dependencies that need fallback behavior belong in the dependency-source manifest.
+- Weld checks helper drift, dependency-source manifests, clone/publish checks, and publish order for this repo; keep the committed dependency on the released Hex Weld line.
+
+## Runtime Env
+
+- Runtime application code under `lib/**`, package `lib/**`, example `lib/**`, and Mix task modules must not call direct OS env APIs such as `System.get_env`, `System.fetch_env`, `System.put_env`, or `System.delete_env`.
+- Runtime/deployment env reads belong in `config/runtime.exs` or a `Config.Provider`.
+- Mix tasks, examples, and harnesses should accept explicit flags, app config, or caller-supplied env maps instead of reading or mutating process env.
+
 ## Live Provider Checks
 
 For live provider checks, use `~/scripts/with_bash_secrets <command>`. It sources

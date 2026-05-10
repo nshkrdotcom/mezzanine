@@ -1,155 +1,36 @@
+unless Code.ensure_loaded?(DependencySources) do
+  Code.require_file("dependency_sources.exs", __DIR__)
+end
+
 Code.require_file("workspace_contract.exs", __DIR__)
 
 defmodule Mezzanine.Build.WeldContract do
   @moduledoc false
 
-  @repo_root Path.expand("..", __DIR__)
-  @citadel_repo_path Path.expand("../citadel", @repo_root)
-  @execution_plane_repo_path Path.expand("../execution_plane", @repo_root)
-  @gepa_framework_repo_path Path.expand("../gepa_framework", @repo_root)
-  @ground_plane_repo_path Path.expand("../ground_plane", @repo_root)
-  @trinity_framework_repo_path Path.expand("../trinity_framework", @repo_root)
-  @jido_hive_repo_path Path.expand("../jido_hive", @repo_root)
-  @outer_brain_repo_path Path.expand("../outer_brain", @repo_root)
-  @aitrace_repo_path Path.expand("../AITrace", @repo_root)
-  @temporalex_repo_path Path.expand("../temporalex", @repo_root)
+  alias Mezzanine.Build.WorkspaceContract
 
-  @dependencies [
-    citadel_governance: [
-      opts:
-        if File.dir?(@citadel_repo_path) do
-          [git: @citadel_repo_path, subdir: "core/citadel_governance"]
-        else
-          [
-            github: "nshkrdotcom/citadel",
-            branch: "main",
-            subdir: "core/citadel_governance"
-          ]
-        end
-    ],
-    execution_plane: [
-      opts:
-        if File.dir?(@execution_plane_repo_path) do
-          [git: @execution_plane_repo_path, subdir: "core/execution_plane", override: true]
-        else
-          [
-            github: "nshkrdotcom/execution_plane",
-            branch: "main",
-            subdir: "core/execution_plane",
-            override: true
-          ]
-        end
-    ],
-    outer_brain_context_budget: [
-      opts:
-        if File.dir?(@outer_brain_repo_path) do
-          [git: @outer_brain_repo_path, sparse: "core/context_budget"]
-        else
-          [
-            github: "nshkrdotcom/outer_brain",
-            branch: "main",
-            sparse: "core/context_budget"
-          ]
-        end
-    ],
-    outer_brain_memory_contracts: [
-      opts:
-        if File.dir?(@outer_brain_repo_path) do
-          [git: @outer_brain_repo_path, sparse: "core/memory_contracts"]
-        else
-          [
-            github: "nshkrdotcom/outer_brain",
-            branch: "main",
-            sparse: "core/memory_contracts"
-          ]
-        end
-    ],
-    outer_brain_token_meter: [
-      opts:
-        if File.dir?(@outer_brain_repo_path) do
-          [git: @outer_brain_repo_path, sparse: "core/token_meter"]
-        else
-          [
-            github: "nshkrdotcom/outer_brain",
-            branch: "main",
-            sparse: "core/token_meter"
-          ]
-        end
-    ],
-    ai_trace_replay_contracts: [
-      opts:
-        if File.dir?(@aitrace_repo_path) do
-          [git: @aitrace_repo_path, sparse: "core/replay_contracts"]
-        else
-          [
-            github: "nshkrdotcom/AITrace",
-            branch: "main",
-            sparse: "core/replay_contracts"
-          ]
-        end
-    ],
-    ground_plane_persistence_policy: [
-      opts:
-        if File.dir?(@ground_plane_repo_path) do
-          [git: @ground_plane_repo_path, subdir: "core/persistence_policy", override: true]
-        else
-          [
-            github: "nshkrdotcom/ground_plane",
-            branch: "main",
-            subdir: "core/persistence_policy",
-            override: true
-          ]
-        end
-    ],
-    gepa_framework: [
-      opts:
-        if File.dir?(@gepa_framework_repo_path) do
-          [git: @gepa_framework_repo_path]
-        else
-          [github: "nshkrdotcom/gepa_framework", branch: "main"]
-        end
-    ],
-    trinity_framework: [
-      opts:
-        if File.dir?(@trinity_framework_repo_path) do
-          [git: @trinity_framework_repo_path]
-        else
-          [github: "nshkrdotcom/trinity_framework", branch: "main"]
-        end
-    ],
-    jido_hive_coordination_patterns: [
-      opts:
-        if File.dir?(@jido_hive_repo_path) do
-          [git: @jido_hive_repo_path, subdir: "core/coordination_patterns"]
-        else
-          [
-            github: "nshkrdotcom/jido_hive",
-            branch: "main",
-            subdir: "core/coordination_patterns"
-          ]
-        end
-    ],
-    jido_hive_inter_agent_messaging: [
-      opts:
-        if File.dir?(@jido_hive_repo_path) do
-          [git: @jido_hive_repo_path, subdir: "core/inter_agent_messaging"]
-        else
-          [
-            github: "nshkrdotcom/jido_hive",
-            branch: "main",
-            subdir: "core/inter_agent_messaging"
-          ]
-        end
-    ],
-    temporalex: [
-      opts:
-        if File.dir?(@temporalex_repo_path) do
-          [git: @temporalex_repo_path]
-        else
-          [github: "nshkrdotcom/temporalex", branch: "main"]
-        end
-    ]
+  @repo_root Path.expand("..", __DIR__)
+
+  @manifest_dependencies [
+    :citadel_governance,
+    :execution_plane,
+    :outer_brain_context_budget,
+    :outer_brain_memory_contracts,
+    :outer_brain_token_meter,
+    :ai_trace_replay_contracts,
+    :ground_plane_persistence_policy,
+    :gepa_framework,
+    :trinity_framework,
+    :jido_hive_coordination_patterns,
+    :jido_hive_inter_agent_messaging,
+    :jido_integration_v2,
+    :temporalex
   ]
+
+  @manifest_dependency_opts %{
+    execution_plane: [override: true],
+    ground_plane_persistence_policy: [override: true]
+  }
 
   @artifact_docs [
     "README.md",
@@ -193,7 +74,7 @@ defmodule Mezzanine.Build.WeldContract do
     [
       workspace: [
         root: "..",
-        project_globs: Mezzanine.Build.WorkspaceContract.active_project_globs()
+        project_globs: WorkspaceContract.active_project_globs()
       ],
       classify: [
         tooling: ["."]
@@ -211,7 +92,7 @@ defmodule Mezzanine.Build.WeldContract do
           "core/coordination_engine"
         ]
       ],
-      dependencies: @dependencies,
+      dependencies: dependencies(),
       artifacts: [
         mezzanine_core: artifact()
       ]
@@ -259,6 +140,41 @@ defmodule Mezzanine.Build.WeldContract do
         hex_publish: false
       ]
     ]
+  end
+
+  defp dependencies do
+    Enum.map(@manifest_dependencies, fn app ->
+      {app, manifest_dependency(app)}
+    end)
+  end
+
+  defp manifest_dependency(app) do
+    config = Map.fetch!(dependency_configs(), app)
+    github = Map.fetch!(config, :github)
+    extra_opts = Map.get(@manifest_dependency_opts, app, [])
+
+    [opts: Keyword.merge(github_opts(github), extra_opts)]
+  end
+
+  defp dependency_configs do
+    {config, _binding} =
+      @repo_root
+      |> Path.join("build_support/dependency_sources.config.exs")
+      |> Code.eval_file()
+
+    Map.new(config[:deps], fn {app, dep_config} -> {app, Map.new(dep_config)} end)
+  end
+
+  defp github_opts(github) do
+    github = Map.new(github)
+    repo = Map.fetch!(github, :repo)
+
+    opts =
+      github
+      |> Map.take([:branch, :ref, :tag, :subdir])
+      |> Enum.sort_by(fn {key, _value} -> key end)
+
+    Keyword.merge([github: repo], opts)
   end
 end
 

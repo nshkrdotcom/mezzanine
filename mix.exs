@@ -1,3 +1,7 @@
+unless Code.ensure_loaded?(DependencySources) do
+  Code.require_file("build_support/dependency_sources.exs", __DIR__)
+end
+
 Code.require_file("build_support/workspace_contract.exs", __DIR__)
 Code.require_file("build_support/internal_modularity_contract.exs", __DIR__)
 
@@ -6,6 +10,7 @@ defmodule Mezzanine.Workspace.MixProject do
 
   alias Mezzanine.Build.WorkspaceContract
 
+  @repo_root __DIR__
   @version "0.1.0"
   @source_url "https://github.com/nshkrdotcom/mezzanine"
 
@@ -51,7 +56,7 @@ defmodule Mezzanine.Workspace.MixProject do
     [
       {:blitz, "~> 0.3.0", runtime: false},
       {:weld, "~> 0.8.1", only: [:dev, :test], runtime: false},
-      {:temporalex, path: "../temporalex"},
+      DependencySources.dep(:temporalex, @repo_root),
       {:opentelemetry, "~> 1.5"},
       {:opentelemetry_api, "~> 1.4"},
       {:opentelemetry_exporter, "~> 1.8"},
@@ -120,7 +125,7 @@ defmodule Mezzanine.Workspace.MixProject do
         hex_home: "_build/hex"
       ],
       parallelism: [
-        env: "MEZZANINE_MONOREPO_MAX_CONCURRENCY",
+        max_concurrency: nil,
         multiplier: :auto,
         base: [
           deps_get: 4,

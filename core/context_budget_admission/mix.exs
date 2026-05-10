@@ -1,5 +1,11 @@
+unless Code.ensure_loaded?(DependencySources) do
+  Code.require_file("../../build_support/dependency_sources.exs", __DIR__)
+end
+
 defmodule Mezzanine.ContextBudgetAdmission.MixProject do
   use Mix.Project
+
+  @repo_root Path.expand("../..", __DIR__)
 
   def project do
     [
@@ -25,8 +31,8 @@ defmodule Mezzanine.ContextBudgetAdmission.MixProject do
 
   defp deps do
     [
-      {:outer_brain_context_budget, path: "../../../outer_brain/core/context_budget"},
-      {:outer_brain_memory_contracts, path: "../../../outer_brain/core/memory_contracts"},
+      DependencySources.dep(:outer_brain_context_budget, @repo_root),
+      DependencySources.dep(:outer_brain_memory_contracts, @repo_root),
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: :dev, runtime: false},
       {:ex_doc, "~> 0.40.1", only: :dev, runtime: false}

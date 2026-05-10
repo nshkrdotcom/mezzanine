@@ -194,7 +194,17 @@ defmodule Mezzanine.WorkspaceTest do
     refute "surfaces/*" in Mezzanine.Workspace.active_project_globs()
   end
 
-  test "weld projects an explicit execution-plane dependency for Citadel governance" do
+  test "workspace concurrency is not selected from environment variables" do
+    parallelism =
+      Mezzanine.Workspace.MixProject.project()
+      |> Keyword.fetch!(:blitz_workspace)
+      |> Keyword.fetch!(:parallelism)
+
+    refute Keyword.has_key?(parallelism, :env)
+    assert Keyword.has_key?(parallelism, :max_concurrency)
+  end
+
+  test "weld projects explicit execution-plane GitHub metadata for Citadel governance" do
     dependencies =
       WeldContract.manifest()
       |> Keyword.fetch!(:dependencies)
@@ -204,19 +214,10 @@ defmodule Mezzanine.WorkspaceTest do
       |> Keyword.fetch!(:execution_plane)
       |> Keyword.fetch!(:opts)
 
-    assert Keyword.fetch!(execution_plane_opts, :git) ==
-             repo_root()
-             |> Path.join("../execution_plane")
-             |> Path.expand()
-
+    assert Keyword.fetch!(execution_plane_opts, :github) == "nshkrdotcom/execution_plane"
+    assert Keyword.fetch!(execution_plane_opts, :branch) == "main"
     assert Keyword.fetch!(execution_plane_opts, :subdir) == "core/execution_plane"
     assert Keyword.fetch!(execution_plane_opts, :override) == true
-
-    assert File.exists?(
-             repo_root()
-             |> Path.join("../execution_plane/core/execution_plane/mix.exs")
-             |> Path.expand()
-           )
 
     citadel_bridge_mix =
       repo_root()
@@ -225,7 +226,7 @@ defmodule Mezzanine.WorkspaceTest do
 
     assert String.contains?(
              citadel_bridge_mix,
-             "{:execution_plane, path: \"../../../execution_plane/core/execution_plane\", override: true}"
+             "DependencySources.dep(:execution_plane, @repo_root, override: true)"
            )
   end
 

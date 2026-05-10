@@ -1,7 +1,12 @@
+unless Code.ensure_loaded?(DependencySources) do
+  Code.require_file("../../build_support/dependency_sources.exs", __DIR__)
+end
+
 defmodule MezzanineWorkflowRuntime.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/nshkrdotcom/mezzanine"
+  @repo_root Path.expand("../..", __DIR__)
 
   def project do
     [
@@ -48,7 +53,8 @@ defmodule MezzanineWorkflowRuntime.MixProject do
     [
       {:mezzanine_core, path: "../mezzanine_core"},
       {:mezzanine_citadel_bridge, path: "../../bridges/citadel_bridge"},
-      {:temporalex, path: "../../../temporalex"},
+      DependencySources.dep(:ground_plane_persistence_policy, @repo_root, override: true),
+      DependencySources.dep(:temporalex, @repo_root),
       {:ecto_sql, "~> 3.13"},
       {:oban, "~> 2.17"},
       {:opentelemetry, "~> 1.5"},
