@@ -17,8 +17,8 @@ Functions:
 - `describe_workflow/1`
 - `fetch_workflow_history_ref/1`
 
-The default implementation is `Mezzanine.WorkflowRuntime.Unconfigured`, which
-fails closed. Temporal-enabled deployments configure:
+The default implementation is an unconfigured fail-closed adapter.
+Temporal-enabled deployments configure:
 
 ```elixir
 config :mezzanine_core,

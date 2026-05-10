@@ -175,6 +175,16 @@ defmodule Mezzanine.Build.WeldContract do
     "core/archival_engine/README.md",
     "docs/overview.md",
     "docs/layout.md",
+    "docs/public_api.md",
+    "docs/guides/index.md",
+    "docs/guides/runtime_stack_overview.md",
+    "docs/guides/work_control_run_lifecycle.md",
+    "docs/guides/citadel_authority_compilation.md",
+    "docs/guides/governed_lower_dispatch.md",
+    "docs/guides/workflow_runtime_and_execution_lifecycle.md",
+    "docs/guides/receipts_and_projections.md",
+    "docs/guides/appkit_and_product_boundary.md",
+    "docs/guides/local_acceptance_with_stacklab.md",
     "docs/publication.md",
     "docs/roadmap.md"
   ]
