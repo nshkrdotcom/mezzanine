@@ -476,6 +476,49 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert Keyword.fetch!(opts, :governed_lower_envelope) == envelope
   end
 
+  test "governed lower envelope and receipt carry workspace root and cwd metadata" do
+    attrs =
+      authorized_invocation_attrs()
+      |> put_in([:invocation_request, :execution_governance, :workspace], %{
+        "workspace_profile" => "workspace_attached",
+        "logical_workspace_ref" => "workspace://tenant-1/root",
+        "mutability" => "read_write"
+      })
+      |> put_in([:invocation_request, :execution_governance, :sandbox], %{
+        "allowed_tools" => ["linear.issues.retrieve"],
+        "file_scope_ref" => "workspace://tenant-1/root",
+        "file_scope_hint" => "/tmp/extravaganza/subject-1"
+      })
+      |> put_in([:invocation_request, :extensions, "citadel", "execution_intent"], %{
+        "cwd" => "/tmp/extravaganza/subject-1",
+        "workspace_root" => "/tmp/extravaganza/subject-1"
+      })
+
+    invocation = AuthorizedInvocation.new!(attrs)
+
+    assert {:ok, %GovernedLowerEnvelope{} = envelope} =
+             AuthorizedInvocation.governed_lower_envelope(
+               invocation,
+               "linear.issues.retrieve"
+             )
+
+    assert envelope.extensions["workspace"] == %{
+             "workspace_ref" => "workspace://tenant-1/root",
+             "workspace_root_ref" => "workspace://tenant-1/root",
+             "file_scope_ref" => "workspace://tenant-1/root",
+             "workspace_root" => "/tmp/extravaganza/subject-1",
+             "cwd" => "/tmp/extravaganza/subject-1",
+             "path_redacted?" => true,
+             "placement_ref" => "target-1"
+           }
+
+    receipt = AuthorizedInvocation.governed_lower_receipt!(envelope, :succeeded, %{})
+
+    assert receipt.extensions["workspace"] == envelope.extensions["workspace"]
+    assert receipt.extensions["mezzanine"]["dispatch_status"] == "succeeded"
+    assert GovernedLowerReceipt.matches_envelope?(receipt, envelope)
+  end
+
   test "governed lower envelope inherits Citadel TRE policy refs" do
     tre_policy = tre_policy()
 

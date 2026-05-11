@@ -18,6 +18,8 @@ defmodule Mezzanine.M1M2RuntimeTest do
         "lower_runtime_kind" => Atom.to_string(lower_runtime_kind),
         "capability_id" => capability_id,
         "resource_scope_refs" => Keyword.fetch!(opts, :resource_scope_refs),
+        "workspace_root" => Keyword.fetch!(opts, :workspace_root),
+        "cwd" => Keyword.fetch!(opts, :cwd),
         "policy_bundle_ref" => Keyword.fetch!(opts, :policy_bundle_ref),
         "script_ref" => Keyword.fetch!(opts, :script_ref),
         "package_refs" => Keyword.fetch!(opts, :package_refs),
@@ -44,7 +46,9 @@ defmodule Mezzanine.M1M2RuntimeTest do
            "lower_request_ref" => governed_lower_envelope["lower_request_ref"],
            "lower_runtime_kind" => Atom.to_string(lower_runtime_kind),
            "status" => "succeeded",
-           "capability_id" => capability_id
+           "capability_id" => capability_id,
+           "workspace_root" => Keyword.fetch!(opts, :workspace_root),
+           "cwd" => Keyword.fetch!(opts, :cwd)
          })}
       end
     end
@@ -255,6 +259,8 @@ defmodule Mezzanine.M1M2RuntimeTest do
 
     assert_received {:jido_invoke, "codex.session.turn", input, opts}
     assert input.governed_lower_envelope["lower_runtime_kind"] == "deterministic_fixture"
+    assert input.governed_lower_envelope["workspace_root"] == "/tmp/extravaganza/subject-101"
+    assert input.governed_lower_envelope["cwd"] == "/tmp/extravaganza/subject-101"
     assert input.authority.permission_decision_ref == "decision/execution-101"
     assert Keyword.fetch!(opts, :governed_lower_envelope).capability_id == "codex.session.turn"
   end

@@ -61,6 +61,8 @@ defmodule Mezzanine.M1M2Runtime.WorkflowLowerGateway do
     :side_effect_class,
     :target_ref,
     :workflow_ref,
+    :workspace_root,
+    :cwd,
     :workspace_ref
   ]
   @lifecycle_keys [
@@ -353,6 +355,8 @@ defmodule Mezzanine.M1M2Runtime.WorkflowLowerGateway do
 
     envelope_opts
     |> Keyword.put_new(:capability_id, capability(binding, dispatch))
+    |> Keyword.put_new(:workspace_root, binding[:workspace_root] || dispatch[:workspace_root])
+    |> Keyword.put_new(:cwd, execution_intent_cwd(binding, dispatch))
     |> Keyword.merge(normalize_keyword(Map.get(claim, :lower_dispatch_opts, [])))
     |> Enum.reject(fn {_key, value} -> is_nil(value) end)
   end
@@ -405,6 +409,15 @@ defmodule Mezzanine.M1M2Runtime.WorkflowLowerGateway do
           "execution_id" => claim.execution_id,
           "trace_id" => claim.trace_id
         }
+    end
+  end
+
+  defp execution_intent_cwd(binding, dispatch) do
+    intent = dispatch[:execution_intent] || binding[:execution_intent] || %{}
+
+    case map_value(intent, :cwd) || map_value(intent, :workspace_root) do
+      value when is_binary(value) and value != "" -> value
+      _other -> binding[:workspace_root] || dispatch[:workspace_root]
     end
   end
 

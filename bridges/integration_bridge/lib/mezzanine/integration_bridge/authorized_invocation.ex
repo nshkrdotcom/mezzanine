@@ -248,15 +248,16 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
       artifact_refs: artifact_refs(dispatch_result),
       event_refs: event_refs(dispatch_result),
       observed_at: DateTime.utc_now() |> DateTime.to_iso8601(),
-      extensions: %{
-        "mezzanine" =>
-          %{
-            "dispatch_status" => Atom.to_string(status),
-            "jido_run_ref" => lower_run_ref(dispatch_result),
-            "jido_attempt_ref" => lower_attempt_ref(dispatch_result)
-          }
-          |> Map.merge(nested_receipt_refs(dispatch_result))
-      }
+      extensions:
+        Map.merge(envelope.extensions || %{}, %{
+          "mezzanine" =>
+            %{
+              "dispatch_status" => Atom.to_string(status),
+              "jido_run_ref" => lower_run_ref(dispatch_result),
+              "jido_attempt_ref" => lower_attempt_ref(dispatch_result)
+            }
+            |> Map.merge(nested_receipt_refs(dispatch_result))
+        })
     })
   end
 
@@ -726,9 +727,40 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
           "invocation_request_id" => required_string!(request, :invocation_request_id),
           "execution_governance_id" =>
             required_string!(execution_governance, :execution_governance_id)
-        }
+        },
+        "workspace" => workspace_extension(context)
       }
     }
+  end
+
+  defp workspace_extension(context) do
+    opts = context.opts
+    execution_intent = execution_intent(context.request)
+    workspace_ref = Keyword.get(opts, :workspace_ref, default_workspace_ref(context))
+    workspace_root_ref = string_value(context.governance_workspace, "logical_workspace_ref")
+    file_scope_ref = string_value(context.governance_sandbox, "file_scope_ref")
+
+    workspace_root =
+      Keyword.get(opts, :workspace_root) ||
+        string_value(execution_intent, "workspace_root") ||
+        string_value(context.governance_sandbox, "file_scope_hint")
+
+    cwd =
+      Keyword.get(opts, :cwd) ||
+        string_value(execution_intent, "cwd") ||
+        workspace_root
+
+    %{
+      "workspace_ref" => workspace_ref,
+      "workspace_root_ref" => workspace_root_ref || workspace_ref,
+      "file_scope_ref" => file_scope_ref || workspace_root_ref || workspace_ref,
+      "workspace_root" => workspace_root,
+      "cwd" => cwd,
+      "path_redacted?" => true,
+      "placement_ref" => Keyword.get(opts, :placement_ref, default_placement_ref(context))
+    }
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new()
   end
 
   defp validate_resource_scope_refs(attrs) do

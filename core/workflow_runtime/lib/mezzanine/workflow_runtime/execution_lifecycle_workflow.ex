@@ -49,6 +49,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     :connector_manifest_refs,
     :connector_manifests,
     :correlation_id,
+    :cwd,
     :decision_hash,
     :denial_refs,
     :dispatch_state,
@@ -1142,6 +1143,8 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
         :side_effect_class,
         :target_ref,
         :workflow_ref,
+        :workspace_root,
+        :cwd,
         :workspace_ref
       ]
       |> Enum.reduce([], fn key, opts ->
@@ -1153,8 +1156,19 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
 
     envelope_opts
     |> Keyword.put_new(:capability_id, payload_value(attrs, routing, :capability))
+    |> Keyword.put_new(:workspace_root, payload_value(attrs, routing, :workspace_root))
+    |> Keyword.put_new(:cwd, routing_cwd(routing))
     |> Keyword.merge(normalize_keyword_opts(Map.get(attrs, :lower_dispatch_opts, [])))
     |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+  end
+
+  defp routing_cwd(routing) do
+    intent = payload_value(%{}, routing, :execution_intent) || %{}
+
+    case payload_value(intent, %{}, :cwd) || payload_value(intent, %{}, :workspace_root) do
+      value when is_binary(value) and value != "" -> value
+      _other -> payload_value(%{}, routing, :workspace_root)
+    end
   end
 
   defp normalize_keyword_opts(opts) when is_list(opts) do
