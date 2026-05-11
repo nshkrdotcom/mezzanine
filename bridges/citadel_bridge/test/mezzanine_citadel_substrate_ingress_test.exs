@@ -31,6 +31,14 @@ defmodule Mezzanine.Citadel.SubstrateIngressTest do
     assert request.extensions["citadel"]["execution_envelope"]["submission_dedupe_key"] ==
              "tenant-cb:work-1:expense_capture:3"
 
+    assert request.extensions["citadel"]["execution_envelope"] == %{
+             "installation_id" => "installation-1",
+             "installation_revision" => 3,
+             "subject_id" => "work-1",
+             "execution_id" => "execution-1",
+             "submission_dedupe_key" => "tenant-cb:work-1:expense_capture:3"
+           }
+
     assert compiled.lower_intent.outbox_entry.action.action_kind ==
              "citadel.substrate_invocation_request.v2"
   end

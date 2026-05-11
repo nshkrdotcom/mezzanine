@@ -6,16 +6,22 @@ defmodule Mezzanine.LowerGateway do
   alias Mezzanine.GovernedRuntimeConfig
 
   @type dispatch_claim :: %{
-          execution_id: Ecto.UUID.t(),
-          tenant_id: String.t(),
-          installation_id: String.t(),
-          subject_id: Ecto.UUID.t(),
-          trace_id: String.t(),
-          causation_id: String.t() | nil,
-          submission_dedupe_key: String.t(),
-          compiled_pack_revision: integer(),
-          binding_snapshot: map(),
-          dispatch_envelope: map()
+          required(:execution_id) => String.t(),
+          required(:tenant_id) => String.t(),
+          required(:installation_id) => String.t(),
+          required(:subject_id) => String.t(),
+          required(:trace_id) => String.t(),
+          required(:causation_id) => String.t() | nil,
+          required(:submission_dedupe_key) => String.t(),
+          required(:compiled_pack_revision) => integer(),
+          required(:binding_snapshot) => map(),
+          required(:dispatch_envelope) => map(),
+          optional(:actor_ref) => String.t() | map(),
+          optional(:principal_ref) => String.t() | map(),
+          optional(:lower_gateway_impl) => module(),
+          optional(:runtime_modules) => map(),
+          optional(:lower_dispatch_opts) => keyword(),
+          optional(atom()) => term()
         }
 
   @type dispatch_result ::

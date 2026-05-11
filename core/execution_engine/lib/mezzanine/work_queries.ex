@@ -17,6 +17,7 @@ defmodule Mezzanine.WorkQueries do
   alias Mezzanine.WorkProjectionFacts
 
   @active_statuses [:pending, :planning, :planned, :running, :awaiting_review, :blocked]
+  @running_projection_state "running"
   @runtime_projection_name "operator_subject_runtime"
 
   @spec ingest_subject(map(), keyword()) :: {:ok, map()} | {:error, term()}
@@ -397,6 +398,15 @@ defmodule Mezzanine.WorkQueries do
       runtime: runtime_projection_facts(work_object, current_plan, active_run, execution, opts),
       evidence: evidence_projection(execution),
       review: review_projection(pending_reviews, gate_status),
+      run: run_projection(execution),
+      lower_envelope: lower_envelope_projection(execution),
+      governance: governance_projection(execution),
+      prompt: prompt_projection(execution),
+      memory_context: memory_context_projection(execution),
+      authority: authority_projection(execution),
+      source_publication: source_publication_projection(execution),
+      github_pr: github_pr_projection(execution),
+      acceptance: acceptance_projection(execution),
       available_actions: [],
       queue: %{
         "pending_obligations" => normalize_value(projection_facts.pending_obligations),
@@ -433,12 +443,15 @@ defmodule Mezzanine.WorkQueries do
       "source_kind" => source_kind,
       "external_system" => source_kind,
       "source_state" => normalize_state(work_object.status),
-      "workpad_refs" => [],
-      "metadata" => %{
-        "external_ref" => work_object.external_ref,
-        "work_class_id" => work_object.work_class_id,
-        "program_id" => work_object.program_id
-      }
+      "workpad_refs" => workpad_refs(execution),
+      "metadata" =>
+        %{
+          "external_ref" => work_object.external_ref,
+          "work_class_id" => work_object.work_class_id,
+          "program_id" => work_object.program_id
+        }
+        |> Map.merge(source_publication_projection(execution))
+        |> compact_map()
     }
     |> compact_map()
   end
@@ -533,12 +546,15 @@ defmodule Mezzanine.WorkQueries do
   end
 
   defp runtime_projection_facts(work_object, current_plan, active_run, execution, opts) do
+    receipt = lower_receipt_map(execution)
+
     %{
-      "token_totals" => %{},
-      "token_dedupe" => %{},
-      "rate_limit" => %{},
-      "retry_queue" => retry_queue_projection(execution),
-      "event_counts" => runtime_event_counts(execution),
+      "token_totals" => map_value(receipt, :token_totals) || %{},
+      "token_dedupe" => map_value(receipt, :token_dedupe) || %{},
+      "rate_limit" => map_value(receipt, :rate_limit) || %{},
+      "retry_queue" => map_value(receipt, :retry) || retry_queue_projection(execution),
+      "event_counts" => lower_event_counts(receipt) || runtime_event_counts(execution),
+      "aitrace" => map_value(receipt, :aitrace) || %{},
       "metadata" =>
         %{
           "work_object_id" => work_object.id,
@@ -550,11 +566,115 @@ defmodule Mezzanine.WorkQueries do
           "retry_state" => retry_state(execution),
           "completion_state" => completion_state(execution),
           "projection_source" => "mezzanine_work_queries",
-          "projection_mode" => Keyword.get(opts, :projection_mode, "same_run_readback")
+          "projection_mode" => Keyword.get(opts, :projection_mode, "same_run_readback"),
+          "lower_envelope" => lower_envelope_projection(execution),
+          "governance" => governance_projection(execution),
+          "memory_context" => memory_context_projection(execution),
+          "acceptance" => acceptance_projection(execution),
+          "github_pr" => github_pr_projection(execution),
+          "source_publication" => source_publication_projection(execution)
         }
         |> compact_map()
     }
   end
+
+  defp run_projection(execution) do
+    receipt = lower_receipt_map(execution)
+    runtime_profile = map_value(receipt, :runtime_profile) || %{}
+
+    %{
+      "run_ref" => map_value(receipt, :run_id) || map_value(receipt, :run_ref),
+      "attempt_ref" => map_value(receipt, :attempt_id) || map_value(receipt, :attempt_ref),
+      "runtime_profile_ref" => map_value(runtime_profile, :runtime_profile_ref),
+      "runtime_profile_kind" => map_value(runtime_profile, :runtime_profile_kind)
+    }
+    |> compact_map()
+  end
+
+  defp lower_envelope_projection(execution) do
+    receipt = lower_receipt_map(execution)
+
+    case map_value(receipt, :governed_lower_envelope) do
+      %{} = envelope -> envelope
+      _other -> map_value(receipt, :lower_envelope) || %{}
+    end
+  end
+
+  defp governance_projection(execution) do
+    receipt = lower_receipt_map(execution)
+    runtime_profile = map_value(receipt, :runtime_profile) || %{}
+    authority = map_value(receipt, :authority_decision) || %{}
+
+    %{
+      "runtime_profile_ref" => map_value(runtime_profile, :runtime_profile_ref),
+      "runtime_profile_kind" => map_value(runtime_profile, :runtime_profile_kind),
+      "authority_ref" => map_value(authority, :authority_ref),
+      "authority_decision_hash" => map_value(authority, :authority_decision_hash),
+      "connector_manifest_refs" =>
+        receipt
+        |> map_value(:connector_manifests)
+        |> List.wrap()
+        |> Enum.flat_map(&projection_ref(&1, :connector_manifest_ref)),
+      "capability_negotiation_refs" =>
+        receipt
+        |> map_value(:capability_negotiations)
+        |> List.wrap()
+        |> Enum.flat_map(&projection_ref(&1, :capability_negotiation_ref))
+    }
+    |> compact_map()
+  end
+
+  defp prompt_projection(execution) do
+    execution |> lower_receipt_map() |> map_value(:prompt_provenance) || %{}
+  end
+
+  defp memory_context_projection(execution) do
+    execution |> lower_receipt_map() |> map_value(:memory_context) || %{}
+  end
+
+  defp authority_projection(execution) do
+    receipt = lower_receipt_map(execution)
+
+    %{
+      "authority_decision" => map_value(receipt, :authority_decision),
+      "provider_account" => map_value(receipt, :provider_account),
+      "credential" => map_value(receipt, :credential)
+    }
+    |> compact_map()
+  end
+
+  defp source_publication_projection(execution) do
+    execution |> lower_receipt_map() |> map_value(:source_publication) || %{}
+  end
+
+  defp github_pr_projection(execution) do
+    execution |> lower_receipt_map() |> map_value(:github_pr_evidence) || %{}
+  end
+
+  defp acceptance_projection(execution) do
+    execution |> lower_receipt_map() |> map_value(:acceptance) || %{}
+  end
+
+  defp workpad_refs(execution) do
+    execution
+    |> lower_receipt_map()
+    |> map_value(:workpad_refs)
+    |> List.wrap()
+  end
+
+  defp lower_event_counts(receipt) do
+    events = receipt |> map_value(:runtime_events) |> List.wrap()
+
+    if events == [] do
+      nil
+    else
+      Enum.frequencies_by(events, &(map_value(&1, :event_kind) || "unknown"))
+    end
+  end
+
+  defp projection_ref(%{} = row, key), do: row |> map_value(key) |> List.wrap()
+  defp projection_ref(value, _key) when is_binary(value), do: [value]
+  defp projection_ref(_value, _key), do: []
 
   defp runtime_event_counts(execution) do
     %{
@@ -636,7 +756,7 @@ defmodule Mezzanine.WorkQueries do
   defp running_state(execution) do
     cond do
       retry_scheduled?(execution) -> "not_running"
-      execution.dispatch_state in [:in_flight, :accepted_active] -> "running"
+      execution.dispatch_state in [:in_flight, :accepted_active] -> @running_projection_state
       true -> "not_running"
     end
   end
@@ -656,19 +776,43 @@ defmodule Mezzanine.WorkQueries do
 
   defp evidence_projection(execution) do
     %{
-      "evidence_refs" => [
-        %{
-          "evidence_ref" =>
-            map_value(execution.dispatch_envelope, :workflow_start_evidence_ref) ||
-              "execution-evidence://#{execution.id}/workflow-start",
-          "evidence_kind" => "workflow_start",
-          "status" => "present",
-          "metadata" => %{
-            "workflow_start_ref" => map_value(execution.dispatch_envelope, :workflow_start_ref)
+      "evidence_refs" =>
+        [
+          %{
+            "evidence_ref" =>
+              map_value(execution.dispatch_envelope, :workflow_start_evidence_ref) ||
+                "execution-evidence://#{execution.id}/workflow-start",
+            "evidence_kind" => "workflow_start",
+            "status" => "present",
+            "metadata" => %{
+              "workflow_start_ref" => map_value(execution.dispatch_envelope, :workflow_start_ref)
+            }
           }
-        }
-      ]
+        ] ++ lower_evidence_refs(execution)
     }
+  end
+
+  defp lower_evidence_refs(execution) do
+    execution
+    |> lower_receipt_map()
+    |> map_value(:artifact_refs)
+    |> List.wrap()
+    |> Enum.flat_map(fn
+      %{} = ref ->
+        [
+          %{
+            "evidence_ref" => map_value(ref, :content_ref),
+            "evidence_kind" => map_value(ref, :kind),
+            "content_ref" => map_value(ref, :content_ref),
+            "status" => "verified",
+            "metadata" => %{"collector_ref" => map_value(ref, :collector_ref)}
+          }
+          |> compact_map()
+        ]
+
+      _other ->
+        []
+    end)
   end
 
   defp review_projection(pending_reviews, gate_status) do
@@ -694,6 +838,12 @@ defmodule Mezzanine.WorkQueries do
       _other -> normalize_state(work_object.status)
     end
   end
+
+  defp lower_receipt_map(%ExecutionRecord{lower_receipt: receipt})
+       when is_map(receipt) and map_size(receipt) > 0,
+       do: receipt
+
+  defp lower_receipt_map(_execution), do: %{}
 
   defp fetch_current_plan(_tenant_id, nil), do: {:ok, nil}
 

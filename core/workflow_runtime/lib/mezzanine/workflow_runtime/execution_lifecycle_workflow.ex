@@ -797,7 +797,12 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
         receipt_state: Map.get(attrs, :receipt_state, attrs.terminal_state),
         lower_receipt_ref: attrs.lower_receipt_ref,
         lower_receipt: lower_receipt,
-        required_evidence: get_in(attrs, [:routing_facts, :required_evidence]) || []
+        required_evidence: get_in(attrs, [:routing_facts, :required_evidence]) || [],
+        review_required?: get_in(attrs, [:routing_facts, :review_required]),
+        actor_ref:
+          Map.get(attrs, :actor_ref) ||
+            get_in(attrs, [:routing_facts, :actor_ref]) ||
+            %{"kind" => "system", "ref" => "execution_lifecycle_workflow"}
       }
 
     if Code.ensure_loaded?(reducer) and function_exported?(reducer, :reduce, 1) do

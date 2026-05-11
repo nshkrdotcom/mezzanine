@@ -51,8 +51,6 @@ defmodule Mezzanine.Citadel.SubstrateIngress.PacketBuilder do
     allowed_operations =
       normalize_string_list(value(attrs, :allowed_operations, [intent.capability]))
 
-    submission_key = value(attrs, :submission_dedupe_key, value(attrs, :idempotency_key, nil))
-
     %{
       intent_envelope_id: "intent/#{required_string(attrs, :execution_id, intent.intent_id)}",
       scope_selectors: [
@@ -109,8 +107,7 @@ defmodule Mezzanine.Citadel.SubstrateIngress.PacketBuilder do
                   intent,
                   attrs,
                   execution_intent_family,
-                  execution_intent,
-                  submission_key
+                  execution_intent
                 )
             }
           }
@@ -140,8 +137,7 @@ defmodule Mezzanine.Citadel.SubstrateIngress.PacketBuilder do
          %RunIntent{} = intent,
          attrs,
          execution_intent_family,
-         execution_intent,
-         submission_key
+         execution_intent
        ) do
     %{
       "execution_intent_family" => execution_intent_family,
@@ -157,14 +153,25 @@ defmodule Mezzanine.Citadel.SubstrateIngress.PacketBuilder do
       "placement_intent" => value(attrs, :placement_intent, "remote_workspace"),
       "downstream_scope" => value(attrs, :downstream_scope, "work:#{intent.work_id}")
     }
-    |> maybe_put_execution_envelope(submission_key)
+    |> Map.put("execution_envelope", execution_envelope(intent, attrs))
   end
 
-  defp maybe_put_execution_envelope(extensions, value) when is_binary(value) and value != "" do
-    Map.put(extensions, "execution_envelope", %{"submission_dedupe_key" => value})
+  defp execution_envelope(%RunIntent{} = intent, attrs) do
+    %{
+      "installation_id" =>
+        required_string(attrs, :installation_id, metadata_value(intent, :installation_id)),
+      "installation_revision" => installation_revision!(intent, attrs),
+      "subject_id" => required_string(attrs, :subject_id, intent.work_id),
+      "execution_id" =>
+        required_string(attrs, :execution_id, value(attrs, :request_id, intent.intent_id)),
+      "submission_dedupe_key" =>
+        required_string(
+          attrs,
+          :submission_dedupe_key,
+          value(attrs, :idempotency_key, intent.intent_id)
+        )
+    }
   end
-
-  defp maybe_put_execution_envelope(extensions, _value), do: extensions
 
   defp placement(%RunIntent{} = intent, attrs) do
     placement = Map.new(intent.placement)

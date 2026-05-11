@@ -270,6 +270,7 @@ defmodule Mezzanine.M1M2Runtime.WorkflowLowerGateway do
       submission_ref: submission_ref(attrs, lower, provider_submission, lower_envelope),
       lower_receipt: lower_receipt,
       governed_lower_envelope: lower_envelope,
+      provider_submission: dump_json_safe(provider_submission),
       trace_id: attrs.trace_id,
       routing_facts: attrs.routing_facts
     }
