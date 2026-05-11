@@ -429,26 +429,41 @@ defmodule Mezzanine.WorkQueries do
   end
 
   defp source_binding_projection(tenant_id, work_object, execution) do
-    binding_ref =
-      execution.binding_snapshot
-      |> map_value(:source_binding_refs)
-      |> List.wrap()
-      |> List.first()
+    source_payload = source_payload(work_object)
 
-    source_kind = work_object.source_kind || "source"
+    binding_ref =
+      map_value(source_payload, :source_binding_id) ||
+        execution.binding_snapshot
+        |> map_value(:source_binding_refs)
+        |> List.wrap()
+        |> List.first()
+
+    source_kind =
+      map_value(source_payload, :provider) ||
+        map_value(source_payload, :source_kind) ||
+        work_object.source_kind ||
+        "source"
 
     %{
       "binding_ref" => binding_ref || "#{source_kind}_primary",
-      "source_ref" => source_ref(tenant_id, work_object),
+      "source_ref" => source_ref(tenant_id, work_object, source_payload),
       "source_kind" => source_kind,
-      "external_system" => source_kind,
-      "source_state" => normalize_state(work_object.status),
-      "workpad_refs" => workpad_refs(execution),
+      "external_system" => map_value(source_payload, :provider) || source_kind,
+      "source_state" =>
+        map_value(source_payload, :source_state) || normalize_state(work_object.status),
+      "source_url" => map_value(source_payload, :source_url),
+      "workpad_refs" => source_workpad_refs(source_payload, execution),
       "metadata" =>
         %{
           "external_ref" => work_object.external_ref,
           "work_class_id" => work_object.work_class_id,
-          "program_id" => work_object.program_id
+          "program_id" => work_object.program_id,
+          "provider_external_ref" => map_value(source_payload, :provider_external_ref),
+          "provider_revision" => map_value(source_payload, :provider_revision),
+          "branch_ref" => map_value(source_payload, :branch_ref),
+          "labels" => map_value(source_payload, :labels),
+          "blocker_refs" => map_value(source_payload, :blocker_refs),
+          "state_mapping" => map_value(source_payload, :state_mapping)
         }
         |> Map.merge(source_publication_projection(execution))
         |> compact_map()
@@ -456,14 +471,29 @@ defmodule Mezzanine.WorkQueries do
     |> compact_map()
   end
 
-  defp source_ref(tenant_id, work_object) do
-    case work_object.external_ref do
+  defp source_ref(tenant_id, work_object, source_payload) do
+    case map_value(source_payload, :source_ref) || map_value(source_payload, :external_ref) ||
+           work_object.external_ref do
       value when is_binary(value) and value != "" ->
-        "source://#{work_object.source_kind || "source"}/#{tenant_id}/#{value}"
+        if String.contains?(value, "://") do
+          value
+        else
+          "source://#{work_object.source_kind || "source"}/#{tenant_id}/#{value}"
+        end
 
       _other ->
         "source://#{work_object.source_kind || "source"}/#{tenant_id}/#{work_object.id}"
     end
+  end
+
+  defp source_workpad_refs(source_payload, execution) do
+    source_payload
+    |> map_value(:workpad_refs)
+    |> List.wrap()
+    |> Kernel.++(List.wrap(map_value(source_payload, :workpad_ref)))
+    |> Kernel.++(workpad_refs(execution))
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> Enum.uniq()
   end
 
   defp execution_projection(execution) do
@@ -1075,6 +1105,13 @@ defmodule Mezzanine.WorkQueries do
 
   defp normalize_value(value) when is_list(value), do: Enum.map(value, &normalize_value/1)
   defp normalize_value(value), do: value
+
+  defp source_payload(work_object) do
+    normalized_payload = map_value(work_object, :normalized_payload) || %{}
+    payload = map_value(normalized_payload, :payload) || map_value(work_object, :payload) || %{}
+
+    Map.merge(normalized_payload, payload)
+  end
 
   defp map_value(map, key), do: ServiceSupport.map_value(map, key)
   defp actor(tenant_id), do: ServiceSupport.actor(tenant_id)

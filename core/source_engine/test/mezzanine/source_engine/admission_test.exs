@@ -287,6 +287,54 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
              LinearSourceFlow.candidate_fetch_input(binding)
   end
 
+  test "builds current-state Linear fetch inputs by de-duplicating and batching requested ids" do
+    assert {:ok, inputs} =
+             LinearSourceFlow.current_state_fetch_inputs(
+               ["lin-issue-1", "lin-issue-2", "lin-issue-1", "lin-issue-3"],
+               source_binding(),
+               page_size: 2
+             )
+
+    assert inputs == [
+             %{filter: %{issue_ids: ["lin-issue-1", "lin-issue-2"]}, first: 2},
+             %{filter: %{issue_ids: ["lin-issue-3"]}, first: 1}
+           ]
+  end
+
+  test "normalizes current-state Linear pages in requested id order with routing semantics" do
+    first_issue = %{linear_issue() | blockers: []}
+    second_issue = %{first_issue | id: "lin-issue-654", identifier: "ENG-654"}
+
+    assert {:ok, current_state} =
+             LinearSourceFlow.normalize_current_state_page(
+               %{issues: [second_issue, first_issue]},
+               Map.put(source_envelope(), :viewer, %{id: "usr-linear-viewer"}),
+               %{source_binding() | candidate_filters: %{assignee: "me"}},
+               ["lin-issue-321", "lin-issue-654", "lin-issue-321"]
+             )
+
+    assert current_state.operation == "linear.issues.list"
+
+    assert Enum.map(current_state.subject_attrs, & &1.provider_external_ref) == [
+             "lin-issue-321",
+             "lin-issue-654"
+           ]
+
+    assert Enum.all?(current_state.subject_attrs, &(&1.state_mapping.reason == "dispatchable"))
+  end
+
+  test "normalizes Linear string project and team routing values" do
+    issue =
+      linear_issue()
+      |> Map.put(:project, "ops-automation")
+      |> Map.put(:team, "Platform")
+
+    assert {:ok, attrs} = LinearIssue.subject_attrs(issue, source_envelope(), source_binding())
+
+    assert attrs.source_routing["project"] == %{"name" => "ops-automation"}
+    assert attrs.source_routing["team"] == %{"name" => "Platform"}
+  end
+
   test "normalizes governed Linear candidate and refresh outputs through subject attrs" do
     binding = source_binding()
     envelope = source_envelope()

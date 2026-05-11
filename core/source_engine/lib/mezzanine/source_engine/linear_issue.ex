@@ -313,10 +313,23 @@ defmodule Mezzanine.SourceEngine.LinearIssue do
     compact_string_map(project, [:id, :name, :slug_id, :url])
   end
 
+  defp compact_project(project) when is_binary(project), do: compact_named_ref(project)
+
   defp compact_team(nil), do: nil
 
   defp compact_team(team) when is_map(team) do
     compact_string_map(team, [:id, :key, :name])
+  end
+
+  defp compact_team(team) when is_binary(team), do: compact_named_ref(team)
+
+  defp compact_named_ref(value) do
+    value
+    |> trimmed_string()
+    |> case do
+      nil -> nil
+      name -> %{"name" => name}
+    end
   end
 
   defp compact_string_map(map, keys) do

@@ -124,6 +124,7 @@ defmodule Mezzanine.WorkProjectionFacts do
        ) do
     []
     |> maybe_add_dependency_blocker(work_object)
+    |> maybe_add_source_blocker(work_object)
     |> maybe_add_pause_blocker(control_session)
     |> Kernel.++(review_blockers(pending_obligations, pending_reviews, gate_status))
   end
@@ -143,6 +144,35 @@ defmodule Mezzanine.WorkProjectionFacts do
             obligation_id: nil,
             decision_ref_id: nil,
             metadata: compact_map(%{blocked_by_work_id: blocked_by_work_id})
+          }
+        ]
+    else
+      blockers
+    end
+  end
+
+  defp maybe_add_source_blocker(blockers, work_object) do
+    source_payload = source_payload(work_object)
+    state_mapping = map_value(source_payload, :state_mapping) || %{}
+    blocker_refs = map_value(source_payload, :blocker_refs) || []
+
+    if map_value(state_mapping, :reason) == "blocked_by_non_terminal" and blocker_refs != [] do
+      blockers ++
+        [
+          %{
+            blocker_kind: "source_blocked",
+            status: "blocked",
+            summary:
+              "A source-system blocker must become terminal before this subject may proceed.",
+            reason: "blocked_by_non_terminal_source_issue",
+            obligation_id: nil,
+            decision_ref_id: nil,
+            metadata:
+              compact_map(%{
+                source_ref: map_value(source_payload, :source_ref),
+                source_state: map_value(source_payload, :source_state),
+                blocker_refs: blocker_refs
+              })
           }
         ]
     else
@@ -281,6 +311,16 @@ defmodule Mezzanine.WorkProjectionFacts do
           context.blocker_kinds,
           context.obligation_ids,
           %{blocked_by_work_id: map_value(context.work_object, :blocked_by_work_id)}
+        )
+
+      "source_blocked" in blocker_kinds ->
+        step_preview(
+          "refresh_source_state",
+          "blocked",
+          "Refresh the source issue after its blockers become terminal.",
+          context.blocker_kinds,
+          context.obligation_ids,
+          %{}
         )
 
       "review_rejected" in blocker_kinds ->
@@ -516,4 +556,11 @@ defmodule Mezzanine.WorkProjectionFacts do
   defp normalize_state(value), do: value
   defp normalize_value(value), do: ServiceSupport.normalize_value(value)
   defp map_value(map, key), do: ServiceSupport.map_value(map, key)
+
+  defp source_payload(work_object) do
+    normalized_payload = map_value(work_object, :normalized_payload) || %{}
+    payload = map_value(normalized_payload, :payload) || map_value(work_object, :payload) || %{}
+
+    Map.merge(normalized_payload, payload)
+  end
 end

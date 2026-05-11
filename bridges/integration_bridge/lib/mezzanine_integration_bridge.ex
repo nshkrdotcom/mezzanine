@@ -36,6 +36,22 @@ defmodule Mezzanine.IntegrationBridge do
     to: LinearSourceDispatcher,
     as: :refresh_issue
 
+  @spec fetch_linear_current_issue_states(
+          AuthorizedInvocation.t(),
+          [String.t()],
+          map(),
+          keyword()
+        ) ::
+          {:ok, map()} | {:error, term()}
+  defdelegate fetch_linear_current_issue_states(
+                invocation,
+                issue_ids,
+                source_binding,
+                opts \\ []
+              ),
+              to: LinearSourceDispatcher,
+              as: :current_issue_states
+
   @spec publish_linear_source(AuthorizedInvocation.t(), map(), keyword()) ::
           {:ok, map()} | {:error, term()}
   defdelegate publish_linear_source(invocation, attrs, opts \\ []),

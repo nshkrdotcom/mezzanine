@@ -234,6 +234,104 @@ defmodule Mezzanine.WorkControlTest do
     assert completed_projection.execution["metadata"]["completion_state"] == "completed"
   end
 
+  test "runtime source binding projection preserves source-engine payload facts" do
+    %{tenant_id: tenant_id, program: program, work_class: work_class} =
+      fixture_stack("tenant-work-control-source-payload")
+
+    source_ref = "linear://#{tenant_id}/issue/ENG-777"
+
+    source_payload = %{
+      "external_ref" => source_ref,
+      "source_ref" => source_ref,
+      "source_binding_id" => "linear_primary",
+      "provider" => "linear",
+      "provider_external_ref" => "lin-issue-777",
+      "provider_revision" => "2026-05-09T00:00:00Z",
+      "source_state" => "Todo",
+      "branch_ref" => "nshkrdotcom/extravaganza/eng-777",
+      "source_url" => "https://linear.app/example/issue/ENG-777",
+      "labels" => ["ops", "phase-7"],
+      "blocker_refs" => [
+        %{"provider_external_ref" => "lin-issue-776", "terminal?" => false}
+      ],
+      "state_mapping" => %{
+        "lifecycle_state" => "submitted",
+        "reason" => "blocked_by_non_terminal"
+      }
+    }
+
+    assert {:ok, source_subject} =
+             WorkQueries.ingest_subject(%{
+               tenant_id: tenant_id,
+               program_id: program.id,
+               work_class_id: work_class.id,
+               external_ref: source_ref,
+               title: "Source payload subject",
+               description: "Preserve Linear source payload facts",
+               priority: 42,
+               source_kind: "linear",
+               payload: source_payload,
+               normalized_payload: Map.put(source_payload, "payload", source_payload)
+             })
+
+    attrs = %{
+      trace_id: "trace-source-payload",
+      actor_ref: "ops_lead",
+      installation_ref: "installation://tenant-work-control-source-payload/default",
+      recipe_ref: "coding_operations",
+      idempotency_key: "idem-source-payload",
+      runtime_profile_ref: "codex_session",
+      runtime_profile_kind: "temporal_local",
+      lower_runtime_kind: "codex_session",
+      requested_capability_ids: ["codex.session.turn"],
+      requested_action_ids: ["codex.session.turn"],
+      source_binding_refs: ["linear_primary"],
+      resource_scope_refs: ["source_binding://linear_primary"],
+      live_provider_allowed: false
+    }
+
+    assert {:ok, started} =
+             WorkControl.start_run_for_subject(tenant_id, source_subject.subject_id, attrs)
+
+    workflow_handoff = %{
+      outbox_row: %{
+        outbox_id: "workflow-start:test-source-payload",
+        workflow_id: "workflow:test-source-payload",
+        dispatch_state: "queued"
+      },
+      workflow_start_ref: "workflow-start-outbox://workflow-start:test-source-payload",
+      evidence_ref: "audit-event://workflow-start:test-source-payload"
+    }
+
+    assert {:ok, _handoff} =
+             WorkExecutionHandoff.ensure_current_execution(
+               tenant_id,
+               started,
+               workflow_handoff,
+               attrs
+             )
+
+    assert {:ok, projection} =
+             WorkQueries.get_subject_runtime_projection(tenant_id, source_subject.subject_id)
+
+    assert [
+             %{
+               "binding_ref" => "linear_primary",
+               "source_ref" => ^source_ref,
+               "source_kind" => "linear",
+               "external_system" => "linear",
+               "source_state" => "Todo",
+               "source_url" => "https://linear.app/example/issue/ENG-777",
+               "metadata" => metadata
+             }
+           ] = projection.source_bindings
+
+    assert metadata["provider_external_ref"] == "lin-issue-777"
+    assert metadata["branch_ref"] == "nshkrdotcom/extravaganza/eng-777"
+    assert metadata["labels"] == ["ops", "phase-7"]
+    assert [%{"provider_external_ref" => "lin-issue-776"}] = metadata["blocker_refs"]
+  end
+
   defp fixture_stack(tenant_id) do
     actor = %{tenant_id: tenant_id}
 

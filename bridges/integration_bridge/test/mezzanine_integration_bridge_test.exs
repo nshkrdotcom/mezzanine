@@ -184,6 +184,45 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert [%{lifecycle_state: "submitted"}] = result.source_intake.subject_attrs
   end
 
+  test "Linear current-state lookup deduplicates, batches, and preserves requested order" do
+    invocation = authorized_invocation_allowing(["linear.issues.list"])
+
+    invoke_fun = fn "linear.issues.list", input, _opts ->
+      send(self(), {:invoke, "linear.issues.list", input})
+
+      issues =
+        case get_in(input, [:filter, :issue_ids]) do
+          ["lin-issue-321", "lin-issue-654"] -> [linear_issue("lin-issue-654"), linear_issue()]
+          ["lin-issue-777"] -> []
+        end
+
+      {:ok, %{output: %{issues: issues, page_info: %{has_next_page: false}}}}
+    end
+
+    assert {:ok, result} =
+             IntegrationBridge.fetch_linear_current_issue_states(
+               invocation,
+               ["lin-issue-321", "lin-issue-654", "lin-issue-321", "lin-issue-777"],
+               source_binding(),
+               invoke_fun: invoke_fun,
+               viewer: %{id: "usr-linear-viewer"},
+               page_size: 2
+             )
+
+    assert_received {:invoke, "linear.issues.list",
+                     %{filter: %{issue_ids: ["lin-issue-321", "lin-issue-654"]}, first: 2}}
+
+    assert_received {:invoke, "linear.issues.list",
+                     %{filter: %{issue_ids: ["lin-issue-777"]}, first: 1}}
+
+    assert Enum.map(result.source_current_state.subject_attrs, & &1.provider_external_ref) == [
+             "lin-issue-321",
+             "lin-issue-654"
+           ]
+
+    assert result.source_current_state.missing_issue_ids == ["lin-issue-777"]
+  end
+
   test "Linear issue refresh normalizes provider output into source subject attrs" do
     invocation = authorized_invocation_allowing(["linear.issues.retrieve"])
 
@@ -1218,6 +1257,17 @@ defmodule Mezzanine.IntegrationBridgeTest do
       state: %{id: "state-todo", name: "Todo", type: "unstarted"},
       assignee: %{id: "usr-linear-viewer", name: "Taylor Automation"},
       blockers: []
+    }
+  end
+
+  defp linear_issue("lin-issue-654") do
+    %{
+      linear_issue()
+      | id: "lin-issue-654",
+        identifier: "ENG-654",
+        title: "Audit release checklist",
+        branch_name: "eng-654-audit-release-checklist",
+        url: "https://linear.app/acme/issue/ENG-654"
     }
   end
 

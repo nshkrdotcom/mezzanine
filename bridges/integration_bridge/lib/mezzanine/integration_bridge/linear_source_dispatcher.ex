@@ -55,6 +55,36 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
     end
   end
 
+  @spec current_issue_states(AuthorizedInvocation.t(), [String.t()], map(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  def current_issue_states(
+        %AuthorizedInvocation{} = invocation,
+        issue_ids,
+        source_binding,
+        opts \\ []
+      )
+      when is_list(issue_ids) and is_map(source_binding) and is_list(opts) do
+    with {:ok, inputs} <-
+           LinearSourceFlow.current_state_fetch_inputs(issue_ids, source_binding, opts),
+         {:ok, normalize_opts, viewer_dispatch} <-
+           current_state_normalize_opts(invocation, source_binding, opts),
+         {:ok, dispatches} <- dispatch_current_state_inputs(invocation, inputs, opts),
+         {:ok, normalized} <-
+           LinearSourceFlow.normalize_current_state_page(
+             merge_current_state_outputs(dispatches),
+             source_envelope(invocation, normalize_opts),
+             source_binding,
+             issue_ids
+           ) do
+      {:ok,
+       %{
+         current_state_dispatches: dispatches,
+         source_current_state: normalized
+       }
+       |> maybe_put(:viewer_resolution, viewer_dispatch)}
+    end
+  end
+
   @spec update_issue_state(AuthorizedInvocation.t(), map(), keyword()) ::
           {:ok, map()} | {:error, term()}
   def update_issue_state(%AuthorizedInvocation{} = invocation, attrs, opts \\ [])
@@ -136,6 +166,73 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  defp current_state_normalize_opts(invocation, source_binding, opts) do
+    if assignee_me_filter?(source_binding) and not Keyword.has_key?(opts, :viewer) do
+      with {:ok, viewer_dispatch} <-
+             dispatch_linear(invocation, "linear.users.get_self", %{}, opts),
+           {:ok, viewer} <- viewer_from_dispatch(viewer_dispatch) do
+        {:ok, Keyword.put(opts, :viewer, viewer), viewer_dispatch}
+      end
+    else
+      {:ok, opts, nil}
+    end
+  end
+
+  defp dispatch_current_state_inputs(invocation, inputs, opts) do
+    Enum.reduce_while(inputs, {:ok, []}, fn input, {:ok, acc} ->
+      case dispatch_linear(invocation, "linear.issues.list", input, opts) do
+        {:ok, dispatch} -> {:cont, {:ok, [dispatch | acc]}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+    |> case do
+      {:ok, dispatches} -> {:ok, Enum.reverse(dispatches)}
+      error -> error
+    end
+  end
+
+  defp merge_current_state_outputs(dispatches) do
+    %{
+      issues:
+        dispatches
+        |> Enum.flat_map(fn dispatch ->
+          dispatch
+          |> output!()
+          |> Map.get(:issues, [])
+          |> List.wrap()
+        end),
+      page_info: %{
+        dispatch_count: length(dispatches),
+        has_next_page:
+          Enum.any?(dispatches, fn dispatch ->
+            dispatch
+            |> output!()
+            |> Map.get(:page_info, %{})
+            |> Map.get(:has_next_page, false)
+          end)
+      },
+      auth_binding:
+        dispatches
+        |> List.first()
+        |> case do
+          nil -> %{}
+          dispatch -> output!(dispatch) |> Map.get(:auth_binding, %{})
+        end
+    }
+  end
+
+  defp assignee_me_filter?(source_binding) do
+    filters =
+      case Map.get(source_binding, :candidate_filters) ||
+             Map.get(source_binding, "candidate_filters") do
+        %{} = filters -> filters
+        _other -> %{}
+      end
+
+    Map.get(filters, :assignee) == "me" or Map.get(filters, "assignee") == "me" or
+      Map.get(filters, :assignee_id) == "me" or Map.get(filters, "assignee_id") == "me"
   end
 
   defp viewer_from_dispatch(dispatch) do

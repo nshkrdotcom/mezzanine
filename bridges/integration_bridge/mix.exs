@@ -41,7 +41,7 @@ defmodule MezzanineIntegrationBridge.MixProject do
         "compile --warnings-as-errors",
         "cmd env MIX_ENV=test mix test",
         "credo --strict",
-        "cmd env MIX_ENV=dev mix dialyzer",
+        "cmd env MIX_ENV=dev mix dialyzer --force-check",
         "cmd env MIX_ENV=dev mix docs --warnings-as-errors"
       ]
     ]

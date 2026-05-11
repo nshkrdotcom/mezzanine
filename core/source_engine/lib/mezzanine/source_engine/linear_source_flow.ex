@@ -36,6 +36,25 @@ defmodule Mezzanine.SourceEngine.LinearSourceFlow do
     end
   end
 
+  @spec current_state_fetch_inputs([String.t()], SourceBinding.t() | map(), keyword() | map()) ::
+          {:ok, [map()]} | {:error, term()}
+  def current_state_fetch_inputs(issue_ids, _binding, opts \\ []) when is_list(issue_ids) do
+    opts = normalize_attrs(opts)
+    page_size = positive_integer(value(opts, :page_size) || value(opts, :first))
+
+    issue_ids
+    |> string_list()
+    |> Enum.uniq()
+    |> Enum.chunk_every(page_size)
+    |> Enum.map(fn ids ->
+      %{
+        filter: %{issue_ids: ids},
+        first: length(ids)
+      }
+    end)
+    |> then(&{:ok, &1})
+  end
+
   @spec refresh_issue_input(String.t() | map(), keyword() | map()) ::
           {:ok, map()} | {:error, term()}
   def refresh_issue_input(issue_or_attrs, opts \\ [])
@@ -85,6 +104,28 @@ defmodule Mezzanine.SourceEngine.LinearSourceFlow do
          source_binding_id: source_binding_id(binding),
          issues: issues,
          subject_attrs: subject_attrs,
+         page_info: value(output, :page_info) || %{},
+         auth_binding: value(output, :auth_binding) || %{}
+       }}
+    end
+  end
+
+  @spec normalize_current_state_page(map(), map(), SourceBinding.t() | map(), [String.t()]) ::
+          {:ok, map()} | {:error, term()}
+  def normalize_current_state_page(output, envelope, binding, requested_issue_ids)
+      when is_map(output) and is_map(envelope) and is_map(binding) and
+             is_list(requested_issue_ids) do
+    issues = output |> value(:issues) |> List.wrap() |> Enum.filter(&is_map/1)
+    ordered_issues = order_issues_by_requested_ids(issues, requested_issue_ids)
+
+    with {:ok, subject_attrs} <- normalize_issues(ordered_issues, envelope, binding) do
+      {:ok,
+       %{
+         operation: "linear.issues.list",
+         source_binding_id: source_binding_id(binding),
+         issues: ordered_issues,
+         subject_attrs: subject_attrs,
+         missing_issue_ids: missing_issue_ids(issues, requested_issue_ids),
          page_info: value(output, :page_info) || %{},
          auth_binding: value(output, :auth_binding) || %{}
        }}
@@ -165,6 +206,35 @@ defmodule Mezzanine.SourceEngine.LinearSourceFlow do
       {:ok, attrs} -> {:ok, Enum.reverse(attrs)}
       error -> error
     end
+  end
+
+  defp order_issues_by_requested_ids(issues, requested_issue_ids) do
+    by_id =
+      Map.new(issues, fn issue ->
+        {string_value(issue, :id), issue}
+      end)
+
+    requested_issue_ids
+    |> string_list()
+    |> Enum.uniq()
+    |> Enum.flat_map(fn issue_id ->
+      case Map.get(by_id, issue_id) do
+        nil -> []
+        issue -> [issue]
+      end
+    end)
+  end
+
+  defp missing_issue_ids(issues, requested_issue_ids) do
+    present_ids =
+      issues
+      |> Enum.map(&string_value(&1, :id))
+      |> MapSet.new()
+
+    requested_issue_ids
+    |> string_list()
+    |> Enum.uniq()
+    |> Enum.reject(&MapSet.member?(present_ids, &1))
   end
 
   defp filters(binding, opts) do
