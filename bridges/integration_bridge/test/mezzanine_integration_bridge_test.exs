@@ -225,6 +225,25 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert result.source_intake.operation == "linear.issues.list"
   end
 
+  test "Linear API key credential ingress defaults include workflow-state lookup" do
+    assert {:ok, prepared} =
+             IntegrationBridge.prepare_linear_api_key_invocation("lin_api_live_secret", %{
+               tenant_id: "tenant-linear-live-defaults",
+               installation_id: "inst-linear-live-defaults",
+               subject_id: "subject-linear-live-defaults",
+               execution_id: "exec-linear-live-defaults",
+               trace_id: "trace-linear-live-defaults",
+               idempotency_key: "idem-linear-live-defaults",
+               submission_dedupe_key: "dedupe-linear-live-defaults",
+               actor_id: "operator-linear-live-defaults",
+               subject: "linear-live-proof-defaults"
+             })
+
+    assert "linear.workflow_states.list" in prepared.authorized_invocation.invocation_request.allowed_operations
+
+    assert "linear.issues.update" in prepared.authorized_invocation.invocation_request.allowed_operations
+  end
+
   test "Codex agent runtime invokes Jido codex.session.turn and returns AppKit readback projection" do
     attrs = %{
       tenant_ref: "tenant://extravaganza",
@@ -537,6 +556,108 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert result.source_publication_receipt.capability_id == "linear.comments.create"
     assert result.source_publication_receipt.fallback_from == "linear.comments.update"
     assert result.source_publication_receipt.workpad_refs == ["linear-comment://comment-created"]
+  end
+
+  test "Linear source publication fallback recognizes missing-comment input errors" do
+    invocation =
+      authorized_invocation_allowing(["linear.comments.update", "linear.comments.create"])
+
+    invoke_fun = fn
+      "linear.comments.update", input, _opts ->
+        send(self(), {:invoke, "linear.comments.update", input})
+
+        {:error,
+         %{
+           reason: %{
+             code: "linear.input_error",
+             message: "[input_error] Entity not found: Comment"
+           }
+         }}
+
+      "linear.comments.create", input, _opts ->
+        send(self(), {:invoke, "linear.comments.create", input})
+        {:ok, %{output: %{success: true, comment: %{id: "comment-created"}}}}
+    end
+
+    assert {:ok, result} =
+             IntegrationBridge.publish_linear_source(
+               invocation,
+               %{
+                 source_publish_ref: "linear_workpad_review",
+                 source_binding_id: "linear-primary",
+                 source_ref: "linear://inst-1/issue/ENG-321",
+                 issue_id: "lin-issue-321",
+                 comment_id: "stale-comment",
+                 body: "Ready for review",
+                 allow_create_fallback?: true
+               },
+               invoke_fun: invoke_fun
+             )
+
+    assert_received {:invoke, "linear.comments.update", %{comment_id: "stale-comment"}}
+    assert_received {:invoke, "linear.comments.create", %{issue_id: "lin-issue-321"}}
+
+    assert result.source_publication_receipt.capability_id == "linear.comments.create"
+    assert result.source_publication_receipt.fallback_from == "linear.comments.update"
+  end
+
+  test "Linear issue state publication resolves state names before governed update" do
+    invocation =
+      authorized_invocation_allowing(["linear.workflow_states.list", "linear.issues.update"])
+
+    invoke_fun = fn
+      "linear.workflow_states.list", input, _opts ->
+        send(self(), {:invoke, "linear.workflow_states.list", input})
+
+        {:ok,
+         %{
+           output: %{
+             workflow_states: [
+               %{id: "state-backlog", name: "Backlog", team: %{id: "team-linear"}},
+               %{id: "state-done", name: "Done", team: %{id: "team-linear"}}
+             ],
+             page_info: %{has_next_page: false}
+           }
+         }}
+
+      "linear.issues.update", input, _opts ->
+        send(self(), {:invoke, "linear.issues.update", input})
+
+        {:ok,
+         %{
+           output: %{
+             success: true,
+             issue: %{id: "lin-issue-321", identifier: "ENG-321"}
+           }
+         }}
+    end
+
+    assert {:ok, result} =
+             IntegrationBridge.update_linear_issue_state(
+               invocation,
+               %{
+                 source_publish_ref: "linear_state_update",
+                 source_binding_id: "linear-primary",
+                 source_ref: "linear://inst-1/issue/ENG-321",
+                 issue_id: "lin-issue-321",
+                 state_name: "Done",
+                 team_id: "team-linear"
+               },
+               invoke_fun: invoke_fun
+             )
+
+    assert_received {:invoke, "linear.workflow_states.list",
+                     %{filter: %{state_names: ["Done"], team_id: "team-linear"}, first: 10}}
+
+    assert_received {:invoke, "linear.issues.update",
+                     %{issue_id: "lin-issue-321", state_id: "state-done"}}
+
+    receipt = result.source_publication_receipt
+    assert receipt.status == "published"
+    assert receipt.capability_id == "linear.issues.update"
+    assert receipt.issue_id == "lin-issue-321"
+    assert receipt.state_id == "state-done"
+    assert receipt.state_name == "Done"
   end
 
   test "GitHub PR creation uses governed direct connector dispatch" do

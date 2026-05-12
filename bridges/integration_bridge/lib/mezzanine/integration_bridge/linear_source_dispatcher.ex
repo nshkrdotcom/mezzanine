@@ -94,10 +94,16 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
           {:ok, map()} | {:error, term()}
   def update_issue_state(%AuthorizedInvocation{} = invocation, attrs, opts \\ [])
       when (is_map(attrs) or is_list(attrs)) and is_list(opts) do
-    with {:ok, input} <- LinearSourceFlow.issue_state_update_input(attrs) do
-      with {:ok, dispatch} <- dispatch_linear(invocation, "linear.issues.update", input, opts) do
-        {:ok, annotate_provider_effect(dispatch, opts)}
-      end
+    attrs = normalize_attrs(attrs)
+
+    with {:ok, attrs} <- resolve_issue_state_attrs(invocation, attrs, opts),
+         {:ok, input} <- LinearSourceFlow.issue_state_update_input(attrs),
+         {:ok, dispatch} <- dispatch_linear(invocation, "linear.issues.update", input, opts),
+         {:ok, receipt} <- LinearSourceFlow.issue_state_update_receipt(dispatch, attrs) do
+      {:ok,
+       dispatch
+       |> annotate_provider_effect(opts)
+       |> Map.put(:source_publication_receipt, receipt)}
     end
   end
 
@@ -201,6 +207,29 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
     |> case do
       {:ok, dispatches} -> {:ok, Enum.reverse(dispatches)}
       error -> error
+    end
+  end
+
+  defp resolve_issue_state_attrs(invocation, attrs, opts) do
+    cond do
+      present_string?(Map.get(attrs, :state_id) || Map.get(attrs, "state_id")) ->
+        {:ok, attrs}
+
+      present_string?(Map.get(attrs, :state_name) || Map.get(attrs, "state_name")) ->
+        with {:ok, input} <- LinearSourceFlow.issue_state_lookup_input(attrs),
+             {:ok, dispatch} <-
+               dispatch_linear(invocation, "linear.workflow_states.list", input, opts),
+             {:ok, state_id} <-
+               LinearSourceFlow.issue_state_id_from_lookup(output!(dispatch), attrs) do
+          {:ok,
+           attrs
+           |> Map.put(:state_id, state_id)
+           |> Map.put(:state_lookup_lower_request_ref, lower_request_ref(dispatch))
+           |> Map.put(:state_lookup_lower_receipt_ref, lower_receipt_ref(dispatch))}
+        end
+
+      true ->
+        {:ok, attrs}
     end
   end
 
@@ -338,11 +367,26 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
   defp retryable_update_error?(%{code: code})
        when code in ["linear.not_found", :linear_not_found], do: true
 
+  defp retryable_update_error?(%{code: code, message: message})
+       when code in ["linear.input_error", :linear_input_error] do
+    not_found_message?(message)
+  end
+
   defp retryable_update_error?(reason) do
     reason
     |> inspect()
-    |> String.contains?("not_found")
+    |> not_found_message?()
   end
+
+  defp present_string?(value) when is_binary(value), do: String.trim(value) != ""
+  defp present_string?(_value), do: false
+
+  defp not_found_message?(message) when is_binary(message) do
+    normalized = String.downcase(message)
+    String.contains?(normalized, "not_found") or String.contains?(normalized, "not found")
+  end
+
+  defp not_found_message?(_message), do: false
 
   defp normalize_attrs(attrs) when is_list(attrs), do: Map.new(attrs)
   defp normalize_attrs(%{} = attrs), do: Map.new(attrs)

@@ -17,7 +17,8 @@ defmodule Mezzanine.IntegrationBridge.LinearCredentialIngress do
     "linear.issues.list",
     "linear.comments.create",
     "linear.comments.update",
-    "linear.issues.update"
+    "linear.issues.update",
+    "linear.workflow_states.list"
   ]
 
   @spec prepare_api_key_invocation(String.t(), map() | keyword(), keyword()) ::

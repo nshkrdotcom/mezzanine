@@ -412,6 +412,71 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
     assert receipt.workpad_refs == ["linear-comment://comment-1"]
   end
 
+  test "builds Linear state-name lookup input and issue-state publication receipts" do
+    assert {:ok, lookup_input} =
+             LinearSourceFlow.issue_state_lookup_input(%{
+               state_name: "Done",
+               team_id: "team-linear"
+             })
+
+    assert lookup_input == %{
+             filter: %{state_names: ["Done"], team_id: "team-linear"},
+             first: 10
+           }
+
+    assert {:ok, "state-done"} =
+             LinearSourceFlow.issue_state_id_from_lookup(
+               %{
+                 workflow_states: [
+                   %{id: "state-backlog", name: "Backlog", team: %{id: "team-linear"}},
+                   %{id: "state-done", name: "Done", team: %{id: "team-linear"}}
+                 ]
+               },
+               %{state_name: "Done", team_id: "team-linear"}
+             )
+
+    assert {:ok, receipt} =
+             LinearSourceFlow.issue_state_update_receipt(
+               %{
+                 output: %{
+                   success: true,
+                   issue: %{id: "lin-issue-321", identifier: "ENG-321"}
+                 },
+                 governed_lower_envelope: %{
+                   capability_id: "linear.issues.update",
+                   lower_runtime_kind: :direct_connector,
+                   lower_request_ref: "lower-request://source/state-update",
+                   authority_ref: "authority://linear/state-update",
+                   authority_decision_hash: String.duplicate("b", 64),
+                   connector_manifest_ref: "manifest://linear@active",
+                   connector_manifest_hash: "sha256:linear",
+                   capability_negotiation_ref: "cap-neg://linear/state-update",
+                   redaction_profile_ref: "redaction://linear/public",
+                   trace_id: "trace-linear-state-update"
+                 },
+                 governed_lower_receipt: %{
+                   lower_receipt_ref: "lower-receipt://source/state-update/succeeded"
+                 }
+               },
+               %{
+                 source_publish_ref: "linear_state_update",
+                 source_binding_id: "linear-primary",
+                 source_ref: "linear://installation-1/issue/ENG-321",
+                 issue_id: "lin-issue-321",
+                 state_name: "Done",
+                 state_id: "state-done"
+               }
+             )
+
+    assert receipt.status == "published"
+    assert receipt.capability_id == "linear.issues.update"
+    assert receipt.issue_id == "lin-issue-321"
+    assert receipt.state_id == "state-done"
+    assert receipt.state_name == "Done"
+    assert receipt.workpad_refs == []
+    assert receipt.lower_request_ref == "lower-request://source/state-update"
+  end
+
   defp source_binding do
     %SourceBinding{
       source_binding_id: "linear-primary",

@@ -81,6 +81,44 @@ defmodule Mezzanine.SourceEngine.LinearSourceFlow do
     end
   end
 
+  @spec issue_state_lookup_input(map() | keyword()) :: {:ok, map()} | {:error, term()}
+  def issue_state_lookup_input(attrs) when is_map(attrs) or is_list(attrs) do
+    attrs = normalize_attrs(attrs)
+
+    with {:ok, state_name} <- required_string(attrs, :state_name) do
+      filter =
+        %{
+          state_names: [state_name]
+        }
+        |> maybe_put(:team_id, string_value(attrs, :team_id))
+
+      {:ok, %{filter: filter, first: positive_integer(value(attrs, :state_lookup_first) || 10)}}
+    end
+  end
+
+  @spec issue_state_id_from_lookup(map(), map() | keyword()) ::
+          {:ok, String.t()} | {:error, term()}
+  def issue_state_id_from_lookup(output, attrs) when is_map(output) do
+    attrs = normalize_attrs(attrs)
+    state_name = string_value(attrs, :state_name)
+    team_id = string_value(attrs, :team_id)
+
+    output
+    |> value(:workflow_states)
+    |> List.wrap()
+    |> Enum.find(&workflow_state_match?(&1, state_name, team_id))
+    |> case do
+      %{} = state ->
+        case string_value(state, :id) do
+          state_id when is_binary(state_id) -> {:ok, state_id}
+          _missing -> {:error, {:missing_linear_workflow_state_id, state_name}}
+        end
+
+      _missing ->
+        {:error, {:missing_linear_workflow_state, state_name}}
+    end
+  end
+
   @spec publication_input(map() | keyword()) :: {:ok, {String.t(), map()}} | {:error, term()}
   def publication_input(attrs) when is_map(attrs) or is_list(attrs) do
     attrs = normalize_attrs(attrs)
@@ -188,10 +226,66 @@ defmodule Mezzanine.SourceEngine.LinearSourceFlow do
              field_value(envelope, :redaction_profile_ref),
          workpad_refs: workpad_refs(attrs, comment),
          comment_ref: comment_ref(comment),
+         comment_id: comment_id(attrs, comment),
+         issue_id: string_value(attrs, :issue_id),
          output_ref: string_value(attrs, :output_ref),
          trace_id: string_value(attrs, :trace_id) || field_value(envelope, :trace_id)
        }
        |> compact()}
+    end
+  end
+
+  @spec issue_state_update_receipt(map(), map() | keyword()) :: {:ok, map()} | {:error, term()}
+  def issue_state_update_receipt(dispatch_result, attrs)
+      when is_map(dispatch_result) and (is_map(attrs) or is_list(attrs)) do
+    attrs = normalize_attrs(attrs)
+
+    with {:ok, source_publish_ref} <- required_string(attrs, :source_publish_ref),
+         {:ok, source_binding_id} <- required_string(attrs, :source_binding_id),
+         {:ok, source_ref} <- required_string(attrs, :source_ref),
+         {:ok, issue_id} <- required_string(attrs, :issue_id),
+         {:ok, state_id} <- required_string(attrs, :state_id) do
+      envelope = Map.get(dispatch_result, :governed_lower_envelope)
+      lower_receipt = Map.get(dispatch_result, :governed_lower_receipt)
+      output = Map.get(dispatch_result, :output, %{})
+      issue = value(output, :issue) || %{}
+
+      receipt =
+        %{
+          source_publication_receipt_ref:
+            "source-publication://#{source_binding_id}/#{digest([source_publish_ref, source_ref, state_id])}",
+          source_publish_ref: source_publish_ref,
+          source_binding_id: source_binding_id,
+          source_ref: source_ref,
+          status: publication_status(output),
+          capability_id:
+            capability_id(envelope, Map.put(attrs, :capability_id, "linear.issues.update")),
+          lower_runtime_kind: lower_runtime_kind(envelope),
+          lower_request_ref: field_value(envelope, :lower_request_ref),
+          lower_receipt_ref: field_value(lower_receipt, :lower_receipt_ref),
+          authority_ref: field_value(envelope, :authority_ref),
+          authority_decision_hash: field_value(envelope, :authority_decision_hash),
+          connector_manifest_ref: field_value(envelope, :connector_manifest_ref),
+          connector_manifest_hash: field_value(envelope, :connector_manifest_hash),
+          capability_negotiation_ref: field_value(envelope, :capability_negotiation_ref),
+          provider_response_ref: provider_response_ref(dispatch_result, lower_receipt),
+          redaction_manifest_ref:
+            string_value(attrs, :redaction_manifest_ref) ||
+              field_value(envelope, :redaction_profile_ref),
+          workpad_refs: [],
+          issue_id: issue_id,
+          issue_identifier: string_value(issue, :identifier),
+          state_id: state_id,
+          state_name: string_value(attrs, :state_name),
+          state_lookup_lower_request_ref: string_value(attrs, :state_lookup_lower_request_ref),
+          state_lookup_lower_receipt_ref: string_value(attrs, :state_lookup_lower_receipt_ref),
+          output_ref: string_value(attrs, :output_ref),
+          trace_id: string_value(attrs, :trace_id) || field_value(envelope, :trace_id)
+        }
+        |> compact()
+        |> Map.put(:workpad_refs, [])
+
+      {:ok, receipt}
     end
   end
 
@@ -374,11 +468,40 @@ defmodule Mezzanine.SourceEngine.LinearSourceFlow do
     end
   end
 
+  defp workflow_state_match?(%{} = state, state_name, team_id) do
+    workflow_state_name_match?(string_value(state, :name), state_name) and
+      workflow_state_team_match?(state, team_id)
+  end
+
+  defp workflow_state_match?(_state, _state_name, _team_id), do: false
+
+  defp workflow_state_name_match?(name, state_name)
+       when is_binary(name) and is_binary(state_name) do
+    String.downcase(name) == String.downcase(state_name)
+  end
+
+  defp workflow_state_name_match?(_name, _state_name), do: false
+
+  defp workflow_state_team_match?(_state, nil), do: true
+
+  defp workflow_state_team_match?(%{} = state, team_id) when is_binary(team_id) do
+    state
+    |> value(:team)
+    |> case do
+      %{} = team -> string_value(team, :id) == team_id
+      _missing -> false
+    end
+  end
+
   defp comment_ref(%{} = comment) do
     case string_value(comment, :id) do
       nil -> nil
       id -> "linear-comment://#{id}"
     end
+  end
+
+  defp comment_id(attrs, comment) do
+    string_value(comment, :id) || string_value(attrs, :comment_id)
   end
 
   defp field_value(nil, _key), do: nil
