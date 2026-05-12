@@ -412,6 +412,43 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
     assert receipt.workpad_refs == ["linear-comment://comment-1"]
   end
 
+  test "builds Linear publication governed-denial receipts without provider response refs" do
+    assert {:ok, receipt} =
+             LinearSourceFlow.publication_denial_receipt(
+               %{
+                 lower_denial_ref:
+                   "lower-denial://lower-request%3A%2F%2Fsource%2Fcomment-1/policy_denied",
+                 lower_request_ref: "lower-request://source/comment-1",
+                 lower_runtime_kind: :direct_connector,
+                 denial_class: :policy_denied,
+                 reason: "dry run requested before provider dispatch",
+                 authority_ref: "authority://linear/comment",
+                 authority_decision_hash: String.duplicate("c", 64),
+                 capability_id: "linear.comments.create",
+                 connector_manifest_ref: "manifest://linear@active",
+                 connector_manifest_hash: "sha256:linear",
+                 capability_negotiation_ref: "cap-neg://linear/comment",
+                 trace_id: "trace-linear-publication-dry-run"
+               },
+               %{
+                 source_publish_ref: "linear_workpad_review",
+                 source_binding_id: "linear-primary",
+                 source_ref: "linear://installation-1/issue/ENG-321",
+                 issue_id: "lin-issue-321",
+                 body: "Ready for review"
+               }
+             )
+
+    assert receipt.status == "dry_run_denied"
+    assert receipt.capability_id == "linear.comments.create"
+    assert receipt.lower_denial_ref =~ "policy_denied"
+    assert receipt.denial_class == "policy_denied"
+    assert receipt.provider_request_sent? == false
+    assert receipt.provider_response_received? == false
+    refute Map.has_key?(receipt, :provider_response_ref)
+    assert receipt.workpad_refs == []
+  end
+
   test "builds Linear state-name lookup input and issue-state publication receipts" do
     assert {:ok, lookup_input} =
              LinearSourceFlow.issue_state_lookup_input(%{

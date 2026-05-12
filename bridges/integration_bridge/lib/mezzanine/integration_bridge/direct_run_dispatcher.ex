@@ -18,7 +18,8 @@ defmodule Mezzanine.IntegrationBridge.DirectRunDispatcher do
 
     with {:ok, envelope} <-
            AuthorizedInvocation.governed_lower_envelope(invocation, capability_id, opts),
-         :ok <- require_dispatchable(envelope, invoke_opts) do
+         :ok <- require_dispatchable(envelope, invoke_opts),
+         :ok <- maybe_dry_run_denial(envelope, opts) do
       input =
         invocation
         |> AuthorizedInvocation.invoke_input(capability_id)
@@ -34,6 +35,25 @@ defmodule Mezzanine.IntegrationBridge.DirectRunDispatcher do
       |> attach_governed_receipt(envelope)
     end
   end
+
+  defp maybe_dry_run_denial(envelope, opts) do
+    if Keyword.get(opts, :dry_run?) == true and write_side_effect?(envelope) do
+      {:error,
+       AuthorizedInvocation.governed_lower_denial(
+         envelope,
+         :policy_denied,
+         "dry run requested before provider dispatch"
+       )}
+    else
+      :ok
+    end
+  end
+
+  defp write_side_effect?(%{side_effect_class: side_effect_class})
+       when side_effect_class in [:write, "write"],
+       do: true
+
+  defp write_side_effect?(_envelope), do: false
 
   defp put_default_jido_policy_opts(invoke_opts, invocation, envelope, opts) do
     invoke_opts

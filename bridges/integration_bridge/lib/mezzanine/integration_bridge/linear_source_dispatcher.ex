@@ -8,6 +8,7 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
   outputs with `Mezzanine.SourceEngine`.
   """
 
+  alias Jido.Integration.V2.GovernedLowerDenial
   alias Mezzanine.IntegrationBridge.AuthorizedInvocation
   alias Mezzanine.IntegrationBridge.DirectRunDispatcher
   alias Mezzanine.SourceEngine.LinearSourceFlow
@@ -98,12 +99,8 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
 
     with {:ok, attrs} <- resolve_issue_state_attrs(invocation, attrs, opts),
          {:ok, input} <- LinearSourceFlow.issue_state_update_input(attrs),
-         {:ok, dispatch} <- dispatch_linear(invocation, "linear.issues.update", input, opts),
-         {:ok, receipt} <- LinearSourceFlow.issue_state_update_receipt(dispatch, attrs) do
-      {:ok,
-       dispatch
-       |> annotate_provider_effect(opts)
-       |> Map.put(:source_publication_receipt, receipt)}
+         result <- dispatch_linear(invocation, "linear.issues.update", input, opts) do
+      issue_state_update_result(result, attrs, opts)
     end
   end
 
@@ -113,16 +110,65 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
       when (is_map(attrs) or is_list(attrs)) and is_list(opts) do
     attrs = normalize_attrs(attrs)
 
-    with {:ok, {capability_id, input}} <- LinearSourceFlow.publication_input(attrs),
-         {:ok, dispatch} <- dispatch_linear(invocation, capability_id, input, opts),
-         {:ok, receipt} <- LinearSourceFlow.publication_receipt(dispatch, attrs) do
+    with {:ok, {capability_id, input}} <- LinearSourceFlow.publication_input(attrs) do
+      invocation
+      |> dispatch_linear(capability_id, input, opts)
+      |> publication_result(invocation, attrs, capability_id, opts)
+    end
+  end
+
+  defp issue_state_update_result({:ok, dispatch}, attrs, opts) do
+    with {:ok, receipt} <- LinearSourceFlow.issue_state_update_receipt(dispatch, attrs) do
       {:ok,
        dispatch
        |> annotate_provider_effect(opts)
        |> Map.put(:source_publication_receipt, receipt)}
-    else
-      {:error, reason} ->
-        maybe_create_fallback(invocation, attrs, reason, opts)
+    end
+  end
+
+  defp issue_state_update_result({:error, %GovernedLowerDenial{} = denial}, attrs, opts) do
+    lower_denial_publication_result(denial, attrs, "linear.issues.update", opts)
+  end
+
+  defp issue_state_update_result({:error, reason}, _attrs, _opts), do: {:error, reason}
+
+  defp publication_result({:ok, dispatch}, _invocation, attrs, _capability_id, opts) do
+    with {:ok, receipt} <- LinearSourceFlow.publication_receipt(dispatch, attrs) do
+      {:ok,
+       dispatch
+       |> annotate_provider_effect(opts)
+       |> Map.put(:source_publication_receipt, receipt)}
+    end
+  end
+
+  defp publication_result(
+         {:error, %GovernedLowerDenial{} = denial},
+         _invocation,
+         attrs,
+         capability_id,
+         opts
+       ) do
+    lower_denial_publication_result(denial, attrs, capability_id, opts)
+  end
+
+  defp publication_result({:error, reason}, invocation, attrs, _capability_id, opts) do
+    maybe_create_fallback(invocation, attrs, reason, opts)
+  end
+
+  defp lower_denial_publication_result(denial, attrs, capability_id, opts) do
+    receipt_attrs = Map.put_new(attrs, :capability_id, capability_id)
+
+    with {:ok, receipt} <- LinearSourceFlow.publication_denial_receipt(denial, receipt_attrs) do
+      {:ok,
+       %{
+         governed_lower_denial: denial,
+         source_publication_receipt: receipt,
+         lower_request_ref: denial.lower_request_ref,
+         lower_denial_ref: denial.lower_denial_ref,
+         provider_request_sent?: false,
+         provider_response_received?: false
+       }
+       |> maybe_put(:credential_redeemed?, Keyword.get(opts, :credential_redeemed?))}
     end
   end
 

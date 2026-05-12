@@ -235,6 +235,54 @@ defmodule Mezzanine.SourceEngine.LinearSourceFlow do
     end
   end
 
+  @spec publication_denial_receipt(map() | struct(), map() | keyword()) ::
+          {:ok, map()} | {:error, term()}
+  def publication_denial_receipt(denial, attrs)
+      when (is_map(denial) or is_struct(denial)) and (is_map(attrs) or is_list(attrs)) do
+    attrs = normalize_attrs(attrs)
+
+    with {:ok, source_publish_ref} <- required_string(attrs, :source_publish_ref),
+         {:ok, source_binding_id} <- required_string(attrs, :source_binding_id),
+         {:ok, source_ref} <- required_string(attrs, :source_ref) do
+      {:ok,
+       %{
+         source_publication_denial_ref: field_value(denial, :lower_denial_ref),
+         source_publish_ref: source_publish_ref,
+         source_binding_id: source_binding_id,
+         source_ref: source_ref,
+         status: denial_status(denial),
+         capability_id:
+           field_value(denial, :capability_id) || string_value(attrs, :capability_id),
+         lower_runtime_kind: lower_runtime_kind(denial),
+         lower_request_ref: field_value(denial, :lower_request_ref),
+         lower_denial_ref: field_value(denial, :lower_denial_ref),
+         denial_class: denial_class(denial),
+         denial_reason: field_value(denial, :reason),
+         authority_ref: field_value(denial, :authority_ref),
+         authority_decision_hash: field_value(denial, :authority_decision_hash),
+         connector_manifest_ref: field_value(denial, :connector_manifest_ref),
+         connector_manifest_hash: field_value(denial, :connector_manifest_hash),
+         capability_negotiation_ref: field_value(denial, :capability_negotiation_ref),
+         redaction_manifest_ref: string_value(attrs, :redaction_manifest_ref),
+         provider_request_sent?: false,
+         provider_response_received?: false,
+         workpad_refs: [],
+         comment_id: string_value(attrs, :comment_id),
+         issue_id: string_value(attrs, :issue_id),
+         state_id: string_value(attrs, :state_id),
+         state_name: string_value(attrs, :state_name),
+         state_lookup_lower_request_ref: string_value(attrs, :state_lookup_lower_request_ref),
+         state_lookup_lower_receipt_ref: string_value(attrs, :state_lookup_lower_receipt_ref),
+         output_ref: string_value(attrs, :output_ref),
+         trace_id: string_value(attrs, :trace_id) || field_value(denial, :trace_id)
+       }
+       |> compact()
+       |> Map.put(:provider_request_sent?, false)
+       |> Map.put(:provider_response_received?, false)
+       |> Map.put(:workpad_refs, [])}
+    end
+  end
+
   @spec issue_state_update_receipt(map(), map() | keyword()) :: {:ok, map()} | {:error, term()}
   def issue_state_update_receipt(dispatch_result, attrs)
       when is_map(dispatch_result) and (is_map(attrs) or is_list(attrs)) do
@@ -437,6 +485,31 @@ defmodule Mezzanine.SourceEngine.LinearSourceFlow do
     case field_value(envelope, :lower_runtime_kind) do
       value when is_atom(value) -> Atom.to_string(value)
       value -> value
+    end
+  end
+
+  defp denial_status(denial) do
+    if denial_reason_contains?(denial, "dry run"),
+      do: "dry_run_denied",
+      else: "denied"
+  end
+
+  defp denial_class(denial) do
+    case field_value(denial, :denial_class) do
+      value when is_atom(value) -> Atom.to_string(value)
+      value -> value
+    end
+  end
+
+  defp denial_reason_contains?(denial, phrase) do
+    denial
+    |> field_value(:reason)
+    |> case do
+      value when is_binary(value) ->
+        value |> String.downcase() |> String.contains?(phrase)
+
+      _other ->
+        false
     end
   end
 

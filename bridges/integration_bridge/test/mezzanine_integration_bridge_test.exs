@@ -133,6 +133,29 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert input.authority.policy_version == "mock-v1"
   end
 
+  test "invoke_run_intent returns a governed lower denial for dry-run writes before provider dispatch" do
+    invocation = authorized_invocation_allowing(["linear.comments.create"])
+
+    invoke_fun = fn _capability, _input, _opts ->
+      send(self(), :unexpected_provider_dispatch)
+      {:ok, %{}}
+    end
+
+    assert {:error, %GovernedLowerDenial{} = denial} =
+             IntegrationBridge.invoke_run_intent(invocation,
+               capability_id: "linear.comments.create",
+               input: %{issue_id: "lin-issue-321", body: "Ready for review"},
+               dry_run?: true,
+               invoke_fun: invoke_fun
+             )
+
+    refute_received :unexpected_provider_dispatch
+    assert denial.denial_class == :policy_denied
+    assert denial.capability_id == "linear.comments.create"
+    assert denial.lower_request_ref == "lower-request://exec-1/linear.comments.create"
+    assert denial.reason =~ "dry run"
+  end
+
   test "Linear source candidate fetch uses governed direct connector dispatch and SourceEngine normalization" do
     invocation = authorized_invocation_allowing(["linear.issues.list"])
 
@@ -519,6 +542,44 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert receipt.connector_manifest_ref == "manifest://jido/connectors/linear@local"
     assert receipt.redaction_manifest_ref == "redaction://linear/workpad"
     assert receipt.workpad_refs == ["linear-comment://comment-1"]
+  end
+
+  test "Linear source publication dry-run returns a governed denial receipt without provider dispatch" do
+    invocation = authorized_invocation_allowing(["linear.comments.create"])
+
+    invoke_fun = fn _capability, _input, _opts ->
+      send(self(), :unexpected_provider_dispatch)
+      {:ok, %{}}
+    end
+
+    assert {:ok, result} =
+             IntegrationBridge.publish_linear_source(
+               invocation,
+               %{
+                 source_publish_ref: "linear_workpad_review",
+                 source_binding_id: "linear-primary",
+                 source_ref: "linear://inst-1/issue/ENG-321",
+                 issue_id: "lin-issue-321",
+                 body: "Ready for review",
+                 allow_create_fallback?: true
+               },
+               dry_run?: true,
+               credential_redeemed?: true,
+               invoke_fun: invoke_fun
+             )
+
+    refute_received :unexpected_provider_dispatch
+    assert result.provider_request_sent? == false
+    assert result.provider_response_received? == false
+    assert result.credential_redeemed? == true
+    assert %GovernedLowerDenial{} = result.governed_lower_denial
+    assert result.lower_denial_ref == result.governed_lower_denial.lower_denial_ref
+
+    receipt = result.source_publication_receipt
+    assert receipt.status == "dry_run_denied"
+    assert receipt.capability_id == "linear.comments.create"
+    assert receipt.lower_denial_ref == result.governed_lower_denial.lower_denial_ref
+    assert receipt.provider_request_sent? == false
   end
 
   test "Linear source publication can create a workpad comment after update miss" do
