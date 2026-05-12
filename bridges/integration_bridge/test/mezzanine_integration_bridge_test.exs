@@ -114,6 +114,16 @@ defmodule Mezzanine.IntegrationBridgeTest do
 
     assert_received {:invoke, "linear.issues.retrieve", input, opts}
     assert Keyword.fetch!(opts, :connection_id) == "conn-1"
+    assert Keyword.fetch!(opts, :tenant_id) == invocation.tenant_id
+    assert Keyword.fetch!(opts, :trace_id) == invocation.trace_id
+    assert Keyword.fetch!(opts, :actor_id) == "actor-1"
+    assert Keyword.fetch!(opts, :environment) == :prod
+
+    assert Keyword.fetch!(opts, :allowed_operations) == [
+             "linear.issues.retrieve",
+             "linear.issues.update"
+           ]
+
     assert input.invocation_request == invocation.invocation_request
     assert input.idempotency_key == "idem-1"
     assert input.submission_dedupe_key == "dedupe-1"
@@ -153,6 +163,64 @@ defmodule Mezzanine.IntegrationBridgeTest do
 
     assert result.source_intake.operation == "linear.issues.list"
     assert [%{source_ref: "linear://inst-1/issue/ENG-321"}] = result.source_intake.subject_attrs
+  end
+
+  test "Linear API key credential ingress prepares an authorized invocation and connection opts" do
+    api_key = "lin_api_live_secret"
+
+    assert {:ok, prepared} =
+             IntegrationBridge.prepare_linear_api_key_invocation(api_key, %{
+               tenant_id: "tenant-linear-live",
+               installation_id: "inst-linear-live",
+               subject_id: "subject-linear-live",
+               execution_id: "exec-linear-live",
+               trace_id: "trace-linear-live",
+               idempotency_key: "idem-linear-live",
+               submission_dedupe_key: "dedupe-linear-live",
+               actor_id: "operator-linear-live",
+               allowed_operations: ["linear.issues.list"],
+               subject: "linear-live-proof"
+             })
+
+    assert %AuthorizedInvocation{} = prepared.authorized_invocation
+    assert is_binary(prepared.connection_id)
+    assert prepared.connection_id != ""
+
+    assert Keyword.fetch!(prepared.source_opts, :invoke_opts)[:connection_id] ==
+             prepared.connection_id
+
+    refute inspect(prepared) =~ api_key
+
+    invoke_fun = fn capability, input, opts ->
+      send(self(), {:invoke, capability, input, opts})
+
+      {:ok,
+       %{
+         output: %{
+           issues: [linear_issue()],
+           page_info: %{has_next_page: false}
+         }
+       }}
+    end
+
+    assert {:ok, result} =
+             IntegrationBridge.fetch_linear_candidates(
+               prepared.authorized_invocation,
+               source_binding(),
+               Keyword.merge(prepared.source_opts,
+                 invoke_fun: invoke_fun,
+                 viewer: %{id: "usr-linear-viewer"}
+               )
+             )
+
+    assert_received {:invoke, "linear.issues.list", _input, opts}
+    assert Keyword.fetch!(opts, :connection_id) == prepared.connection_id
+    assert result.credential_redeemed? == true
+    assert result.provider_request_sent? == true
+    assert result.provider_response_received? == true
+    assert is_binary(result.lower_request_ref)
+    assert is_binary(result.lower_receipt_ref)
+    assert result.source_intake.operation == "linear.issues.list"
   end
 
   test "Linear source candidate fetch resolves viewer before assignee-me intake" do

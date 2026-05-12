@@ -28,6 +28,7 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
            ) do
       {:ok,
        dispatch
+       |> annotate_provider_effect(opts)
        |> Map.put(:source_intake, normalized)
        |> maybe_put(:viewer_resolution, viewer_dispatch)}
     end
@@ -51,7 +52,10 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
              source_envelope(invocation, opts),
              source_binding
            ) do
-      {:ok, Map.put(dispatch, :source_refresh, normalized)}
+      {:ok,
+       dispatch
+       |> annotate_provider_effect(opts)
+       |> Map.put(:source_refresh, normalized)}
     end
   end
 
@@ -81,6 +85,7 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
          current_state_dispatches: dispatches,
          source_current_state: normalized
        }
+       |> annotate_provider_effect(opts)
        |> maybe_put(:viewer_resolution, viewer_dispatch)}
     end
   end
@@ -90,7 +95,9 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
   def update_issue_state(%AuthorizedInvocation{} = invocation, attrs, opts \\ [])
       when (is_map(attrs) or is_list(attrs)) and is_list(opts) do
     with {:ok, input} <- LinearSourceFlow.issue_state_update_input(attrs) do
-      dispatch_linear(invocation, "linear.issues.update", input, opts)
+      with {:ok, dispatch} <- dispatch_linear(invocation, "linear.issues.update", input, opts) do
+        {:ok, annotate_provider_effect(dispatch, opts)}
+      end
     end
   end
 
@@ -103,7 +110,10 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
     with {:ok, {capability_id, input}} <- LinearSourceFlow.publication_input(attrs),
          {:ok, dispatch} <- dispatch_linear(invocation, capability_id, input, opts),
          {:ok, receipt} <- LinearSourceFlow.publication_receipt(dispatch, attrs) do
-      {:ok, dispatch |> Map.put(:source_publication_receipt, receipt)}
+      {:ok,
+       dispatch
+       |> annotate_provider_effect(opts)
+       |> Map.put(:source_publication_receipt, receipt)}
     else
       {:error, reason} ->
         maybe_create_fallback(invocation, attrs, reason, opts)
@@ -128,6 +138,7 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
              ) do
         {:ok,
          dispatch
+         |> annotate_provider_effect(opts)
          |> Map.put(
            :source_publication_receipt,
            Map.put(receipt, :fallback_from, "linear.comments.update")
@@ -268,6 +279,48 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
   defp output!(dispatch) do
     Map.get(dispatch, :output) || Map.get(dispatch, "output") || %{}
   end
+
+  defp annotate_provider_effect(dispatch, opts) when is_map(dispatch) do
+    dispatch
+    |> Map.put(:provider_request_sent?, true)
+    |> Map.put(:provider_response_received?, true)
+    |> maybe_put(:credential_redeemed?, Keyword.get(opts, :credential_redeemed?))
+    |> maybe_put(:lower_request_ref, lower_request_ref(dispatch))
+    |> maybe_put(:lower_receipt_ref, lower_receipt_ref(dispatch))
+  end
+
+  defp lower_request_ref(dispatch) do
+    dispatch
+    |> lower_receipt()
+    |> field_value(:lower_request_ref)
+    |> case do
+      ref when is_binary(ref) and ref != "" ->
+        ref
+
+      _missing ->
+        dispatch
+        |> lower_envelope()
+        |> field_value(:lower_request_ref)
+    end
+  end
+
+  defp lower_receipt_ref(dispatch) do
+    dispatch
+    |> lower_receipt()
+    |> field_value(:lower_receipt_ref)
+  end
+
+  defp lower_receipt(dispatch) do
+    Map.get(dispatch, :governed_lower_receipt) || Map.get(dispatch, "governed_lower_receipt")
+  end
+
+  defp lower_envelope(dispatch) do
+    Map.get(dispatch, :governed_lower_envelope) || Map.get(dispatch, "governed_lower_envelope")
+  end
+
+  defp field_value(%_{} = struct, key), do: struct |> Map.from_struct() |> field_value(key)
+  defp field_value(%{} = map, key), do: Map.get(map, key) || Map.get(map, Atom.to_string(key))
+  defp field_value(_value, _key), do: nil
 
   defp create_fallback_after_update?(attrs, update_error) do
     fallback_allowed?(attrs) and retryable_update_error?(update_error)

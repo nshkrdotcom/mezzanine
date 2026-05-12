@@ -9,6 +9,7 @@ defmodule Mezzanine.IntegrationBridge do
     EffectDispatcher,
     EventTranslator,
     GitHubPrDispatcher,
+    LinearCredentialIngress,
     LinearSourceDispatcher,
     ReadDispatcher
   }
@@ -63,6 +64,12 @@ defmodule Mezzanine.IntegrationBridge do
   defdelegate update_linear_issue_state(invocation, attrs, opts \\ []),
     to: LinearSourceDispatcher,
     as: :update_issue_state
+
+  @spec prepare_linear_api_key_invocation(String.t(), map() | keyword(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  defdelegate prepare_linear_api_key_invocation(api_key, attrs, opts \\ []),
+    to: LinearCredentialIngress,
+    as: :prepare_api_key_invocation
 
   @spec create_github_pr(AuthorizedInvocation.t(), map() | keyword(), keyword()) ::
           {:ok, map()} | {:error, term()}

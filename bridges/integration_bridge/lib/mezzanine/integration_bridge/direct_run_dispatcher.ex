@@ -25,12 +25,59 @@ defmodule Mezzanine.IntegrationBridge.DirectRunDispatcher do
         |> merge_dispatch_input(Keyword.get(opts, :input, %{}))
         |> Map.put(:governed_lower_envelope, GovernedLowerEnvelope.to_map(envelope))
 
-      invoke_opts = Keyword.put(invoke_opts, :governed_lower_envelope, envelope)
+      invoke_opts =
+        invoke_opts
+        |> put_default_jido_policy_opts(invocation, envelope, opts)
+        |> Keyword.put(:governed_lower_envelope, envelope)
 
       invoke_fun.(capability_id, input, invoke_opts)
       |> attach_governed_receipt(envelope)
     end
   end
+
+  defp put_default_jido_policy_opts(invoke_opts, invocation, envelope, opts) do
+    invoke_opts
+    |> put_new_present(:tenant_id, envelope.tenant_ref)
+    |> put_new_present(:trace_id, envelope.trace_id)
+    |> put_new_present(:actor_id, actor_id(invocation))
+    |> put_new_present(:environment, environment(invocation, opts))
+    |> Keyword.put_new(:allowed_operations, envelope.allowed_operations)
+  end
+
+  defp actor_id(%AuthorizedInvocation{invocation_request: invocation_request}) do
+    invocation_request
+    |> request_value(:actor_id)
+    |> string_value()
+  end
+
+  defp environment(%AuthorizedInvocation{invocation_request: invocation_request}, opts) do
+    Keyword.get(opts, :environment) ||
+      invocation_request
+      |> request_value(:environment)
+      |> environment_value() ||
+      :prod
+  end
+
+  defp request_value(%_{} = struct, key), do: struct |> Map.from_struct() |> request_value(key)
+  defp request_value(%{} = map, key), do: Map.get(map, key) || Map.get(map, Atom.to_string(key))
+
+  defp string_value(value) when is_binary(value) and value != "", do: value
+  defp string_value(value) when is_atom(value), do: Atom.to_string(value)
+  defp string_value(_value), do: nil
+
+  defp environment_value(value) when is_binary(value) and value != "" do
+    value
+    |> String.trim()
+    |> String.to_existing_atom()
+  rescue
+    ArgumentError -> value
+  end
+
+  defp environment_value(value) when is_atom(value), do: value
+  defp environment_value(_value), do: nil
+
+  defp put_new_present(keyword, _key, nil), do: keyword
+  defp put_new_present(keyword, key, value), do: Keyword.put_new(keyword, key, value)
 
   defp require_dispatchable(envelope, invoke_opts) do
     if GovernedLowerEnvelope.dispatchable?(envelope) or

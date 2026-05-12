@@ -53,6 +53,7 @@ defmodule MezzanineIntegrationBridge.MixProject do
       {:mezzanine_audit_engine, path: "../../core/audit_engine"},
       {:mezzanine_source_engine, path: "../../core/source_engine"},
       DependencySources.dep(:jido_integration_v2, @repo_root),
+      DependencySources.dep(:jido_integration_v2_linear, @repo_root),
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.40.1", only: :dev, runtime: false}
