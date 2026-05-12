@@ -42,6 +42,7 @@ end
     jido_hive_inter_agent_messaging: dep.("jido_hive", "core/inter_agent_messaging", "~> 0.1.0"),
     jido_integration_v2: dep.("jido_integration", "core/platform", "~> 0.1.0"),
     jido_integration_v2_codex_cli: dep.("jido_integration", "connectors/codex_cli", "~> 0.1.0"),
+    jido_integration_v2_github: dep.("jido_integration", "connectors/github", "~> 0.1.0"),
     jido_integration_v2_linear: dep.("jido_integration", "connectors/linear", "~> 0.1.0"),
     jido_integration_v2_runtime_router:
       dep.("jido_integration", "core/runtime_router", "~> 0.1.0"),

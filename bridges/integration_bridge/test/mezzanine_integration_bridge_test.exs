@@ -10,6 +10,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
   alias Mezzanine.IntegrationBridge
   alias Mezzanine.IntegrationBridge.AuthorizedInvocation
   alias Mezzanine.IntegrationBridge.CodexAgentRuntime
+  alias Mezzanine.IntegrationBridge.GitHubPrEvidenceRuntime
   alias Mezzanine.Intent.{EffectIntent, ReadIntent, RunIntent}
 
   defmodule LowerFactsStub do
@@ -622,6 +623,114 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert sweep.combined_state == "success"
     assert sweep.check_run_count == 1
     assert Enum.map(sweep.operation_receipts, & &1.capability_id) == capabilities
+  end
+
+  test "GitHub PR evidence runtime fetches evidence through governed read dispatches only" do
+    invoke_fun = fn
+      "github.pr.fetch", input, opts ->
+        send(self(), {:invoke, "github.pr.fetch", input, opts})
+        {:ok, %{output: github_pr(), artifact_refs: ["artifact://github/pr-fetch"]}}
+
+      "github.pr.reviews.list", input, opts ->
+        send(self(), {:invoke, "github.pr.reviews.list", input, opts})
+        {:ok, %{output: github_reviews(), artifact_refs: ["artifact://github/reviews"]}}
+
+      "github.pr.review_comments.list", input, opts ->
+        send(self(), {:invoke, "github.pr.review_comments.list", input, opts})
+        {:ok, %{output: github_review_comments(), artifact_refs: ["artifact://github/comments"]}}
+
+      "github.commit.statuses.get_combined", input, opts ->
+        send(self(), {:invoke, "github.commit.statuses.get_combined", input, opts})
+        {:ok, %{output: github_status(), artifact_refs: ["artifact://github/status"]}}
+
+      "github.check_runs.list_for_ref", input, opts ->
+        send(self(), {:invoke, "github.check_runs.list_for_ref", input, opts})
+        {:ok, %{output: github_checks(), artifact_refs: ["artifact://github/checks"]}}
+    end
+
+    assert {:ok, receipt} =
+             GitHubPrEvidenceRuntime.fetch(
+               %{
+                 tenant_id: "tenant-1",
+                 installation_id: "inst-1",
+                 subject_id: "subject-1",
+                 execution_id: "exec-1",
+                 actor_id: "actor-1",
+                 trace_id: "trace-1",
+                 repo: "nshkrdotcom/extravaganza",
+                 pull_number: 17,
+                 ref: "head-sha"
+               },
+               connection_id: "github-conn-1",
+               invoke_fun: invoke_fun,
+               collect?: false,
+               start_runtime?: false,
+               register_connector?: false
+             )
+
+    assert_received {:invoke, "github.pr.fetch", fetch_input, fetch_opts}
+    assert_received {:invoke, "github.pr.reviews.list", reviews_input, reviews_opts}
+    assert_received {:invoke, "github.pr.review_comments.list", comments_input, comments_opts}
+    assert_received {:invoke, "github.commit.statuses.get_combined", status_input, status_opts}
+    assert_received {:invoke, "github.check_runs.list_for_ref", checks_input, checks_opts}
+
+    assert fetch_input.repo == "nshkrdotcom/extravaganza"
+    assert fetch_input.pull_number == 17
+    assert reviews_input.pull_number == 17
+    assert comments_input.pull_number == 17
+    assert status_input.ref == "head-sha"
+    assert checks_input.ref == "head-sha"
+
+    for opts <- [fetch_opts, reviews_opts, comments_opts, status_opts, checks_opts] do
+      assert Keyword.fetch!(opts, :connection_id) == "github-conn-1"
+      assert "github.pr.fetch" in Keyword.fetch!(opts, :allowed_operations)
+
+      sandbox = Keyword.fetch!(opts, :sandbox)
+      assert "github.api.pr.fetch" in Map.fetch!(sandbox, :allowed_tools)
+      assert "github.api.pr.reviews.list" in Map.fetch!(sandbox, :allowed_tools)
+      refute "github.pr.fetch" in Map.fetch!(sandbox, :allowed_tools)
+    end
+
+    refute_received {:invoke, "github.pr.create", _input, _opts}
+    refute_received {:invoke, "github.git.ref.delete", _input, _opts}
+
+    assert receipt.status == :receipt_recorded
+    assert receipt.provider == "github"
+    assert receipt.effect == "github_pr_evidence"
+    assert receipt.repo == "nshkrdotcom/extravaganza"
+    assert receipt.pull_number == 17
+    assert receipt.head_sha == "head-sha"
+    assert receipt.provider_request_sent? == true
+    assert receipt.provider_response_received? == true
+    assert receipt.receipt_recorded? == true
+    assert receipt.write_operations == []
+    assert receipt.fixture_setup_required? == false
+    assert receipt.counts.review_count == 2
+    assert receipt.counts.review_comment_count == 1
+    assert receipt.counts.check_run_count == 1
+    assert receipt.provider_ids.pull_request == "17"
+    assert receipt.provider_refs.pull_request =~ "/pull/17"
+    assert receipt.receipt_refs.lower_request_refs |> length() == 5
+    assert Enum.map(receipt.operation_receipts, & &1.capability_id) == receipt.capability_ids
+  end
+
+  test "GitHub PR evidence runtime refuses hidden write fixture setup" do
+    assert {:error, :github_evidence_write_fixture_requires_separate_command} =
+             GitHubPrEvidenceRuntime.fetch(
+               %{
+                 tenant_id: "tenant-1",
+                 installation_id: "inst-1",
+                 subject_id: "subject-1",
+                 execution_id: "exec-1",
+                 actor_id: "actor-1",
+                 trace_id: "trace-1",
+                 repo: "nshkrdotcom/extravaganza",
+                 setup_fixture?: true
+               },
+               connection_id: "github-conn-1",
+               start_runtime?: false,
+               register_connector?: false
+             )
   end
 
   test "GitHub branch cleanup is a governed delete-ref operation" do
