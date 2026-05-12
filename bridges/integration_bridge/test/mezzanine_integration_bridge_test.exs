@@ -9,6 +9,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
   alias Mezzanine.Audit.{ExecutionLineage, ExecutionLineageStore, Repo}
   alias Mezzanine.IntegrationBridge
   alias Mezzanine.IntegrationBridge.AuthorizedInvocation
+  alias Mezzanine.IntegrationBridge.CodexAgentRuntime
   alias Mezzanine.Intent.{EffectIntent, ReadIntent, RunIntent}
 
   defmodule LowerFactsStub do
@@ -221,6 +222,160 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert is_binary(result.lower_request_ref)
     assert is_binary(result.lower_receipt_ref)
     assert result.source_intake.operation == "linear.issues.list"
+  end
+
+  test "Codex agent runtime invokes Jido codex.session.turn and returns AppKit readback projection" do
+    attrs = %{
+      tenant_ref: "tenant://extravaganza",
+      installation_ref: "installation://extravaganza/codex",
+      subject_ref: "subject://extravaganza/codex",
+      run_ref: "run://extravaganza/codex",
+      trace_id: "trace://extravaganza/codex",
+      idempotency_key: "idem-codex",
+      authority_context_ref: "authority-context://extravaganza/codex"
+    }
+
+    invoke_fun = fn capability_id, input, opts ->
+      send(self(), {:codex_invoke, capability_id, input, opts})
+
+      {:ok,
+       %{
+         run: %{run_id: "jido-run-codex"},
+         attempt: %{attempt_id: "jido-attempt-codex"},
+         output: %{
+           text: "Extravaganza headless Codex live path is operational.",
+           provider_session_id: "codex-provider-session-1",
+           status: :completed
+         }
+       }}
+    end
+
+    assert {:ok, projection} =
+             CodexAgentRuntime.run(attrs,
+               invoke_fun: invoke_fun,
+               connection_id: "conn-codex",
+               start_runtime_router?: false,
+               register_connector?: false
+             )
+
+    assert_received {:codex_invoke, "codex.session.turn", input, opts}
+    assert input.prompt =~ "Extravaganza headless Codex live path"
+    assert input.provider_metadata["app_server"] == true
+    assert input.authority_metadata["capability_id"] == "codex.session.turn"
+    assert Keyword.fetch!(opts, :connection_id) == "conn-codex"
+    assert Keyword.fetch!(opts, :allowed_operations) == ["codex.session.turn"]
+    assert Keyword.fetch!(opts, :tenant_id) == "tenant://extravaganza"
+
+    assert projection.run_ref == "run://extravaganza/codex"
+    assert projection.workflow_ref == "workflow://codex-agent-runtime/run-extravaganza-codex"
+    assert projection.status == "completed"
+    assert [turn] = projection.turn_states
+    assert turn.operation == "codex.session.turn"
+    assert turn.credential_redeemed? == true
+    assert turn.provider_request_sent? == true
+    assert turn.provider_response_received? == true
+    assert turn.session_ref == "session://codex/codex-provider-session-1"
+    assert turn.lower_request_ref == "lower-request://jido-run-codex/codex.session.turn"
+
+    assert turn.lower_receipt_ref ==
+             "lower-receipt://jido-attempt-codex/codex.session.turn/succeeded"
+  end
+
+  test "Codex agent runtime installs credentials in the run tenant and requests connector sandbox" do
+    attrs = %{
+      tenant_ref: "tenant://extravaganza-live",
+      installation_ref: "installation://extravaganza/codex",
+      subject_ref: "subject://extravaganza/codex",
+      run_ref: "run://extravaganza/codex-live",
+      trace_id: "trace://extravaganza/codex-live",
+      idempotency_key: "idem-codex-live",
+      authority_context_ref: "authority-context://extravaganza/codex-live",
+      source_ref: "actor://extravaganza/operator"
+    }
+
+    start_install_fun = fn connector_id, tenant_id, install_attrs ->
+      send(self(), {:codex_start_install, connector_id, tenant_id, install_attrs})
+
+      {:ok,
+       %{
+         install: %{install_id: "install-codex-live"},
+         connection: %{connection_id: "conn-codex-live"}
+       }}
+    end
+
+    complete_install_fun = fn install_id, complete_attrs ->
+      send(self(), {:codex_complete_install, install_id, complete_attrs})
+
+      {:ok,
+       %{
+         connection: %{connection_id: "conn-codex-live"}
+       }}
+    end
+
+    invoke_fun = fn capability_id, input, opts ->
+      send(self(), {:codex_live_invoke, capability_id, input, opts})
+
+      {:ok,
+       %{
+         run: %{run_id: "jido-run-codex-live"},
+         attempt: %{attempt_id: "jido-attempt-codex-live"},
+         output: %{
+           text: "Extravaganza headless Codex live path is operational.",
+           provider_session_id: "codex-provider-session-live",
+           status: :completed
+         }
+       }}
+    end
+
+    prepare_workspace_fun = fn workspace_root ->
+      send(self(), {:codex_prepare_workspace, workspace_root})
+      :ok
+    end
+
+    assert {:ok, _projection} =
+             CodexAgentRuntime.run(attrs,
+               invoke_fun: invoke_fun,
+               start_install_fun: start_install_fun,
+               complete_install_fun: complete_install_fun,
+               prepare_workspace_fun: prepare_workspace_fun,
+               start_runtime_router?: false,
+               register_connector?: false
+             )
+
+    assert_received {:codex_start_install, "codex_cli", "tenant://extravaganza-live",
+                     install_attrs}
+
+    assert install_attrs.actor_id == "actor://extravaganza/operator"
+
+    assert install_attrs.requested_scopes == [
+             "session:execute",
+             "session:control",
+             "session:tools"
+           ]
+
+    assert_received {:codex_complete_install, "install-codex-live", complete_attrs}
+
+    assert complete_attrs.granted_scopes == [
+             "session:execute",
+             "session:control",
+             "session:tools"
+           ]
+
+    assert_received {:codex_prepare_workspace, "/tmp/jido_codex_cli_workspace"}
+    assert_received {:codex_live_invoke, "codex.session.turn", input, opts}
+    assert input.cwd == "/tmp/jido_codex_cli_workspace"
+    assert input.provider_metadata["skip_git_repo_check"] == true
+    refute Map.has_key?(input, :dynamic_tool_manifest)
+    assert Keyword.fetch!(opts, :connection_id) == "conn-codex-live"
+    assert Keyword.fetch!(opts, :tenant_id) == "tenant://extravaganza-live"
+
+    assert Keyword.fetch!(opts, :sandbox) == %{
+             level: :strict,
+             egress: :restricted,
+             approvals: :manual,
+             file_scope: "/tmp/jido_codex_cli_workspace",
+             allowed_tools: ["codex.session.turn"]
+           }
   end
 
   test "Linear source candidate fetch resolves viewer before assignee-me intake" do
