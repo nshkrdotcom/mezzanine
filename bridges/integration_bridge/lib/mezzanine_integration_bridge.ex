@@ -10,6 +10,7 @@ defmodule Mezzanine.IntegrationBridge do
     EventTranslator,
     GitHubPrDispatcher,
     LinearCredentialIngress,
+    LinearGraphQLToolExecutor,
     LinearSourceDispatcher,
     ReadDispatcher
   }
@@ -70,6 +71,16 @@ defmodule Mezzanine.IntegrationBridge do
   defdelegate prepare_linear_api_key_invocation(api_key, attrs, opts \\ []),
     to: LinearCredentialIngress,
     as: :prepare_api_key_invocation
+
+  @spec execute_dynamic_tool(AuthorizedInvocation.t(), String.t(), term(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  defdelegate execute_dynamic_tool(invocation, tool_name, arguments, opts \\ []),
+    to: LinearGraphQLToolExecutor
+
+  @spec execute_linear_graphql_tool(AuthorizedInvocation.t(), term(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  defdelegate execute_linear_graphql_tool(invocation, arguments, opts \\ []),
+    to: LinearGraphQLToolExecutor
 
   @spec create_github_pr(AuthorizedInvocation.t(), map() | keyword(), keyword()) ::
           {:ok, map()} | {:error, term()}

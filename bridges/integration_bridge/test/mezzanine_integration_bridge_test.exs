@@ -156,6 +156,199 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert denial.reason =~ "dry run"
   end
 
+  test "Linear GraphQL dynamic tool returns the Codex tool response shape" do
+    invocation = authorized_invocation_allowing(["linear.graphql.execute"])
+
+    invoke_fun = fn capability, input, opts ->
+      send(self(), {:linear_graphql_invoke, capability, input, opts})
+
+      {:ok,
+       %{
+         output: %{
+           data: %{"viewer" => %{"id" => "usr-linear-viewer"}}
+         }
+       }}
+    end
+
+    assert {:ok, result} =
+             IntegrationBridge.execute_dynamic_tool(
+               invocation,
+               "linear_graphql",
+               %{
+                 "query" => "query Viewer { viewer { id } }",
+                 "variables" => %{"includeTeams" => false}
+               },
+               invoke_fun: invoke_fun,
+               credential_redeemed?: true
+             )
+
+    assert_received {:linear_graphql_invoke, "linear.graphql.execute", input, opts}
+    assert input.query == "query Viewer { viewer { id } }"
+    assert input.variables == %{"includeTeams" => false}
+    assert Keyword.fetch!(opts, :allowed_operations) == ["linear.graphql.execute"]
+
+    assert result.operation == "linear.graphql.execute"
+    assert result.tool_name == "linear_graphql"
+    assert result.success? == true
+    assert result.provider_request_sent? == true
+    assert result.provider_response_received? == true
+    assert result.credential_redeemed? == true
+
+    assert result.dynamic_tool_response["success"] == true
+
+    assert result.dynamic_tool_response["contentItems"] == [
+             %{"type" => "inputText", "text" => result.dynamic_tool_response["output"]}
+           ]
+
+    assert Jason.decode!(result.dynamic_tool_response["output"]) == %{
+             "data" => %{"viewer" => %{"id" => "usr-linear-viewer"}}
+           }
+  end
+
+  test "Linear GraphQL dynamic tool marks partial GraphQL error responses unsuccessful" do
+    invocation = authorized_invocation_allowing(["linear.graphql.execute"])
+
+    invoke_fun = fn _capability, _input, _opts ->
+      {:ok,
+       %{
+         output: %{
+           data: %{"viewer" => nil},
+           errors: [
+             %{
+               "message" => "Cannot resolve viewer",
+               "extensions" => %{"code" => "UNAUTHENTICATED"}
+             }
+           ]
+         }
+       }}
+    end
+
+    assert {:ok, result} =
+             IntegrationBridge.execute_dynamic_tool(
+               invocation,
+               "linear_graphql",
+               "query Viewer { viewer { id } }",
+               invoke_fun: invoke_fun
+             )
+
+    assert result.success? == false
+    assert result.provider_request_sent? == true
+    assert result.provider_response_received? == true
+
+    assert Jason.decode!(result.dynamic_tool_response["output"]) == %{
+             "data" => %{"viewer" => nil},
+             "errors" => [
+               %{
+                 "message" => "Cannot resolve viewer",
+                 "extensions" => %{"code" => "UNAUTHENTICATED"}
+               }
+             ]
+           }
+  end
+
+  test "Linear GraphQL dynamic tool rejects invalid variables before provider dispatch" do
+    invocation = authorized_invocation_allowing(["linear.graphql.execute"])
+
+    invoke_fun = fn _capability, _input, _opts ->
+      send(self(), :unexpected_graphql_dispatch)
+      {:ok, %{}}
+    end
+
+    assert {:ok, result} =
+             IntegrationBridge.execute_dynamic_tool(
+               invocation,
+               "linear_graphql",
+               %{
+                 "query" => "query Viewer { viewer { id } }",
+                 "variables" => ["not", "an", "object"]
+               },
+               invoke_fun: invoke_fun
+             )
+
+    assert result.success? == false
+    assert result.provider_request_sent? == false
+    assert result.provider_response_received? == false
+
+    assert Jason.decode!(result.dynamic_tool_response["output"]) == %{
+             "error" => %{
+               "message" => "`linear_graphql.variables` must be a JSON object when provided."
+             }
+           }
+
+    refute_received :unexpected_graphql_dispatch
+  end
+
+  test "Linear GraphQL dynamic tool preserves GraphQL error bodies as failed tool output" do
+    invocation = authorized_invocation_allowing(["linear.graphql.execute"])
+
+    invoke_fun = fn _capability, _input, _opts ->
+      {:error,
+       %{
+         code: "linear.not_found",
+         message: "[not_found] Issue not found",
+         upstream_context: %{
+           http_status: 200,
+           body: %{
+             "errors" => [
+               %{
+                 "message" => "Issue not found",
+                 "extensions" => %{"code" => "NOT_FOUND"}
+               }
+             ]
+           }
+         }
+       }}
+    end
+
+    assert {:ok, result} =
+             IntegrationBridge.execute_dynamic_tool(
+               invocation,
+               "linear_graphql",
+               "query Viewer { viewer { id } }",
+               invoke_fun: invoke_fun
+             )
+
+    assert result.success? == false
+    assert result.provider_request_sent? == true
+    assert result.provider_response_received? == true
+
+    assert Jason.decode!(result.dynamic_tool_response["output"]) == %{
+             "errors" => [
+               %{
+                 "message" => "Issue not found",
+                 "extensions" => %{"code" => "NOT_FOUND"}
+               }
+             ]
+           }
+  end
+
+  test "unsupported dynamic tools return a tool failure without provider dispatch" do
+    invocation = authorized_invocation_allowing(["linear.graphql.execute"])
+
+    invoke_fun = fn _capability, _input, _opts ->
+      send(self(), :unexpected_dynamic_tool_dispatch)
+      {:ok, %{}}
+    end
+
+    assert {:ok, result} =
+             IntegrationBridge.execute_dynamic_tool(invocation, "not_a_real_tool", %{},
+               invoke_fun: invoke_fun
+             )
+
+    assert result.success? == false
+    assert result.provider_request_sent? == false
+    assert result.provider_response_received? == false
+
+    assert Jason.decode!(result.dynamic_tool_response["output"]) == %{
+             "error" => %{
+               "message" => "Unsupported dynamic tool: \"not_a_real_tool\".",
+               "supportedTools" => ["linear_graphql"]
+             }
+           }
+
+    refute_received :unexpected_dynamic_tool_dispatch
+  end
+
   test "Linear source candidate fetch uses governed direct connector dispatch and SourceEngine normalization" do
     invocation = authorized_invocation_allowing(["linear.issues.list"])
 
