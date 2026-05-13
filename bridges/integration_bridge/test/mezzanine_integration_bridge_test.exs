@@ -464,13 +464,13 @@ defmodule Mezzanine.IntegrationBridgeTest do
 
   test "Codex agent runtime invokes Jido codex.session.turn and returns AppKit readback projection" do
     attrs = %{
-      tenant_ref: "tenant://extravaganza",
-      installation_ref: "installation://extravaganza/codex",
-      subject_ref: "subject://extravaganza/codex",
-      run_ref: "run://extravaganza/codex",
-      trace_id: "trace://extravaganza/codex",
+      tenant_ref: "tenant://sample-app",
+      installation_ref: "installation://sample-app/codex",
+      subject_ref: "subject://sample-app/codex",
+      run_ref: "run://sample-app/codex",
+      trace_id: "trace://sample-app/codex",
       idempotency_key: "idem-codex",
-      authority_context_ref: "authority-context://extravaganza/codex"
+      authority_context_ref: "authority-context://sample-app/codex"
     }
 
     invoke_fun = fn capability_id, input, opts ->
@@ -481,7 +481,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
          run: %{run_id: "jido-run-codex"},
          attempt: %{attempt_id: "jido-attempt-codex"},
          output: %{
-           text: "Extravaganza headless Codex live path is operational.",
+           text: "Sample App headless Codex live path is operational.",
            provider_session_id: "codex-provider-session-1",
            status: :completed
          }
@@ -497,15 +497,15 @@ defmodule Mezzanine.IntegrationBridgeTest do
              )
 
     assert_received {:codex_invoke, "codex.session.turn", input, opts}
-    assert input.prompt =~ "Extravaganza headless Codex live path"
+    assert input.prompt =~ "governed Codex runtime path"
     assert input.provider_metadata["app_server"] == true
     assert input.authority_metadata["capability_id"] == "codex.session.turn"
     assert Keyword.fetch!(opts, :connection_id) == "conn-codex"
     assert Keyword.fetch!(opts, :allowed_operations) == ["codex.session.turn"]
-    assert Keyword.fetch!(opts, :tenant_id) == "tenant://extravaganza"
+    assert Keyword.fetch!(opts, :tenant_id) == "tenant://sample-app"
 
-    assert projection.run_ref == "run://extravaganza/codex"
-    assert projection.workflow_ref == "workflow://codex-agent-runtime/run-extravaganza-codex"
+    assert projection.run_ref == "run://sample-app/codex"
+    assert projection.workflow_ref == "workflow://codex-agent-runtime/run-sample-app-codex"
     assert projection.status == "completed"
     assert [turn] = projection.turn_states
     assert turn.operation == "codex.session.turn"
@@ -521,14 +521,14 @@ defmodule Mezzanine.IntegrationBridgeTest do
 
   test "Codex agent runtime installs credentials in the run tenant and requests connector sandbox" do
     attrs = %{
-      tenant_ref: "tenant://extravaganza-live",
-      installation_ref: "installation://extravaganza/codex",
-      subject_ref: "subject://extravaganza/codex",
-      run_ref: "run://extravaganza/codex-live",
-      trace_id: "trace://extravaganza/codex-live",
+      tenant_ref: "tenant://sample-app-live",
+      installation_ref: "installation://sample-app/codex",
+      subject_ref: "subject://sample-app/codex",
+      run_ref: "run://sample-app/codex-live",
+      trace_id: "trace://sample-app/codex-live",
       idempotency_key: "idem-codex-live",
-      authority_context_ref: "authority-context://extravaganza/codex-live",
-      source_ref: "actor://extravaganza/operator"
+      authority_context_ref: "authority-context://sample-app/codex-live",
+      source_ref: "actor://sample-app/operator"
     }
 
     start_install_fun = fn connector_id, tenant_id, install_attrs ->
@@ -558,7 +558,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
          run: %{run_id: "jido-run-codex-live"},
          attempt: %{attempt_id: "jido-attempt-codex-live"},
          output: %{
-           text: "Extravaganza headless Codex live path is operational.",
+           text: "Sample App headless Codex live path is operational.",
            provider_session_id: "codex-provider-session-live",
            status: :completed
          }
@@ -580,10 +580,9 @@ defmodule Mezzanine.IntegrationBridgeTest do
                register_connector?: false
              )
 
-    assert_received {:codex_start_install, "codex_cli", "tenant://extravaganza-live",
-                     install_attrs}
+    assert_received {:codex_start_install, "codex_cli", "tenant://sample-app-live", install_attrs}
 
-    assert install_attrs.actor_id == "actor://extravaganza/operator"
+    assert install_attrs.actor_id == "actor://sample-app/operator"
 
     assert install_attrs.requested_scopes == [
              "session:execute",
@@ -605,7 +604,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert input.provider_metadata["skip_git_repo_check"] == true
     refute Map.has_key?(input, :dynamic_tool_manifest)
     assert Keyword.fetch!(opts, :connection_id) == "conn-codex-live"
-    assert Keyword.fetch!(opts, :tenant_id) == "tenant://extravaganza-live"
+    assert Keyword.fetch!(opts, :tenant_id) == "tenant://sample-app-live"
 
     assert Keyword.fetch!(opts, :sandbox) == %{
              level: :strict,
@@ -936,7 +935,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
              IntegrationBridge.create_github_pr(
                invocation,
                %{
-                 repo: "nshkrdotcom/extravaganza",
+                 repo: "nshkrdotcom/sample-app",
                  title: "Governed GitHub PR",
                  body: "Created through the direct connector lane",
                  head: "phase-7",
@@ -947,7 +946,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
              )
 
     assert_received {:invoke, "github.pr.create", input, opts}
-    assert input.repo == "nshkrdotcom/extravaganza"
+    assert input.repo == "nshkrdotcom/sample-app"
     assert input.governed_lower_envelope["lower_runtime_kind"] == "direct_connector"
 
     assert input.governed_lower_envelope["connector_manifest_ref"] ==
@@ -993,15 +992,15 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert {:ok, %{github_feedback_sweep: sweep}} =
              IntegrationBridge.sweep_github_pr_feedback(
                invocation,
-               %{repo: "nshkrdotcom/extravaganza", pull_number: 17, ref: "head-sha"},
+               %{repo: "nshkrdotcom/sample-app", pull_number: 17, ref: "head-sha"},
                invoke_fun: invoke_fun
              )
 
     assert_received {:invoke, "github.pr.reviews.list",
-                     %{repo: "nshkrdotcom/extravaganza", pull_number: 17}}
+                     %{repo: "nshkrdotcom/sample-app", pull_number: 17}}
 
     assert_received {:invoke, "github.commit.statuses.get_combined",
-                     %{repo: "nshkrdotcom/extravaganza", ref: "head-sha"}}
+                     %{repo: "nshkrdotcom/sample-app", ref: "head-sha"}}
 
     assert sweep.review_count == 2
     assert sweep.review_comment_count == 1
@@ -1042,7 +1041,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
                  execution_id: "exec-1",
                  actor_id: "actor-1",
                  trace_id: "trace-1",
-                 repo: "nshkrdotcom/extravaganza",
+                 repo: "nshkrdotcom/sample-app",
                  pull_number: 17,
                  ref: "head-sha"
                },
@@ -1059,7 +1058,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert_received {:invoke, "github.commit.statuses.get_combined", status_input, status_opts}
     assert_received {:invoke, "github.check_runs.list_for_ref", checks_input, checks_opts}
 
-    assert fetch_input.repo == "nshkrdotcom/extravaganza"
+    assert fetch_input.repo == "nshkrdotcom/sample-app"
     assert fetch_input.pull_number == 17
     assert reviews_input.pull_number == 17
     assert comments_input.pull_number == 17
@@ -1082,7 +1081,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert receipt.status == :receipt_recorded
     assert receipt.provider == "github"
     assert receipt.effect == "github_pr_evidence"
-    assert receipt.repo == "nshkrdotcom/extravaganza"
+    assert receipt.repo == "nshkrdotcom/sample-app"
     assert receipt.pull_number == 17
     assert receipt.head_sha == "head-sha"
     assert receipt.provider_request_sent? == true
@@ -1109,7 +1108,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
                  execution_id: "exec-1",
                  actor_id: "actor-1",
                  trace_id: "trace-1",
-                 repo: "nshkrdotcom/extravaganza",
+                 repo: "nshkrdotcom/sample-app",
                  setup_fixture?: true
                },
                connection_id: "github-conn-1",
@@ -1129,12 +1128,12 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert {:ok, result} =
              IntegrationBridge.cleanup_github_branch(
                invocation,
-               %{repo: "nshkrdotcom/extravaganza", ref: "heads/phase-7"},
+               %{repo: "nshkrdotcom/sample-app", ref: "heads/phase-7"},
                invoke_fun: invoke_fun
              )
 
     assert_received {:invoke, "github.git.ref.delete",
-                     %{repo: "nshkrdotcom/extravaganza", ref: "heads/phase-7"}}
+                     %{repo: "nshkrdotcom/sample-app", ref: "heads/phase-7"}}
 
     assert result.github_operation_receipt.capability_id == "github.git.ref.delete"
     assert result.github_operation_receipt.lower_runtime_kind == "direct_connector"
@@ -1158,16 +1157,16 @@ defmodule Mezzanine.IntegrationBridgeTest do
                invoke_fun: invoke_fun,
                capability_id: "linear.issues.retrieve",
                lower_runtime_kind: :deterministic_fixture,
-               policy_bundle_ref: "policy-bundle://extravaganza/default",
+               policy_bundle_ref: "policy-bundle://sample-app/default",
                policy_bundle_hash:
                  "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-               cedar_schema_ref: "cedar-schema://extravaganza/source",
+               cedar_schema_ref: "cedar-schema://sample-app/source",
                cedar_schema_hash:
                  "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
                script_ref: "script://linear/retrieve",
                script_hash:
                  "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-               package_refs: ["package://extravaganza/coding-ops"],
+               package_refs: ["package://sample-app/coding-ops"],
                sandbox_profile_ref: "sandbox://local/strict",
                attestation_requirement_ref: "attestation://local/dev"
              )
@@ -1179,10 +1178,10 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert envelope.allowed_operations == ["linear.issues.retrieve", "linear.issues.update"]
     assert envelope.resource_scope_refs == ["workspace://work_object/subject-1"]
     assert receipt.status == :succeeded
-    assert receipt.policy_bundle_ref == "policy-bundle://extravaganza/default"
-    assert receipt.cedar_schema_ref == "cedar-schema://extravaganza/source"
+    assert receipt.policy_bundle_ref == "policy-bundle://sample-app/default"
+    assert receipt.cedar_schema_ref == "cedar-schema://sample-app/source"
     assert receipt.script_ref == "script://linear/retrieve"
-    assert receipt.package_refs == ["package://extravaganza/coding-ops"]
+    assert receipt.package_refs == ["package://sample-app/coding-ops"]
     assert receipt.resource_scope_refs == ["workspace://work_object/subject-1"]
     assert receipt.sandbox_profile_ref == "sandbox://local/strict"
     assert receipt.attestation_requirement_ref == "attestation://local/dev"
@@ -1204,11 +1203,11 @@ defmodule Mezzanine.IntegrationBridgeTest do
       |> put_in([:invocation_request, :execution_governance, :sandbox], %{
         "allowed_tools" => ["linear.issues.retrieve"],
         "file_scope_ref" => "workspace://tenant-1/root",
-        "file_scope_hint" => "/tmp/extravaganza/subject-1"
+        "file_scope_hint" => "/tmp/sample-app/subject-1"
       })
       |> put_in([:invocation_request, :extensions, "citadel", "execution_intent"], %{
-        "cwd" => "/tmp/extravaganza/subject-1",
-        "workspace_root" => "/tmp/extravaganza/subject-1"
+        "cwd" => "/tmp/sample-app/subject-1",
+        "workspace_root" => "/tmp/sample-app/subject-1"
       })
 
     invocation = AuthorizedInvocation.new!(attrs)
@@ -1223,8 +1222,8 @@ defmodule Mezzanine.IntegrationBridgeTest do
              "workspace_ref" => "workspace://tenant-1/root",
              "workspace_root_ref" => "workspace://tenant-1/root",
              "file_scope_ref" => "workspace://tenant-1/root",
-             "workspace_root" => "/tmp/extravaganza/subject-1",
-             "cwd" => "/tmp/extravaganza/subject-1",
+             "workspace_root" => "/tmp/sample-app/subject-1",
+             "cwd" => "/tmp/sample-app/subject-1",
              "path_redacted?" => true,
              "placement_ref" => "target-1"
            }
@@ -1555,12 +1554,12 @@ defmodule Mezzanine.IntegrationBridgeTest do
       })
       |> put_in([:invocation_request, :execution_governance, :sandbox], %{
         "allowed_tools" => ["codex.session.turn", "linear.api.comments.update"],
-        "file_scope_hint" => "/home/dev/extravaganza",
+        "file_scope_hint" => "/home/dev/sample-app",
         "file_scope_ref" => "workspace://work_object/subject-1"
       })
       |> put_in([:invocation_request, :extensions, "citadel", "execution_intent"], %{
         "prompt" => "Implement the governed slice",
-        "cwd" => "/home/dev/extravaganza",
+        "cwd" => "/home/dev/sample-app",
         "continuation" => %{"strategy" => "latest"},
         "provider_metadata" => %{"model" => "gpt-5.4", "app_server" => true},
         "memory_context" => %{
@@ -1584,7 +1583,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
     input = AuthorizedInvocation.invoke_input(invocation, "codex.session.turn")
 
     assert input.prompt == "Implement the governed slice"
-    assert input.cwd == "/home/dev/extravaganza"
+    assert input.cwd == "/home/dev/sample-app"
     assert input.continuation == %{"strategy" => "latest"}
 
     assert input.host_tools == [
@@ -2033,11 +2032,11 @@ defmodule Mezzanine.IntegrationBridgeTest do
 
   defp github_pr do
     %{
-      repo: "nshkrdotcom/extravaganza",
+      repo: "nshkrdotcom/sample-app",
       pull_number: 17,
       title: "Governed GitHub PR",
       state: "open",
-      html_url: "https://github.com/nshkrdotcom/extravaganza/pull/17",
+      html_url: "https://github.com/nshkrdotcom/sample-app/pull/17",
       head: %{ref: "phase-7", sha: "head-sha"},
       base: %{ref: "main", sha: "base-sha"}
     }
@@ -2045,7 +2044,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
 
   defp github_reviews do
     %{
-      repo: "nshkrdotcom/extravaganza",
+      repo: "nshkrdotcom/sample-app",
       pull_number: 17,
       reviews: [
         %{review_id: 1, state: "APPROVED"},
@@ -2056,15 +2055,15 @@ defmodule Mezzanine.IntegrationBridgeTest do
 
   defp github_review_comments do
     %{
-      repo: "nshkrdotcom/extravaganza",
+      repo: "nshkrdotcom/sample-app",
       pull_number: 17,
-      comments: [%{comment_id: 11, path: "lib/extravaganza.ex"}]
+      comments: [%{comment_id: 11, path: "lib/sample-app.ex"}]
     }
   end
 
   defp github_status do
     %{
-      repo: "nshkrdotcom/extravaganza",
+      repo: "nshkrdotcom/sample-app",
       ref: "head-sha",
       state: "success",
       statuses: [%{context: "mix ci", state: "success"}]
@@ -2073,7 +2072,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
 
   defp github_checks do
     %{
-      repo: "nshkrdotcom/extravaganza",
+      repo: "nshkrdotcom/sample-app",
       ref: "head-sha",
       check_runs: [%{name: "mix ci", status: "completed", conclusion: "success"}]
     }

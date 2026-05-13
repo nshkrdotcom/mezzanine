@@ -12,8 +12,8 @@ defmodule Mezzanine.OpsDomainScopingTest do
     assert {:ok, %Program{} = program} =
              Program
              |> Ash.Changeset.for_create(:create_program, %{
-               slug: "extravaganza",
-               name: "Extravaganza",
+               slug: "sample-app",
+               name: "Sample App",
                product_family: "operator_stack",
                configuration: %{"feature_flags" => ["linear"]},
                metadata: %{}

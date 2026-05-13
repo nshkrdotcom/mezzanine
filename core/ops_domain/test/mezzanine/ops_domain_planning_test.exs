@@ -9,7 +9,7 @@ defmodule Mezzanine.OpsDomainPlanningTest do
 
   test "policy bundles compile on load and preserve last good compiled form on failed recompile" do
     actor = %{tenant_id: "tenant-a"}
-    {:ok, program} = create_program(actor, "extravaganza")
+    {:ok, program} = create_program(actor, "sample-app")
     {:ok, body} = File.read(@workflow_fixture)
 
     assert {:ok, %PolicyBundle{} = bundle} =

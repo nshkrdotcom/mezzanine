@@ -50,7 +50,7 @@ defmodule Mezzanine.Workspace do
     %{
       path: "core/ops_domain",
       current_role:
-        "live program, work, run, review, evidence, and control domains still consumed by app_kit, extravaganza, and stack_lab"
+        "live program, work, run, review, evidence, and control domains still consumed by downstream product and proof repos"
     }
   ]
   @semantic_host_package_paths Enum.map(@semantic_host_packages, & &1.path)

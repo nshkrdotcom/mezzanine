@@ -178,6 +178,8 @@ defmodule Mezzanine.M1M2Runtime.DeterministicLowerCompletion do
     subject_id = Map.fetch!(lower_context, :subject_id)
     submission_dedupe_key = Map.fetch!(lower_context, :submission_dedupe_key)
 
+    refs = lower_dispatch_refs(binding, dispatch)
+
     [
       invoke_fun: Keyword.get(opts, :invoke_fun, deterministic_invoke_fun()),
       capability_id: capability_id,
@@ -194,12 +196,10 @@ defmodule Mezzanine.M1M2Runtime.DeterministicLowerCompletion do
         sha256_ref("jido/connectors/codex_cli:#{capability_id}:deterministic"),
       connector_manifest_state: :active,
       capability_negotiation_ref: "cap-neg://#{encoded}/#{capability_id}",
-      policy_bundle_ref:
-        string_value(dispatch, "policy_bundle_ref") ||
-          "policy-bundle://extravaganza/deterministic",
-      policy_bundle_hash: sha256_ref("policy-bundle://extravaganza/deterministic"),
-      cedar_schema_ref: "cedar-schema://extravaganza/deterministic",
-      cedar_schema_hash: sha256_ref("cedar-schema://extravaganza/deterministic"),
+      policy_bundle_ref: refs.policy_bundle_ref,
+      policy_bundle_hash: sha256_ref(refs.policy_bundle_ref),
+      cedar_schema_ref: refs.cedar_schema_ref,
+      cedar_schema_hash: sha256_ref(refs.cedar_schema_ref),
       script_ref: "script://codex/session-turn/deterministic",
       script_hash: sha256_ref("script://codex/session-turn/deterministic"),
       script_api_version: "v1",
@@ -210,13 +210,12 @@ defmodule Mezzanine.M1M2Runtime.DeterministicLowerCompletion do
       target_ref:
         string_value(dispatch, "target_ref") ||
           "target://workspace-runtime/#{subject_id}",
-      sandbox_profile_ref:
-        string_value(dispatch, "sandbox_profile_ref") || "sandbox://extravaganza/strict",
+      sandbox_profile_ref: refs.sandbox_profile_ref,
       sandbox_level: :strict,
       acceptable_attestation: ["local-erlexec-weak"],
       attestation_requirement_ref: "local-erlexec-weak",
-      evidence_profile_ref: "evidence://extravaganza/github-pr-plus-workpad",
-      redaction_profile_ref: "redaction://extravaganza/default",
+      evidence_profile_ref: refs.evidence_profile_ref,
+      redaction_profile_ref: refs.redaction_profile_ref,
       input_ref: "input://#{encoded}",
       input_hash: sha256_ref("#{execution_id}:#{submission_dedupe_key}:#{capability_id}")
     ]
@@ -394,11 +393,35 @@ defmodule Mezzanine.M1M2Runtime.DeterministicLowerCompletion do
     end
   end
 
+  defp lower_dispatch_refs(binding, dispatch) do
+    %{
+      policy_bundle_ref:
+        lower_ref(dispatch, binding, "policy_bundle_ref", "policy-bundle://runtime/deterministic"),
+      cedar_schema_ref:
+        lower_ref(dispatch, binding, "cedar_schema_ref", "cedar-schema://runtime/deterministic"),
+      sandbox_profile_ref:
+        lower_ref(dispatch, binding, "sandbox_profile_ref", "sandbox://runtime/strict"),
+      evidence_profile_ref:
+        lower_ref(
+          dispatch,
+          binding,
+          "evidence_profile_ref",
+          "evidence://runtime/github-pr-plus-workpad"
+        ),
+      redaction_profile_ref:
+        lower_ref(dispatch, binding, "redaction_profile_ref", "redaction://runtime/default")
+    }
+  end
+
+  defp lower_ref(dispatch, binding, key, default) do
+    string_value(dispatch, key) || string_value(binding, key) || default
+  end
+
   defp package_refs(binding, dispatch) do
     first_non_empty_list([
       list_value(dispatch, "package_refs"),
       list_value(binding, "package_refs"),
-      ["package://extravaganza/coding-ops"]
+      ["package://runtime/default-agent"]
     ])
   end
 

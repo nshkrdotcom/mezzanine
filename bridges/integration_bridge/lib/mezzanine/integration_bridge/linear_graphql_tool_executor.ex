@@ -1,6 +1,6 @@
 defmodule Mezzanine.IntegrationBridge.LinearGraphQLToolExecutor do
   @moduledoc """
-  Lower-owned adapter for Symphony-compatible Linear GraphQL dynamic tools.
+  Lower-owned adapter for Linear GraphQL dynamic tools.
 
   This module translates the Codex dynamic-tool shape into the governed Linear
   connector operation. Query validation and provider execution remain below this

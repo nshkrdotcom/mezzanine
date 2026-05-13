@@ -278,9 +278,9 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
                      lower_runtime_kind: "codex_session",
                      capability_id: "codex.session.turn",
                      resource_scope_refs: ["scope://subject/subject-093"],
-                     policy_bundle_refs: ["policy-bundle://extravaganza/default"],
+                     policy_bundle_refs: ["policy-bundle://sample-app/default"],
                      script_refs: ["script://codex/session-turn"],
-                     package_refs: ["package://extravaganza/coding_ops"],
+                     package_refs: ["package://sample-app/coding_ops"],
                      sandbox_profile_ref: "sandbox://local/read-write",
                      attestation_requirement_ref: "attestation://local/default",
                      denial_refs: ["lower-denial://capability/linear"]
@@ -314,12 +314,12 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
                    ],
                    acceptance: %{
                      scenario_refs: ["stacklab://scenario/local-single-node"],
-                     claim_refs: ["claim://extravaganza/local-run"]
+                     claim_refs: ["claim://sample-app/local-run"]
                    },
                    github_pr_evidence: %{
                      provider: "github",
-                     evidence_ref: "evidence://github-pr/nshkrdotcom/extravaganza/95",
-                     content_ref: "github-pr://nshkrdotcom/extravaganza/95"
+                     evidence_ref: "evidence://github-pr/nshkrdotcom/sample-app/95",
+                     content_ref: "github-pr://nshkrdotcom/sample-app/95"
                    }
                  }
                })
@@ -360,7 +360,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     assert persisted.projection_result.governed_lower_envelope.lower_runtime_kind ==
              "codex_session"
 
-    assert persisted.projection_result.acceptance.claim_refs == ["claim://extravaganza/local-run"]
+    assert persisted.projection_result.acceptance.claim_refs == ["claim://sample-app/local-run"]
 
     terminal_attrs =
       Map.merge(attrs, %{
@@ -416,9 +416,9 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
       |> Map.merge(%{
         lower_receipt_ref: "lower-receipt-097",
         github_pr_evidence: %{
-          evidence_ref: "evidence://github-pr/nshkrdotcom/extravaganza/17",
+          evidence_ref: "evidence://github-pr/nshkrdotcom/sample-app/17",
           evidence_kind: "github_pr",
-          content_ref: "github-pr://nshkrdotcom/extravaganza/17",
+          content_ref: "github-pr://nshkrdotcom/sample-app/17",
           metadata: %{
             "authority_refs" => ["authority-decision://github"],
             "connector_manifest_refs" => ["manifest://jido/connectors/github@local"]
@@ -429,8 +429,8 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     assert {:ok, evidence} = ExecutionLifecycleWorkflow.materialize_evidence_activity(attrs)
 
     assert evidence.evidence_kind == "github_pr"
-    assert evidence.content_ref == "github-pr://nshkrdotcom/extravaganza/17"
-    assert evidence.result_ref == "evidence://github-pr/nshkrdotcom/extravaganza/17"
+    assert evidence.content_ref == "github-pr://nshkrdotcom/sample-app/17"
+    assert evidence.result_ref == "evidence://github-pr/nshkrdotcom/sample-app/17"
 
     assert evidence.github_pr_evidence.metadata["authority_refs"] == [
              "authority-decision://github"
@@ -450,7 +450,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
       ])
       |> put_in([:routing_facts, :execution_intent], %{
         "prompt" => "Implement the governed slice",
-        "cwd" => "/home/dev/extravaganza",
+        "cwd" => "/home/dev/sample-app",
         "provider_metadata" => %{"model" => "gpt-5.4", "app_server" => true},
         "dynamic_tool_manifest" => %{"tools" => ["linear.comment.update"]},
         "continuation" => %{"strategy" => "latest"}
@@ -468,7 +468,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     execution_intent = invocation.invocation_request.extensions["citadel"]["execution_intent"]
 
     assert execution_intent["prompt"] == "Implement the governed slice"
-    assert execution_intent["cwd"] == "/home/dev/extravaganza"
+    assert execution_intent["cwd"] == "/home/dev/sample-app"
     assert execution_intent["provider_metadata"]["app_server"] == true
     assert execution_intent["dynamic_tool_manifest"] == %{"tools" => ["linear.comment.update"]}
   end
@@ -479,15 +479,15 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
       |> put_in([:routing_facts, :lower_runtime_kind], :deterministic_fixture)
       |> put_in(
         [:routing_facts, :runtime_profile_ref],
-        "runtime-profile://extravaganza/deterministic"
+        "runtime-profile://sample-app/deterministic"
       )
       |> put_in([:routing_facts, :resource_scope_refs], [
         "workspace://tenant-acme/subject-093"
       ])
       |> Map.put(:lower_dispatch_opts, %{
-        "policy_bundle_ref" => "policy-bundle://extravaganza/default",
+        "policy_bundle_ref" => "policy-bundle://sample-app/default",
         "script_ref" => "script://codex/session-turn",
-        "package_refs" => ["package://extravaganza/coding-ops"],
+        "package_refs" => ["package://sample-app/coding-ops"],
         "sandbox_profile_ref" => "sandbox://local/strict",
         "attestation_requirement_ref" => "attestation://local/deterministic"
       })
@@ -504,12 +504,12 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     assert Keyword.fetch!(opts, :lower_runtime_kind) == :deterministic_fixture
 
     assert Keyword.fetch!(opts, :runtime_profile_ref) ==
-             "runtime-profile://extravaganza/deterministic"
+             "runtime-profile://sample-app/deterministic"
 
     assert Keyword.fetch!(opts, :resource_scope_refs) == ["workspace://tenant-acme/subject-093"]
-    assert Keyword.fetch!(opts, :policy_bundle_ref) == "policy-bundle://extravaganza/default"
+    assert Keyword.fetch!(opts, :policy_bundle_ref) == "policy-bundle://sample-app/default"
     assert Keyword.fetch!(opts, :script_ref) == "script://codex/session-turn"
-    assert Keyword.fetch!(opts, :package_refs) == ["package://extravaganza/coding-ops"]
+    assert Keyword.fetch!(opts, :package_refs) == ["package://sample-app/coding-ops"]
     assert Keyword.fetch!(opts, :sandbox_profile_ref) == "sandbox://local/strict"
 
     assert Keyword.fetch!(opts, :attestation_requirement_ref) ==

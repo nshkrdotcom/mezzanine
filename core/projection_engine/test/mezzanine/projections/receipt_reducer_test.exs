@@ -122,8 +122,8 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
              "denial_refs" => ["lower-denial://capability/linear"],
              "lower_request_ref" => "lower-request://codex/session-turn",
              "lower_runtime_kind" => "codex_session",
-             "package_refs" => ["package://extravaganza/coding_ops"],
-             "policy_bundle_refs" => ["policy-bundle://extravaganza/default"],
+             "package_refs" => ["package://sample-app/coding_ops"],
+             "policy_bundle_refs" => ["policy-bundle://sample-app/default"],
              "resource_scope_refs" => ["scope://subject/subj-1"],
              "sandbox_profile_ref" => "sandbox://local/read-write",
              "script_refs" => ["script://codex/session-turn"]
@@ -135,8 +135,8 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
              "denial_refs" => ["lower-denial://capability/linear"],
              "lower_request_ref" => "lower-request://codex/session-turn",
              "lower_runtime_kind" => "codex_session",
-             "package_refs" => ["package://extravaganza/coding_ops"],
-             "policy_bundle_refs" => ["policy-bundle://extravaganza/default"],
+             "package_refs" => ["package://sample-app/coding_ops"],
+             "policy_bundle_refs" => ["policy-bundle://sample-app/default"],
              "resource_scope_refs" => ["scope://subject/subj-1"],
              "sandbox_profile_ref" => "sandbox://local/read-write",
              "script_refs" => ["script://codex/session-turn"]
@@ -167,12 +167,12 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
 
     assert projection.payload["acceptance"] == %{
              "scenario_refs" => ["stacklab://scenario/local-single-node"],
-             "claim_refs" => ["claim://extravaganza/local-run"]
+             "claim_refs" => ["claim://sample-app/local-run"]
            }
 
     assert projection.payload["github_pr"] == %{
-             "content_ref" => "github-pr://nshkrdotcom/extravaganza/42",
-             "evidence_ref" => "evidence://github-pr/nshkrdotcom/extravaganza/42",
+             "content_ref" => "github-pr://nshkrdotcom/sample-app/42",
+             "evidence_ref" => "evidence://github-pr/nshkrdotcom/sample-app/42",
              "feedback" => %{"rework_required?" => true},
              "provider" => "github"
            }
@@ -468,9 +468,9 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
           "lower_runtime_kind" => "codex_session",
           "capability_id" => "codex.session.turn",
           "resource_scope_refs" => ["scope://subject/subj-1"],
-          "policy_bundle_refs" => ["policy-bundle://extravaganza/default"],
+          "policy_bundle_refs" => ["policy-bundle://sample-app/default"],
           "script_refs" => ["script://codex/session-turn"],
-          "package_refs" => ["package://extravaganza/coding_ops"],
+          "package_refs" => ["package://sample-app/coding_ops"],
           "sandbox_profile_ref" => "sandbox://local/read-write",
           "attestation_requirement_ref" => "attestation://local/default",
           "denial_refs" => ["lower-denial://capability/linear"]
@@ -489,12 +489,12 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
         "incident_bundles" => incident_bundles(),
         "acceptance" => %{
           "scenario_refs" => ["stacklab://scenario/local-single-node"],
-          "claim_refs" => ["claim://extravaganza/local-run"]
+          "claim_refs" => ["claim://sample-app/local-run"]
         },
         "github_pr_evidence" => %{
           "provider" => "github",
-          "evidence_ref" => "evidence://github-pr/nshkrdotcom/extravaganza/42",
-          "content_ref" => "github-pr://nshkrdotcom/extravaganza/42",
+          "evidence_ref" => "evidence://github-pr/nshkrdotcom/sample-app/42",
+          "content_ref" => "github-pr://nshkrdotcom/sample-app/42",
           "feedback" => %{"rework_required?" => true}
         },
         "source_publication" => %{

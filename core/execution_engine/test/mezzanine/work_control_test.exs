@@ -53,7 +53,7 @@ defmodule Mezzanine.WorkControlTest do
       requested_action_ids: ["codex.session.turn"],
       source_binding_refs: ["linear_primary"],
       resource_scope_refs: ["source_binding://linear_primary"],
-      workspace_policy_ref: "workspace-policy://extravaganza/coding_operations",
+      workspace_policy_ref: "workspace-policy://sample-app/coding_operations",
       live_provider_allowed: false,
       evidence_profile_ref: "github_pr_plus_workpad",
       memory_profile_ref: "none",
@@ -61,7 +61,7 @@ defmodule Mezzanine.WorkControlTest do
       memory_context_required: false,
       memory_context_source_refs: ["workspace_memory"],
       memory_context_binding_keys: ["shared_memory"],
-      redaction_profile_ref: "redaction://extravaganza/default",
+      redaction_profile_ref: "redaction://sample-app/default",
       prompt_context_recipe_refs: ["coding_agent_system"],
       runtime_policy_config: %{"run" => %{"capability" => "codex.session.turn"}}
     }
@@ -248,7 +248,7 @@ defmodule Mezzanine.WorkControlTest do
       "provider_external_ref" => "lin-issue-777",
       "provider_revision" => "2026-05-09T00:00:00Z",
       "source_state" => "Todo",
-      "branch_ref" => "nshkrdotcom/extravaganza/eng-777",
+      "branch_ref" => "nshkrdotcom/sample-app/eng-777",
       "source_url" => "https://linear.app/example/issue/ENG-777",
       "labels" => ["ops", "phase-7"],
       "blocker_refs" => [
@@ -279,7 +279,7 @@ defmodule Mezzanine.WorkControlTest do
     assert summary
     assert summary.source_payload["provider_external_ref"] == "lin-issue-777"
     assert summary.source_payload["source_binding_id"] == "linear_primary"
-    assert summary.source_payload["branch_ref"] == "nshkrdotcom/extravaganza/eng-777"
+    assert summary.source_payload["branch_ref"] == "nshkrdotcom/sample-app/eng-777"
     assert summary.source_payload["labels"] == ["ops", "phase-7"]
 
     assert {:ok, detail} = WorkQueries.get_subject_detail(tenant_id, source_subject.subject_id)
@@ -351,7 +351,7 @@ defmodule Mezzanine.WorkControlTest do
            ] = projection.source_bindings
 
     assert metadata["provider_external_ref"] == "lin-issue-777"
-    assert metadata["branch_ref"] == "nshkrdotcom/extravaganza/eng-777"
+    assert metadata["branch_ref"] == "nshkrdotcom/sample-app/eng-777"
     assert metadata["labels"] == ["ops", "phase-7"]
     assert [%{"provider_external_ref" => "lin-issue-776"}] = metadata["blocker_refs"]
   end

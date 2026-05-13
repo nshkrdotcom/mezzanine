@@ -40,7 +40,7 @@ defmodule Mezzanine.EvidenceLedger.GitHubPrEvidenceTest do
              )
 
     assert evidence.evidence_kind == "github_pr"
-    assert evidence.content_ref == "github-pr://nshkrdotcom/extravaganza/17"
+    assert evidence.content_ref == "github-pr://nshkrdotcom/sample-app/17"
     assert evidence.installation_id == "inst-1"
     assert evidence.subject_id == "subject-1"
     assert evidence.execution_id == "exec-1"
@@ -48,7 +48,7 @@ defmodule Mezzanine.EvidenceLedger.GitHubPrEvidenceTest do
 
     metadata = evidence.metadata
     assert metadata.provider == "github"
-    assert metadata.repo == "nshkrdotcom/extravaganza"
+    assert metadata.repo == "nshkrdotcom/sample-app"
     assert metadata.pull_number == 17
     assert metadata.head == %{ref: "phase-7", sha: "head-sha"}
     assert metadata.base == %{ref: "main", sha: "base-sha"}
@@ -94,7 +94,7 @@ defmodule Mezzanine.EvidenceLedger.GitHubPrEvidenceTest do
 
     assert {:ok, fetched} = Store.fetch_record(stored.id)
     assert fetched.evidence_kind == "github_pr"
-    assert fetched.metadata.content_ref == "github-pr://nshkrdotcom/extravaganza/17"
+    assert fetched.metadata.content_ref == "github-pr://nshkrdotcom/sample-app/17"
   end
 
   test "fails closed when dispatches contain no PR evidence" do
@@ -136,14 +136,14 @@ defmodule Mezzanine.EvidenceLedger.GitHubPrEvidenceTest do
 
   defp pr_output do
     %{
-      repo: "nshkrdotcom/extravaganza",
+      repo: "nshkrdotcom/sample-app",
       pull_number: 17,
       title: "Phase 7 evidence",
       state: "open",
       draft: false,
       merged: false,
       mergeable: true,
-      html_url: "https://github.com/nshkrdotcom/extravaganza/pull/17",
+      html_url: "https://github.com/nshkrdotcom/sample-app/pull/17",
       head: %{ref: "phase-7", sha: "head-sha"},
       base: %{ref: "main", sha: "base-sha"}
     }
@@ -151,7 +151,7 @@ defmodule Mezzanine.EvidenceLedger.GitHubPrEvidenceTest do
 
   defp reviews_output do
     %{
-      repo: "nshkrdotcom/extravaganza",
+      repo: "nshkrdotcom/sample-app",
       pull_number: 17,
       reviews: [
         %{review_id: 1, state: "APPROVED"},
@@ -162,15 +162,15 @@ defmodule Mezzanine.EvidenceLedger.GitHubPrEvidenceTest do
 
   defp comments_output do
     %{
-      repo: "nshkrdotcom/extravaganza",
+      repo: "nshkrdotcom/sample-app",
       pull_number: 17,
-      comments: [%{comment_id: 11, path: "lib/extravaganza.ex"}]
+      comments: [%{comment_id: 11, path: "lib/sample-app.ex"}]
     }
   end
 
   defp statuses_output do
     %{
-      repo: "nshkrdotcom/extravaganza",
+      repo: "nshkrdotcom/sample-app",
       ref: "head-sha",
       state: "success",
       statuses: [%{context: "ci", state: "success"}]
@@ -179,7 +179,7 @@ defmodule Mezzanine.EvidenceLedger.GitHubPrEvidenceTest do
 
   defp checks_output do
     %{
-      repo: "nshkrdotcom/extravaganza",
+      repo: "nshkrdotcom/sample-app",
       ref: "head-sha",
       check_runs: [%{name: "mix ci", status: "completed", conclusion: "success"}]
     }

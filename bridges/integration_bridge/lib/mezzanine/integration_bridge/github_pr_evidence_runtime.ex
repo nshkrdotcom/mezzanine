@@ -131,7 +131,7 @@ defmodule Mezzanine.IntegrationBridge.GitHubPrEvidenceRuntime do
                profile_id: auth.default_profile,
                subject: subject,
                requested_scopes: auth.requested_scopes,
-               metadata: %{proof: "extravaganza github evidence live product path"},
+               metadata: %{proof: "github evidence runtime read path"},
                now: now
              }),
            {:ok, %{connection: connection}} <-

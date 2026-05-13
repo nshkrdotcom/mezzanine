@@ -233,15 +233,15 @@ defmodule Mezzanine.M1M2RuntimeTest do
         lower_dispatch_opts: [
           invoke_fun: invoke_fun,
           lower_runtime_kind: :deterministic_fixture,
-          runtime_profile_ref: "runtime-profile://extravaganza/deterministic",
+          runtime_profile_ref: "runtime-profile://sample-app/deterministic",
           runtime_profile_kind: :temporal_local,
-          policy_bundle_ref: "policy-bundle://extravaganza/default",
+          policy_bundle_ref: "policy-bundle://sample-app/default",
           policy_bundle_hash: "sha256:" <> String.duplicate("1", 64),
-          cedar_schema_ref: "cedar-schema://extravaganza/default",
+          cedar_schema_ref: "cedar-schema://sample-app/default",
           cedar_schema_hash: "sha256:" <> String.duplicate("2", 64),
           script_ref: "script://codex/session-turn",
           script_hash: "sha256:" <> String.duplicate("3", 64),
-          package_refs: ["package://extravaganza/coding-ops"],
+          package_refs: ["package://sample-app/coding-ops"],
           sandbox_profile_ref: "sandbox://local/strict",
           attestation_requirement_ref: "attestation://local/deterministic"
         ]
@@ -259,8 +259,8 @@ defmodule Mezzanine.M1M2RuntimeTest do
 
     assert_received {:jido_invoke, "codex.session.turn", input, opts}
     assert input.governed_lower_envelope["lower_runtime_kind"] == "deterministic_fixture"
-    assert input.governed_lower_envelope["workspace_root"] == "/tmp/extravaganza/subject-101"
-    assert input.governed_lower_envelope["cwd"] == "/tmp/extravaganza/subject-101"
+    assert input.governed_lower_envelope["workspace_root"] == "/tmp/sample-app/subject-101"
+    assert input.governed_lower_envelope["cwd"] == "/tmp/sample-app/subject-101"
     assert input.authority.permission_decision_ref == "decision/execution-101"
     assert Keyword.fetch!(opts, :governed_lower_envelope).capability_id == "codex.session.turn"
   end
@@ -307,7 +307,7 @@ defmodule Mezzanine.M1M2RuntimeTest do
       trace_id: "trace-run-1",
       causation_id: "cause-run-1",
       actor_ref: "actor://ops/lead",
-      installation_ref: "installation://extravaganza/local",
+      installation_ref: "installation://sample-app/local",
       idempotency_key: "idem-run-1",
       runtime_profile_ref: "codex_session",
       lower_runtime_kind: "codex_session",
@@ -328,12 +328,12 @@ defmodule Mezzanine.M1M2RuntimeTest do
         submission_dedupe_key: "lower-idem-101",
         compiled_pack_revision: 1,
         binding_snapshot: %{
-          "runtime_profile_ref" => "runtime-profile://extravaganza/deterministic",
+          "runtime_profile_ref" => "runtime-profile://sample-app/deterministic",
           "runtime_profile_kind" => "temporal_local",
           "lower_runtime_kind" => "deterministic_fixture",
           "resource_scope_refs" => ["workspace://tenant-lower-gateway/subject-101"],
           "workspace_ref" => "workspace://tenant-lower-gateway/subject-101",
-          "workspace_root" => "/tmp/extravaganza/subject-101"
+          "workspace_root" => "/tmp/sample-app/subject-101"
         },
         dispatch_envelope: %{
           "workflow_id" => "workflow-101",
@@ -362,7 +362,7 @@ defmodule Mezzanine.M1M2RuntimeTest do
           "downstream_scope" => "subject:subject-101",
           "execution_intent" => %{
             "prompt" => "Run deterministic lower gateway proof",
-            "cwd" => "/tmp/extravaganza/subject-101"
+            "cwd" => "/tmp/sample-app/subject-101"
           }
         }
       },

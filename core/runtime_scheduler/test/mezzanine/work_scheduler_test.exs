@@ -56,7 +56,7 @@ defmodule Mezzanine.WorkSchedulerTest do
            ]
   end
 
-  test "enforces Symphony candidate eligibility rules before claiming work" do
+  test "enforces candidate eligibility rules before claiming work" do
     candidates = [
       candidate("subject-missing-title",
         priority: 1,

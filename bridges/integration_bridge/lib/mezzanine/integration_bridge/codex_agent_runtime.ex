@@ -132,7 +132,7 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
         Keyword.get(
           opts,
           :prompt,
-          "Return one concise sentence confirming the Extravaganza headless Codex live path is operational. Do not modify files."
+          "Return one concise sentence confirming the governed Codex runtime path is operational. Do not modify files."
         ),
       cwd: workspace_root,
       provider_metadata: %{"app_server" => true, "skip_git_repo_check" => true},
