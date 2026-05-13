@@ -29,12 +29,12 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
     with :ok <- maybe_start_runtime_router(opts),
          :ok <- maybe_register_connector(opts),
          {:ok, connection_id} <- codex_connection_id(attrs, opts),
-         :ok <- prepare_workspace(workspace_root, opts),
-         {:ok, before_run_receipts} <- run_before_run_hooks(attrs, opts, workspace_root),
-         invoke_opts <- codex_invoke_opts(attrs, connection_id, opts, workspace_root),
-         {:ok, result} <-
-           invoke_fun.(@capability_id, codex_input(attrs, opts, workspace_root), invoke_opts) do
-      {:ok, projection(attrs, result, invoke_opts, before_run_receipts)}
+         :ok <- prepare_workspace(workspace_root, opts) do
+      workspace = workspace_for_hooks(attrs, opts, workspace_root)
+
+      attrs
+      |> run_codex_attempt(opts, invoke_fun, workspace_root, connection_id, workspace)
+      |> complete_codex_attempt(attrs, workspace, opts)
     end
   end
 
@@ -107,22 +107,56 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
 
   defp prepare_workspace(_workspace_root, _opts), do: :ok
 
-  defp run_before_run_hooks(attrs, opts, workspace_root) do
+  defp workspace_for_hooks(attrs, opts, workspace_root) do
     hook_specs = workspace_hook_specs(attrs, opts)
 
     if hook_specs == [] do
-      {:ok, []}
+      nil
     else
-      workspace =
-        opts
-        |> Keyword.get(:workspace_record)
-        |> workspace_record(attrs, workspace_root, hook_specs)
+      opts
+      |> Keyword.get(:workspace_record)
+      |> workspace_record(attrs, workspace_root, hook_specs)
+    end
+  end
 
-      Hooks.run(workspace, :before_run,
-        runner: workspace_hook_runner(opts),
-        redactions: Keyword.get(opts, :hook_redactions, []),
-        max_output_bytes: Keyword.get(opts, :hook_max_output_bytes, 4_096)
-      )
+  defp run_codex_attempt(attrs, opts, invoke_fun, workspace_root, connection_id, workspace) do
+    with {:ok, before_run_receipts} <- run_workspace_hooks(workspace, :before_run, opts),
+         invoke_opts <- codex_invoke_opts(attrs, connection_id, opts, workspace_root),
+         {:ok, result} <-
+           invoke_fun.(@capability_id, codex_input(attrs, opts, workspace_root), invoke_opts) do
+      {:ok, result, invoke_opts, before_run_receipts}
+    end
+  end
+
+  defp complete_codex_attempt(attempt_result, attrs, workspace, opts) do
+    after_run_receipts = run_after_run_hooks(workspace, opts)
+
+    case {attempt_result, after_run_receipts} do
+      {{:ok, result, invoke_opts, before_run_receipts}, receipts} ->
+        {:ok, projection(attrs, result, invoke_opts, before_run_receipts, receipts)}
+
+      {{:error, reason}, []} ->
+        {:error, reason}
+
+      {{:error, reason}, receipts} ->
+        {:error, {:codex_agent_runtime_failed, reason, %{after_run_hook_receipts: receipts}}}
+    end
+  end
+
+  defp run_workspace_hooks(nil, _stage, _opts), do: {:ok, []}
+
+  defp run_workspace_hooks(%WorkspaceRecord{} = workspace, stage, opts) do
+    Hooks.run(workspace, stage,
+      runner: workspace_hook_runner(opts),
+      redactions: Keyword.get(opts, :hook_redactions, []),
+      max_output_bytes: Keyword.get(opts, :hook_max_output_bytes, 4_096)
+    )
+  end
+
+  defp run_after_run_hooks(workspace, opts) do
+    case run_workspace_hooks(workspace, :after_run, opts) do
+      {:ok, receipts} -> receipts
+      {:error, {_reason, receipt}} -> [receipt]
     end
   end
 
@@ -242,7 +276,7 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
     |> compact_map()
   end
 
-  defp projection(attrs, result, invoke_opts, before_run_receipts) do
+  defp projection(attrs, result, invoke_opts, before_run_receipts, after_run_receipts) do
     run = map_value(result, :run) || %{}
     attempt = map_value(result, :attempt) || %{}
     output = map_value(result, :output) || %{}
@@ -285,7 +319,15 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
         }
       ],
       runtime_events:
-        hook_events(attrs, workflow_ref, turn_ref, observed_at, before_run_receipts) ++
+        hook_events(
+          attrs,
+          workflow_ref,
+          turn_ref,
+          observed_at,
+          :before_run,
+          0,
+          before_run_receipts
+        ) ++
           [
             %{
               event_ref: "event://codex-agent-runtime/#{ref_suffix(run_ref)}/terminal",
@@ -300,36 +342,47 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
               level: "info",
               message_summary: "codex session turn completed"
             }
-          ],
+          ] ++
+          hook_events(
+            attrs,
+            workflow_ref,
+            turn_ref,
+            observed_at,
+            :after_run,
+            2,
+            after_run_receipts
+          ),
       budget_state: %{"turns_remaining" => 0},
       candidate_fact_refs: ["candidate-fact://codex-agent-runtime/#{ref_suffix(run_ref)}/1"],
       memory_proof_refs: [],
       receipt_ref_set: %{
         lower_request_refs: [lower_request_ref],
         lower_receipt_refs: [lower_receipt_ref],
-        workspace_hook_refs: Enum.map(before_run_receipts, & &1.hook_ref)
+        workspace_hook_refs: Enum.map(before_run_receipts ++ after_run_receipts, & &1.hook_ref)
       }
     }
   end
 
-  defp hook_events(_attrs, _workflow_ref, _turn_ref, _observed_at, []), do: []
+  defp hook_events(_attrs, _workflow_ref, _turn_ref, _observed_at, _stage, _seq, []), do: []
 
-  defp hook_events(attrs, workflow_ref, turn_ref, observed_at, receipts) do
+  defp hook_events(attrs, workflow_ref, turn_ref, observed_at, stage, seq, receipts) do
     run_ref = map_value(attrs, :run_ref)
+    stage_name = Atom.to_string(stage)
+    event_slug = String.replace(stage_name, "_", "-")
 
     [
       %{
-        event_ref: "event://codex-agent-runtime/#{ref_suffix(run_ref)}/before-run-hook",
-        event_seq: 0,
-        event_kind: "workspace.hook.before_run",
+        event_ref: "event://codex-agent-runtime/#{ref_suffix(run_ref)}/#{event_slug}-hook",
+        event_seq: seq,
+        event_kind: "workspace.hook.#{stage_name}",
         observed_at: observed_at,
-        tenant_ref: map_value(attrs, :tenant_ref),
+        tenant_ref: map_value(attrs, :tenant_id) || map_value(attrs, :tenant_ref),
         subject_ref: map_value(attrs, :subject_ref),
         run_ref: run_ref,
         workflow_ref: workflow_ref,
         turn_ref: turn_ref,
         level: "info",
-        message_summary: "before_run hook completed",
+        message_summary: "#{stage_name} hook completed",
         extensions: %{
           hook_receipts: receipts,
           hook_receipt: List.first(receipts),

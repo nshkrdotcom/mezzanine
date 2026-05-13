@@ -675,6 +675,151 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert receipt.action == :halt
   end
 
+  test "Codex agent runtime runs after-run hook after successful lower invocation" do
+    parent = self()
+    workspace_root = tmp_dir("codex-after-run-success")
+
+    attrs =
+      codex_agent_attrs()
+      |> Map.put(:workspace_ref, "workspace://codex-after-run-success")
+      |> Map.put(:run_ref, "run://neutral/codex-after-run-success")
+
+    invoke_fun = fn capability_id, input, _opts ->
+      send(parent, {:codex_phase, :invoke, capability_id, input.cwd})
+
+      {:ok,
+       %{
+         run: %{run_id: "jido-run-after-run"},
+         attempt: %{attempt_id: "jido-attempt-after-run"},
+         output: %{provider_session_id: "codex-session-after-run", status: :completed}
+       }}
+    end
+
+    hook_runner = fn hook, context ->
+      send(parent, {:codex_phase, :after_run_hook, hook.hook_ref, context.cwd})
+      {:error, %{stdout: "cleanup failed secret-token", stderr: "kept as receipt"}}
+    end
+
+    assert {:ok, projection} =
+             CodexAgentRuntime.run(attrs,
+               cwd: workspace_root,
+               workspace_hook_specs: [
+                 %{"hook_ref" => "cleanup", "stage" => "after_run", "timeout_ms" => 100}
+               ],
+               workspace_hook_runner: hook_runner,
+               hook_redactions: ["secret-token"],
+               invoke_fun: invoke_fun,
+               connection_id: "conn-codex",
+               start_runtime_router?: false,
+               register_connector?: false
+             )
+
+    assert_receive {:codex_phase, :invoke, "codex.session.turn", ^workspace_root}
+    assert_receive {:codex_phase, :after_run_hook, "cleanup", ^workspace_root}
+    assert projection.status == "completed"
+
+    event_kinds = Enum.map(projection.runtime_events, & &1.event_kind)
+    assert event_kinds == ["run.terminal", "workspace.hook.after_run"]
+
+    after_event = List.last(projection.runtime_events)
+    assert after_event.event_seq == 2
+    assert [receipt] = after_event.extensions.hook_receipts
+    assert receipt.stage == :after_run
+    assert receipt.status == :failed
+    assert receipt.action == :continue
+    assert receipt.reason.stdout == "cleanup failed [REDACTED]"
+  end
+
+  test "Codex agent runtime preserves lower failure and cancellation when after-run hook succeeds" do
+    for reason <- [:provider_failed, :cancelled] do
+      parent = self()
+      expected_run_ref = "run://neutral/codex-after-run-#{reason}"
+
+      attrs =
+        codex_agent_attrs()
+        |> Map.put(:workspace_ref, "workspace://codex-after-run-#{reason}")
+        |> Map.put(:run_ref, expected_run_ref)
+
+      invoke_fun = fn _capability_id, _input, _opts ->
+        send(parent, {:codex_phase, :invoke_failed, reason})
+        {:error, reason}
+      end
+
+      hook_runner = fn hook, context ->
+        send(parent, {:codex_phase, :after_run_hook, reason, hook.hook_ref, context.run_ref})
+        {:ok, %{stdout: "after #{reason}", stderr: ""}}
+      end
+
+      assert {:error, {:codex_agent_runtime_failed, ^reason, evidence}} =
+               CodexAgentRuntime.run(attrs,
+                 cwd: tmp_dir("codex-after-run-#{reason}"),
+                 workspace_hook_specs: [
+                   %{"hook_ref" => "cleanup", "stage" => "after_run", "timeout_ms" => 100}
+                 ],
+                 workspace_hook_runner: hook_runner,
+                 invoke_fun: invoke_fun,
+                 connection_id: "conn-codex",
+                 start_runtime_router?: false,
+                 register_connector?: false
+               )
+
+      assert_receive {:codex_phase, :invoke_failed, ^reason}
+
+      assert_receive {:codex_phase, :after_run_hook, ^reason, "cleanup", ^expected_run_ref}
+
+      assert [receipt] = evidence.after_run_hook_receipts
+      assert receipt.stage == :after_run
+      assert receipt.status == :succeeded
+      assert receipt.result.stdout == "after #{reason}"
+    end
+  end
+
+  test "Codex agent runtime runs after-run hook after before-run gate failure" do
+    parent = self()
+
+    attrs =
+      codex_agent_attrs()
+      |> Map.put(:workspace_ref, "workspace://codex-after-run-before-failure")
+      |> Map.put(:run_ref, "run://neutral/codex-after-run-before-failure")
+
+    invoke_fun = fn _capability_id, _input, _opts ->
+      send(parent, :unexpected_codex_invoke)
+      {:ok, %{}}
+    end
+
+    hook_runner = fn
+      %{stage: :before_run}, _context ->
+        {:error, %{stdout: "preflight failed", stderr: ""}}
+
+      %{stage: :after_run}, _context ->
+        Process.sleep(50)
+        :ok
+    end
+
+    assert {:error,
+            {:codex_agent_runtime_failed, {:hook_failed, before_receipt},
+             %{after_run_hook_receipts: [after_receipt]}}} =
+             CodexAgentRuntime.run(attrs,
+               cwd: tmp_dir("codex-after-run-before-failure"),
+               workspace_hook_specs: [
+                 %{"hook_ref" => "preflight", "stage" => "before_run", "timeout_ms" => 100},
+                 %{"hook_ref" => "cleanup", "stage" => "after_run", "timeout_ms" => 1}
+               ],
+               workspace_hook_runner: hook_runner,
+               invoke_fun: invoke_fun,
+               connection_id: "conn-codex",
+               start_runtime_router?: false,
+               register_connector?: false
+             )
+
+    refute_received :unexpected_codex_invoke
+    assert before_receipt.stage == :before_run
+    assert before_receipt.status == :failed
+    assert after_receipt.stage == :after_run
+    assert after_receipt.status == :timed_out
+    assert after_receipt.action == :continue
+  end
+
   test "Codex agent runtime installs credentials in the run tenant and requests connector sandbox" do
     attrs = %{
       tenant_ref: "tenant://sample-app-live",
