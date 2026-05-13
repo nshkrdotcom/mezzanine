@@ -32,6 +32,7 @@ defmodule Mezzanine.WorkScheduler do
     :agent,
     :max_attempts,
     :max_concurrent_agents,
+    :max_concurrent_agents_by_state,
     :max_delay_ms,
     :now,
     :priority,
@@ -389,6 +390,7 @@ defmodule Mezzanine.WorkScheduler do
     |> value(:capacity)
     |> normalize()
     |> put_new_positive_integer(:global, agent_global_capacity(attrs))
+    |> put_new_non_empty_map(:states, agent_state_capacity(attrs))
   end
 
   defp agent_global_capacity(attrs) do
@@ -406,6 +408,19 @@ defmodule Mezzanine.WorkScheduler do
 
   defp put_new_positive_integer(map, _key, _value), do: map
 
+  defp agent_state_capacity(attrs) do
+    agent = attrs |> value(:agent) |> normalize()
+
+    value(agent, :max_concurrent_agents_by_state)
+    |> positive_integer_map()
+  end
+
+  defp put_new_non_empty_map(map, key, value) when is_map(value) and map_size(value) > 0 do
+    if Map.has_key?(map, key), do: map, else: Map.put(map, key, value)
+  end
+
+  defp put_new_non_empty_map(map, _key, _value), do: map
+
   defp positive_integer(value) when is_integer(value) and value > 0, do: value
 
   defp positive_integer(value) when is_binary(value) do
@@ -416,6 +431,14 @@ defmodule Mezzanine.WorkScheduler do
   end
 
   defp positive_integer(_value), do: nil
+
+  defp positive_integer_map(map) when is_map(map) do
+    Map.new(map, fn {key, value} -> {key, positive_integer(value)} end)
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new()
+  end
+
+  defp positive_integer_map(_value), do: %{}
 
   defp eligibility_context(attrs, running) do
     %{

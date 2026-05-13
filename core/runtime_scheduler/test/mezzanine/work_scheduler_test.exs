@@ -102,6 +102,73 @@ defmodule Mezzanine.WorkSchedulerTest do
            ]
   end
 
+  test "derives state capacity from agent config when state override is absent" do
+    candidates = [
+      candidate("subject-1", priority: 1, created_at: ~U[2026-05-10 10:00:00Z], state: "Todo"),
+      candidate("subject-2",
+        priority: 1,
+        created_at: ~U[2026-05-10 10:01:00Z],
+        state: "In Progress"
+      )
+    ]
+
+    running = [
+      candidate("subject-running",
+        priority: 1,
+        created_at: ~U[2026-05-10 09:00:00Z],
+        state: "todo"
+      )
+    ]
+
+    assert {:ok, plan} =
+             WorkScheduler.plan_tick(%{
+               now: @now,
+               agent: %{
+                 max_concurrent_agents: 3,
+                 max_concurrent_agents_by_state: %{"Todo" => 1}
+               },
+               candidates: candidates,
+               running: running
+             })
+
+    assert plan.capacity.configured.states == %{"todo" => 1}
+
+    assert Enum.map(plan.events, &{&1.event_kind, &1.subject_id, &1.reason}) == [
+             {"capacity.slot_exhausted", "subject-1", "state_capacity_exhausted"},
+             {"work.claimed", "subject-2", "slot_available"}
+           ]
+
+    assert {:ok, override_plan} =
+             WorkScheduler.plan_tick(%{
+               now: @now,
+               agent: %{
+                 max_concurrent_agents: 3,
+                 max_concurrent_agents_by_state: %{"Todo" => 1}
+               },
+               capacity: %{states: %{"todo" => 2}},
+               candidates: [
+                 candidate("subject-3",
+                   priority: 1,
+                   created_at: ~U[2026-05-10 10:02:00Z],
+                   state: "Todo"
+                 ),
+                 candidate("subject-4",
+                   priority: 1,
+                   created_at: ~U[2026-05-10 10:03:00Z],
+                   state: "Todo"
+                 )
+               ],
+               running: running
+             })
+
+    assert override_plan.capacity.configured.states == %{"todo" => 2}
+
+    assert Enum.map(override_plan.events, &{&1.event_kind, &1.subject_id, &1.reason}) == [
+             {"work.claimed", "subject-3", "slot_available"},
+             {"capacity.slot_exhausted", "subject-4", "state_capacity_exhausted"}
+           ]
+  end
+
   test "enforces candidate eligibility rules before claiming work" do
     candidates = [
       candidate("subject-missing-title",
