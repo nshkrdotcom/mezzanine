@@ -171,7 +171,9 @@ defmodule Mezzanine.WorkProjectionFacts do
               compact_map(%{
                 source_ref: map_value(source_payload, :source_ref),
                 source_state: map_value(source_payload, :source_state),
-                blocker_refs: blocker_refs
+                blocker_refs: blocker_refs,
+                dispatch_eligible: false,
+                dispatch_preflight_reason: "non_terminal_dependency"
               })
           }
         ]
@@ -320,7 +322,10 @@ defmodule Mezzanine.WorkProjectionFacts do
           "Refresh the source issue after its blockers become terminal.",
           context.blocker_kinds,
           context.obligation_ids,
-          %{}
+          %{
+            dispatch_eligible: false,
+            dispatch_preflight_reason: "non_terminal_dependency"
+          }
         )
 
       "review_rejected" in blocker_kinds ->

@@ -287,6 +287,17 @@ defmodule Mezzanine.WorkControlTest do
     assert [%{"provider_external_ref" => "lin-issue-776"}] = detail.source_payload["blocker_refs"]
     assert detail.source_payload["state_mapping"]["reason"] == "blocked_by_non_terminal"
 
+    assert [%{blocker_kind: "source_blocked", metadata: blocker_metadata}] =
+             detail.blocking_conditions
+
+    assert blocker_metadata.dispatch_eligible == false
+    assert blocker_metadata.dispatch_preflight_reason == "non_terminal_dependency"
+    assert [%{"provider_external_ref" => "lin-issue-776"}] = blocker_metadata.blocker_refs
+    assert detail.next_step_preview.metadata.dispatch_eligible == false
+
+    assert detail.next_step_preview.metadata.dispatch_preflight_reason ==
+             "non_terminal_dependency"
+
     attrs = %{
       trace_id: "trace-source-payload",
       actor_ref: "ops_lead",
