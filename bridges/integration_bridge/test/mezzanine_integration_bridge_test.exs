@@ -519,6 +519,78 @@ defmodule Mezzanine.IntegrationBridgeTest do
              "lower-receipt://jido-attempt-codex/codex.session.turn/succeeded"
   end
 
+  test "Codex agent runtime uses caller supplied first prompt and redacts prompt readback" do
+    prompt = "Implement the governed first prompt path. SECRET_PROMPT_BODY_DO_NOT_EXPOSE"
+    prompt_hash = sha256(prompt)
+
+    attrs = %{
+      tenant_ref: "tenant://sample-app",
+      installation_ref: "installation://sample-app/codex",
+      subject_ref: "subject://sample-app/codex-first-prompt",
+      run_ref: "run://sample-app/codex-first-prompt",
+      trace_id: "trace://sample-app/codex-first-prompt",
+      idempotency_key: "idem-codex-first-prompt",
+      authority_context_ref: "authority-context://sample-app/codex-first-prompt",
+      initial_input_body: prompt,
+      initial_input_ref: "prompt://sample-app/task/first-turn",
+      initial_input_hash: prompt_hash,
+      initial_input_source_ref: "workflow://sample-app/default",
+      initial_input_rendered?: true,
+      initial_input_body_redacted?: true
+    }
+
+    invoke_fun = fn capability_id, input, opts ->
+      send(self(), {:codex_first_prompt_invoke, capability_id, input, opts})
+
+      {:ok,
+       %{
+         run: %{run_id: "jido-run-codex-first-prompt"},
+         attempt: %{attempt_id: "jido-attempt-codex-first-prompt"},
+         output: %{
+           text: "prompt received",
+           provider_session_id: "codex-provider-session-first-prompt",
+           provider_turn_id: "codex-provider-turn-first-prompt",
+           status: :completed
+         }
+       }}
+    end
+
+    assert {:ok, projection} =
+             CodexAgentRuntime.run(attrs,
+               invoke_fun: invoke_fun,
+               connection_id: "conn-codex",
+               start_runtime_router?: false,
+               register_connector?: false
+             )
+
+    assert_received {:codex_first_prompt_invoke, "codex.session.turn", input, opts}
+    assert input.prompt == prompt
+    assert Keyword.fetch!(opts, :connection_id) == "conn-codex"
+
+    assert [turn] = projection.turn_states
+    assert turn.first_prompt_confirmed? == true
+    assert turn.prompt_ref == "prompt://sample-app/task/first-turn"
+    assert turn.prompt_hash == prompt_hash
+    assert turn.prompt_source_ref == "workflow://sample-app/default"
+    assert turn.prompt_rendered? == true
+    assert turn.prompt_body_redacted? == true
+    assert turn.prompt_body_included? == false
+
+    prompt_evidence = projection.extensions["codex_first_prompt"]
+    assert prompt_evidence["confirmed?"] == true
+    assert prompt_evidence["prompt_ref"] == "prompt://sample-app/task/first-turn"
+    assert prompt_evidence["prompt_hash"] == prompt_hash
+    assert prompt_evidence["prompt_body_redacted?"] == true
+    assert prompt_evidence["prompt_body_included?"] == false
+    refute Map.has_key?(prompt_evidence, "prompt")
+    refute inspect(projection) =~ "SECRET_PROMPT_BODY_DO_NOT_EXPOSE"
+
+    assert Enum.any?(
+             projection.runtime_events,
+             &(&1.event_kind == "codex.first_prompt.confirmed")
+           )
+  end
+
   test "Codex agent runtime projects lower app-server session start evidence" do
     attrs = %{
       tenant_ref: "tenant://sample-app",
@@ -902,10 +974,15 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert projection.status == "completed"
 
     event_kinds = Enum.map(projection.runtime_events, & &1.event_kind)
-    assert event_kinds == ["run.terminal", "workspace.hook.after_run"]
+
+    assert event_kinds == [
+             "codex.first_prompt.confirmed",
+             "run.terminal",
+             "workspace.hook.after_run"
+           ]
 
     after_event = List.last(projection.runtime_events)
-    assert after_event.event_seq == 2
+    assert after_event.event_seq == 3
     assert [receipt] = after_event.extensions.hook_receipts
     assert receipt.stage == :after_run
     assert receipt.status == :failed
@@ -2560,6 +2637,11 @@ defmodule Mezzanine.IntegrationBridgeTest do
       ref: "head-sha",
       check_runs: [%{name: "mix ci", status: "completed", conclusion: "success"}]
     }
+  end
+
+  defp sha256(value) when is_binary(value) do
+    digest = :crypto.hash(:sha256, value)
+    "sha256:" <> Base.encode16(digest, case: :lower)
   end
 
   defp codex_agent_attrs do

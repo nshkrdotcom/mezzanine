@@ -244,18 +244,20 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
 
   defp codex_input(attrs, opts, workspace_root) do
     %{
-      prompt:
-        Keyword.get(
-          opts,
-          :prompt,
-          "Return one concise sentence confirming the governed Codex runtime path is operational. Do not modify files."
-        ),
+      prompt: first_turn_prompt(attrs, opts),
       cwd: workspace_root,
       provider_metadata: %{"app_server" => true, "skip_git_repo_check" => true},
       authority_metadata: authority_metadata(attrs),
       host_tools: []
     }
     |> put_present(:dynamic_tool_manifest, Keyword.get(opts, :dynamic_tool_manifest))
+  end
+
+  defp first_turn_prompt(attrs, opts) do
+    Keyword.get(opts, :prompt) ||
+      non_empty(map_value(attrs, :initial_input_body)) ||
+      non_empty(map_value(attrs, :prompt)) ||
+      "Return one concise sentence confirming the governed Codex runtime path is operational. Do not modify files."
   end
 
   defp codex_workspace_root(opts) do
@@ -298,6 +300,7 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
 
     lower_receipt_ref = lower_receipt_ref(attempt, lower_request_ref)
     session_start = result |> lower_runtime_events(opts) |> session_start_evidence(run_id)
+    first_prompt = first_prompt_evidence(attrs, input, lower_request_ref)
 
     app_server_protocol =
       app_server_protocol_evidence(
@@ -311,9 +314,14 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
     status = output_status(output)
     observed_at = DateTime.utc_now()
     session_start_event_count = if session_start, do: 1, else: 0
+    first_prompt_event_count = if first_prompt, do: 1, else: 0
     app_server_protocol_event_count = if app_server_protocol, do: 1, else: 0
-    app_server_protocol_event_seq = session_start_event_count + 1
-    terminal_event_seq = session_start_event_count + app_server_protocol_event_count + 1
+    first_prompt_event_seq = session_start_event_count + 1
+    app_server_protocol_event_seq = session_start_event_count + first_prompt_event_count + 1
+
+    terminal_event_seq =
+      session_start_event_count + first_prompt_event_count + app_server_protocol_event_count + 1
+
     after_run_event_seq = terminal_event_seq + 1
 
     %{
@@ -336,10 +344,12 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
           lower_receipt_ref: lower_receipt_ref
         }
         |> Map.merge(session_start_turn_fields(session_start))
+        |> Map.merge(first_prompt_turn_fields(first_prompt))
         |> Map.merge(app_server_protocol_turn_fields(app_server_protocol))
       ],
       extensions:
         session_start_extensions(session_start)
+        |> Map.merge(first_prompt_extensions(first_prompt))
         |> Map.merge(app_server_protocol_extensions(app_server_protocol)),
       action_receipts:
         session_start_action_receipts(session_start) ++
@@ -361,6 +371,14 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
           before_run_receipts
         ) ++
           session_start_runtime_events(session_start, attrs, workflow_ref, turn_ref, observed_at) ++
+          first_prompt_runtime_events(
+            first_prompt,
+            attrs,
+            workflow_ref,
+            turn_ref,
+            observed_at,
+            first_prompt_event_seq
+          ) ++
           app_server_protocol_runtime_events(
             app_server_protocol,
             attrs,
@@ -585,6 +603,159 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
   defp session_start_lower_receipt_ref(nil), do: nil
   defp session_start_lower_receipt_ref(evidence), do: evidence.lower_receipt_ref
 
+  defp first_prompt_evidence(attrs, input, lower_request_ref) do
+    input
+    |> map_value(:prompt)
+    |> first_prompt_evidence_for_prompt(attrs, lower_request_ref)
+  end
+
+  defp first_prompt_evidence_for_prompt(prompt, _attrs, _lower_request_ref)
+       when not is_binary(prompt),
+       do: nil
+
+  defp first_prompt_evidence_for_prompt(prompt, attrs, lower_request_ref) do
+    case present_binary?(prompt) do
+      true -> build_first_prompt_evidence(prompt, attrs, lower_request_ref)
+      false -> nil
+    end
+  end
+
+  defp build_first_prompt_evidence(prompt, attrs, lower_request_ref) do
+    computed_hash = prompt_hash(prompt)
+    hash = first_prompt_hash(attrs, computed_hash)
+    caller_supplied? = present_binary?(map_value(attrs, :initial_input_body))
+
+    %{
+      confirmed?: true,
+      prompt_ref: first_prompt_ref(attrs),
+      prompt_hash: hash,
+      prompt_hash_verified?: hash == computed_hash,
+      prompt_source_ref: first_prompt_source_ref(attrs),
+      prompt_rendered?: first_prompt_rendered?(attrs, caller_supplied?),
+      prompt_body_redacted?: true,
+      prompt_body_included?: false,
+      prompt_source: first_prompt_source(caller_supplied?),
+      lower_request_ref: lower_request_ref
+    }
+    |> compact_map()
+  end
+
+  defp first_prompt_hash(attrs, computed_hash) do
+    case first_non_empty(attrs, [:initial_input_hash, :prompt_hash]) do
+      nil -> computed_hash
+      hash -> hash
+    end
+  end
+
+  defp first_prompt_ref(attrs),
+    do: first_non_empty(attrs, [:initial_input_ref, :prompt_ref, :objective])
+
+  defp first_prompt_source_ref(attrs),
+    do: first_non_empty(attrs, [:initial_input_source_ref, :prompt_source_ref])
+
+  defp first_prompt_rendered?(attrs, caller_supplied?) do
+    [
+      caller_supplied?
+      | Enum.map([:initial_input_rendered?, :prompt_rendered?], &truthy?(map_value(attrs, &1)))
+    ]
+    |> Enum.any?()
+  end
+
+  defp first_prompt_source(true), do: "caller_supplied"
+  defp first_prompt_source(false), do: "runtime_default"
+
+  defp first_non_empty(attrs, keys) do
+    Enum.find_value(keys, &non_empty(map_value(attrs, &1)))
+  end
+
+  defp first_prompt_extensions(nil), do: %{}
+
+  defp first_prompt_extensions(evidence) do
+    %{
+      "codex_first_prompt" =>
+        %{
+          "confirmed?" => evidence.confirmed?,
+          "prompt_ref" => map_value(evidence, :prompt_ref),
+          "prompt_hash" => map_value(evidence, :prompt_hash),
+          "prompt_hash_verified?" => map_value(evidence, :prompt_hash_verified?),
+          "prompt_source_ref" => map_value(evidence, :prompt_source_ref),
+          "prompt_rendered?" => map_value(evidence, :prompt_rendered?),
+          "prompt_body_redacted?" => map_value(evidence, :prompt_body_redacted?),
+          "prompt_body_included?" => map_value(evidence, :prompt_body_included?),
+          "prompt_source" => map_value(evidence, :prompt_source),
+          "lower_request_ref" => map_value(evidence, :lower_request_ref)
+        }
+        |> compact_map()
+    }
+  end
+
+  defp first_prompt_turn_fields(nil), do: %{}
+
+  defp first_prompt_turn_fields(evidence) do
+    %{
+      first_prompt_confirmed?: evidence.confirmed?,
+      prompt_ref: map_value(evidence, :prompt_ref),
+      prompt_hash: map_value(evidence, :prompt_hash),
+      prompt_hash_verified?: map_value(evidence, :prompt_hash_verified?),
+      prompt_source_ref: map_value(evidence, :prompt_source_ref),
+      prompt_rendered?: map_value(evidence, :prompt_rendered?),
+      prompt_body_redacted?: map_value(evidence, :prompt_body_redacted?),
+      prompt_body_included?: map_value(evidence, :prompt_body_included?),
+      prompt_source: map_value(evidence, :prompt_source),
+      first_prompt_lower_request_ref: map_value(evidence, :lower_request_ref)
+    }
+    |> compact_map()
+  end
+
+  defp first_prompt_runtime_events(
+         nil,
+         _attrs,
+         _workflow_ref,
+         _turn_ref,
+         _observed_at,
+         _event_seq
+       ),
+       do: []
+
+  defp first_prompt_runtime_events(
+         evidence,
+         attrs,
+         workflow_ref,
+         turn_ref,
+         observed_at,
+         event_seq
+       ) do
+    [
+      %{
+        event_ref:
+          "event://codex-agent-runtime/#{ref_suffix(map_value(attrs, :run_ref))}/first-prompt",
+        event_seq: event_seq,
+        event_kind: "codex.first_prompt.confirmed",
+        observed_at: observed_at,
+        tenant_ref: map_value(attrs, :tenant_id) || map_value(attrs, :tenant_ref),
+        subject_ref: map_value(attrs, :subject_ref),
+        run_ref: map_value(attrs, :run_ref),
+        workflow_ref: workflow_ref,
+        turn_ref: turn_ref,
+        level: "info",
+        message_summary: "codex first prompt confirmed",
+        extensions:
+          %{
+            prompt_ref: map_value(evidence, :prompt_ref),
+            prompt_hash: map_value(evidence, :prompt_hash),
+            prompt_hash_verified?: map_value(evidence, :prompt_hash_verified?),
+            prompt_source_ref: map_value(evidence, :prompt_source_ref),
+            prompt_rendered?: map_value(evidence, :prompt_rendered?),
+            prompt_body_redacted?: map_value(evidence, :prompt_body_redacted?),
+            prompt_body_included?: map_value(evidence, :prompt_body_included?),
+            prompt_source: map_value(evidence, :prompt_source),
+            lower_request_ref: map_value(evidence, :lower_request_ref)
+          }
+          |> compact_map()
+      }
+    ]
+  end
+
   defp app_server_protocol_evidence(
          input,
          output,
@@ -798,6 +969,11 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
     |> Base.encode16(case: :lower)
   end
 
+  defp prompt_hash(prompt) when is_binary(prompt) do
+    digest = :crypto.hash(:sha256, prompt)
+    "sha256:" <> Base.encode16(digest, case: :lower)
+  end
+
   defp normalize(%_{} = struct), do: struct |> Map.from_struct() |> normalize()
   defp normalize(attrs) when is_map(attrs), do: attrs
   defp normalize(attrs) when is_list(attrs), do: Map.new(attrs)
@@ -817,10 +993,25 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
   defp compact_list(list), do: Enum.reject(list, &is_nil/1)
 
   defp map_value(%_{} = struct, key), do: struct |> Map.from_struct() |> map_value(key)
-  defp map_value(%{} = map, key), do: Map.get(map, key) || Map.get(map, Atom.to_string(key))
+
+  defp map_value(%{} = map, key) when is_atom(key) do
+    case Map.fetch(map, key) do
+      {:ok, nil} -> Map.get(map, Atom.to_string(key))
+      {:ok, value} -> value
+      :error -> Map.get(map, Atom.to_string(key))
+    end
+  end
+
+  defp map_value(%{} = map, key) when is_binary(key), do: Map.get(map, key)
   defp map_value(_value, _key), do: nil
 
   defp present_binary?(value), do: is_binary(value) and String.trim(value) != ""
+
+  defp non_empty(value) when is_binary(value) do
+    if String.trim(value) == "", do: nil, else: value
+  end
+
+  defp non_empty(_value), do: nil
 
   defp truthy?(value), do: value in [true, "true", "1", 1, true]
 
