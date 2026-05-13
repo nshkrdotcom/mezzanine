@@ -71,7 +71,11 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     :installation_revision,
     :intent_id,
     :incident_bundles,
+    :last_activity_at,
+    :last_codex_timestamp,
+    :last_event_at,
     :last_receipt_ref,
+    :last_runtime_event_at,
     :lower_attempt_ref,
     :lower_event_ref,
     :lower_envelope,
@@ -112,6 +116,9 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     :runtime_profile_ref,
     :rate_limit,
     :retry,
+    :retry_after_ms,
+    :retry_due_at,
+    :retry_ref,
     :retry_receipts,
     :sandbox_profile_ref,
     :script_refs,
@@ -127,6 +134,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     :source_terminal?,
     :source_terminal,
     :source_visible?,
+    :started_at,
     :stall_timeout_ms,
     :status,
     :subject_id,
@@ -172,6 +180,8 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     :input_hash,
     :input_ref,
     :network_policy_ref,
+    :next_attempt_ref,
+    :now,
     :placement_ref,
     :policy_bundle_hash,
     :policy_bundle_ref,
@@ -673,6 +683,38 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     end
   end
 
+  @doc "Deterministically maps runtime inactivity into a retry-safe stall decision."
+  @spec runtime_stall_decision(map() | keyword()) :: {:continue | :retry, map()}
+  def runtime_stall_decision(attrs) do
+    attrs = normalize(attrs)
+    timeout_ms = integer_value(Map.get(attrs, :stall_timeout_ms))
+
+    cond do
+      not (is_integer(timeout_ms) and timeout_ms > 0) ->
+        {:continue,
+         attrs
+         |> stall_common_fields(timeout_ms)
+         |> Map.merge(%{
+           reason: :stall_detection_disabled,
+           enabled?: false,
+           stalled?: false
+         })}
+
+      is_nil(normalize_timestamp(Map.get(attrs, :now))) ->
+        {:continue,
+         attrs
+         |> stall_common_fields(timeout_ms)
+         |> Map.merge(%{
+           reason: :stall_clock_missing,
+           enabled?: true,
+           stalled?: false
+         })}
+
+      true ->
+        runtime_stall_decision(attrs, timeout_ms)
+    end
+  end
+
   @doc "Maps source refresh drift into replay-safe workflow control decisions."
   @spec source_reconciliation_decision(map() | keyword()) ::
           {:cancel | :finalize | :continue, map()}
@@ -772,6 +814,155 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
       cleanup_required?: cleanup_required?
     }
   end
+
+  defp runtime_stall_decision(attrs, timeout_ms) do
+    now = normalize_timestamp(Map.fetch!(attrs, :now))
+
+    case latest_runtime_activity(attrs) do
+      nil ->
+        {:continue,
+         attrs
+         |> stall_common_fields(timeout_ms)
+         |> Map.merge(%{
+           reason: :runtime_activity_unknown,
+           enabled?: true,
+           stalled?: false
+         })}
+
+      {last_activity_at, activity_source} ->
+        elapsed_ms = max(DateTime.diff(now, last_activity_at, :millisecond), 0)
+
+        if elapsed_ms > timeout_ms do
+          {:retry,
+           stalled_runtime_fields(
+             attrs,
+             timeout_ms,
+             elapsed_ms,
+             last_activity_at,
+             activity_source
+           )}
+        else
+          {:continue,
+           attrs
+           |> stall_common_fields(timeout_ms)
+           |> Map.merge(%{
+             reason: :runtime_active,
+             enabled?: true,
+             stalled?: false,
+             elapsed_ms: elapsed_ms,
+             last_activity_at: DateTime.to_iso8601(last_activity_at),
+             activity_source: activity_source
+           })}
+        end
+    end
+  end
+
+  defp stalled_runtime_fields(attrs, timeout_ms, elapsed_ms, last_activity_at, activity_source) do
+    attrs
+    |> stall_common_fields(timeout_ms)
+    |> Map.merge(%{
+      reason: :stall_timeout,
+      safe_action: :terminate_lower_and_schedule_retry,
+      runtime_state: "stalled",
+      status_reason: "stall_timeout",
+      workflow_signal: "operator.cancel",
+      cancel_lower_run?: true,
+      cleanup_workspace?: false,
+      retry?: true,
+      stalled?: true,
+      enabled?: true,
+      elapsed_ms: elapsed_ms,
+      last_activity_at: DateTime.to_iso8601(last_activity_at),
+      activity_source: activity_source,
+      retry: stall_retry_fields(attrs),
+      diagnostic: %{
+        severity: :warning,
+        code: "runtime_stall_timeout",
+        message: "runtime activity exceeded stall timeout"
+      }
+    })
+  end
+
+  defp stall_common_fields(attrs, timeout_ms) do
+    %{
+      run_ref: Map.get(attrs, :run_ref),
+      session_ref: Map.get(attrs, :session_ref),
+      attempt_ref: Map.get(attrs, :attempt_ref),
+      worker_ref: Map.get(attrs, :worker_ref),
+      stall_timeout_ms: timeout_ms
+    }
+    |> Map.reject(fn {_key, value} -> is_nil(value) end)
+  end
+
+  defp stall_retry_fields(attrs) do
+    %{
+      retry_ref: Map.get(attrs, :retry_ref),
+      attempt_ref: Map.get(attrs, :next_attempt_ref) || Map.get(attrs, :attempt_ref),
+      status: "scheduled",
+      reason: "stall_timeout",
+      due_at: retry_due_at(attrs),
+      delay_ms: integer_value(Map.get(attrs, :retry_after_ms)),
+      delay_type: "failure_backoff",
+      worker_ref: Map.get(attrs, :worker_ref),
+      workspace_ref: Map.get(attrs, :workspace_ref)
+    }
+    |> Map.reject(fn {_key, value} -> is_nil(value) end)
+  end
+
+  defp retry_due_at(attrs) do
+    case {Map.get(attrs, :retry_due_at), integer_value(Map.get(attrs, :retry_after_ms)),
+          normalize_timestamp(Map.get(attrs, :now))} do
+      {due_at, _delay_ms, _now} when is_binary(due_at) ->
+        due_at
+
+      {%DateTime{} = due_at, _delay_ms, _now} ->
+        DateTime.to_iso8601(due_at)
+
+      {nil, delay_ms, %DateTime{} = now} when is_integer(delay_ms) and delay_ms >= 0 ->
+        now |> DateTime.add(delay_ms, :millisecond) |> DateTime.to_iso8601()
+
+      _other ->
+        nil
+    end
+  end
+
+  defp latest_runtime_activity(attrs) do
+    [
+      {:last_runtime_event_at, "last_runtime_event_at"},
+      {:last_codex_timestamp, "last_codex_timestamp"},
+      {:last_event_at, "last_event_at"},
+      {:last_activity_at, "last_activity_at"},
+      {:started_at, "started_at"}
+    ]
+    |> Enum.find_value(fn {key, source} ->
+      case normalize_timestamp(Map.get(attrs, key)) do
+        %DateTime{} = timestamp -> {timestamp, source}
+        nil -> nil
+      end
+    end)
+  end
+
+  defp normalize_timestamp(%DateTime{} = timestamp), do: timestamp
+
+  defp normalize_timestamp(value) when is_binary(value) do
+    case DateTime.from_iso8601(value) do
+      {:ok, timestamp, _offset} -> timestamp
+      {:error, _reason} -> nil
+    end
+  end
+
+  defp normalize_timestamp(_value), do: nil
+
+  defp integer_value(value) when is_integer(value), do: value
+
+  defp integer_value(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {integer, ""} -> integer
+      _other -> nil
+    end
+  end
+
+  defp integer_value(_value), do: nil
 
   defp source_reconciliation_terminal?(attrs) do
     Map.get(attrs, :source_terminal?) == true or

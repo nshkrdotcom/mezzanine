@@ -735,6 +735,70 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
              })
   end
 
+  test "runtime stall decision maps activity timeout into retry-safe worker termination" do
+    now = ~U[2026-05-13 00:10:00Z]
+
+    assert {:continue, fresh} =
+             ExecutionLifecycleWorkflow.runtime_stall_decision(%{
+               now: now,
+               started_at: ~U[2026-05-13 00:00:00Z],
+               last_runtime_event_at: ~U[2026-05-13 00:09:40Z],
+               stall_timeout_ms: 60_000,
+               run_ref: "run://neutral/fresh",
+               session_ref: "session://neutral/fresh",
+               attempt_ref: "attempt://neutral/fresh/1"
+             })
+
+    assert fresh.reason == :runtime_active
+    assert fresh.stalled? == false
+    assert fresh.elapsed_ms == 20_000
+    assert fresh.activity_source == "last_runtime_event_at"
+
+    assert {:continue, disabled} =
+             ExecutionLifecycleWorkflow.runtime_stall_decision(%{
+               now: now,
+               started_at: ~U[2026-05-13 00:00:00Z],
+               stall_timeout_ms: 0,
+               run_ref: "run://neutral/disabled"
+             })
+
+    assert disabled.reason == :stall_detection_disabled
+    assert disabled.enabled? == false
+
+    assert {:retry, stalled} =
+             ExecutionLifecycleWorkflow.runtime_stall_decision(%{
+               now: now,
+               started_at: ~U[2026-05-13 00:01:00Z],
+               last_runtime_event_at: ~U[2026-05-13 00:04:30Z],
+               stall_timeout_ms: 300_000,
+               run_ref: "run://neutral/stalled",
+               session_ref: "session://neutral/stalled",
+               attempt_ref: "attempt://neutral/stalled/1",
+               next_attempt_ref: "attempt://neutral/stalled/2",
+               retry_ref: "retry://neutral/stalled/2",
+               retry_due_at: "2026-05-13T00:10:10Z"
+             })
+
+    assert stalled.reason == :stall_timeout
+    assert stalled.safe_action == :terminate_lower_and_schedule_retry
+    assert stalled.runtime_state == "stalled"
+    assert stalled.workflow_signal == "operator.cancel"
+    assert stalled.cancel_lower_run? == true
+    assert stalled.cleanup_workspace? == false
+    assert stalled.elapsed_ms == 330_000
+    assert stalled.stall_timeout_ms == 300_000
+    assert stalled.last_activity_at == "2026-05-13T00:04:30Z"
+    assert stalled.activity_source == "last_runtime_event_at"
+    assert stalled.session_ref == "session://neutral/stalled"
+    assert stalled.attempt_ref == "attempt://neutral/stalled/1"
+    assert stalled.retry.status == "scheduled"
+    assert stalled.retry.reason == "stall_timeout"
+    assert stalled.retry.retry_ref == "retry://neutral/stalled/2"
+    assert stalled.retry.attempt_ref == "attempt://neutral/stalled/2"
+    assert stalled.retry.due_at == "2026-05-13T00:10:10Z"
+    assert stalled.diagnostic.code == "runtime_stall_timeout"
+  end
+
   test "source reconciliation decisions map source drift to workflow cancellation semantics" do
     assert {:cancel, missing} =
              ExecutionLifecycleWorkflow.source_reconciliation_decision(%{source_visible?: false})
