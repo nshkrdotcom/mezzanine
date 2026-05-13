@@ -8,6 +8,7 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStart do
   alias Ecto.Adapters.SQL
   alias Mezzanine.Execution.{DispatchState, ExecutionRecord, Repo}
   alias Mezzanine.Telemetry
+  alias Mezzanine.WorkspaceEngine.{Cleanup, WorkspaceRecord}
 
   require Logger
 
@@ -290,15 +291,21 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStart do
   end
 
   defp default_workspace_cleanup(candidate) do
-    {:ok,
-     %{
-       receipt_ref:
-         "cleanup-receipt://#{candidate.identifier || candidate.workspace_ref || "unknown"}/skipped",
-       workspace_ref: candidate.workspace_ref,
-       status: "skipped",
-       reason: "workspace_cleanup_not_configured",
-       path_redacted?: true
-     }}
+    case candidate.workspace_record do
+      %WorkspaceRecord{} = workspace ->
+        Cleanup.remove(workspace)
+
+      _other ->
+        {:ok,
+         %{
+           receipt_ref:
+             "cleanup-receipt://#{candidate.identifier || candidate.workspace_ref || "unknown"}/skipped",
+           workspace_ref: candidate.workspace_ref,
+           status: "skipped",
+           reason: "workspace_cleanup_not_configured",
+           path_redacted?: true
+         }}
+    end
   end
 
   defp normalize_candidate(%_{} = candidate),
@@ -312,13 +319,23 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStart do
       subject_id: value(candidate, :subject_id),
       source_ref: value(candidate, :source_ref),
       identifier: value(candidate, :identifier) || value(candidate, :source_identifier),
-      workspace_ref: value(candidate, :workspace_ref)
+      workspace_ref: value(candidate, :workspace_ref),
+      workspace_record: workspace_record(value(candidate, :workspace_record))
     }
   end
 
   defp normalize_candidate(candidate) do
-    %{subject_id: nil, source_ref: nil, identifier: to_string(candidate), workspace_ref: nil}
+    %{
+      subject_id: nil,
+      source_ref: nil,
+      identifier: to_string(candidate),
+      workspace_ref: nil,
+      workspace_record: nil
+    }
   end
+
+  defp workspace_record(%WorkspaceRecord{} = record), do: record
+  defp workspace_record(_other), do: nil
 
   defp normalize_receipt(%_{} = receipt, candidate),
     do: receipt |> Map.from_struct() |> normalize_receipt(candidate)

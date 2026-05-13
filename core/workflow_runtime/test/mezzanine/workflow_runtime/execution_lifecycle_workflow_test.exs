@@ -3,6 +3,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
   use Temporalex.Testing
 
   alias Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow
+  alias Mezzanine.WorkspaceEngine.Allocator
   alias Mezzanine.Workflows.ExecutionAttempt
 
   defmodule QueryRuntime do
@@ -408,6 +409,46 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     assert {:ok, review} = ExecutionLifecycleWorkflow.create_review_activity(terminal_attrs)
     assert review.owner_repo == :mezzanine
     assert review.review_ref == "review://workflow-093/lower-receipt-095"
+  end
+
+  test "cleanup workspace activity removes workspace records through workspace engine" do
+    root = tmp_dir("workflow-runtime-terminal-cleanup")
+
+    assert {:ok, workspace} =
+             Allocator.reserve(%{
+               installation_id: "installation-main",
+               subject_id: "subject-093",
+               subject_ref: "subject-093",
+               workspace_root: root,
+               cleanup_policy: :on_terminal
+             })
+
+    File.write!(Path.join(workspace.concrete_path, "artifact.txt"), "terminal")
+
+    attrs =
+      lifecycle_attrs()
+      |> Map.merge(%{
+        terminal_state: "completed",
+        terminal_event_ref: "workflow-event-terminal",
+        lower_receipt_ref: "lower-receipt-095",
+        workspace_record: workspace
+      })
+
+    assert {:ok, cleanup} = ExecutionLifecycleWorkflow.cleanup_workspace_activity(attrs)
+
+    assert cleanup.owner_repo == :mezzanine
+    assert cleanup.workspace_ref == "workspace-main"
+    assert cleanup.cleanup_status == :removed
+    assert cleanup.cleanup_removed? == true
+    assert cleanup.cleanup_receipt.path_redacted? == true
+
+    assert String.starts_with?(
+             cleanup.cleanup_receipt_ref,
+             "cleanup-receipt://#{workspace.workspace_id}/removed/"
+           )
+
+    refute File.exists?(workspace.concrete_path)
+    refute inspect(cleanup) =~ root
   end
 
   test "materialize evidence activity carries GitHub PR evidence refs when supplied" do
@@ -953,6 +994,18 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
       receipt_reducer: FakeReceiptReducer,
       workflow_runtime_impl: QueryRuntime
     }
+  end
+
+  defp tmp_dir(prefix) do
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "#{prefix}-#{System.unique_integer([:positive])}"
+      )
+
+    File.rm_rf!(path)
+    File.mkdir_p!(path)
+    path
   end
 
   defp restore_app_env(app, key, nil), do: Application.delete_env(app, key)

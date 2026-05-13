@@ -85,6 +85,7 @@ defmodule MezzanineRuntimeScheduler.MixProject do
       {:mezzanine_object_engine, path: "../object_engine"},
       {:mezzanine_execution_engine, path: "../execution_engine"},
       {:mezzanine_lifecycle_engine, path: "../lifecycle_engine"},
+      {:mezzanine_workspace_engine, path: "../workspace_engine"},
       {:ash, "~> 3.24"},
       {:ash_postgres, "~> 2.6"},
       {:telemetry, "~> 1.3"},

@@ -3,6 +3,7 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStartTest do
 
   alias Mezzanine.Execution.{ExecutionRecord, Repo}
   alias Mezzanine.RuntimeScheduler.ReconcileOnStart
+  alias Mezzanine.WorkspaceEngine.Allocator
 
   test "records Temporal handoff recovery for stranded dispatch rows without Oban dispatch jobs" do
     telemetry_ids = attach_telemetry([[:mezzanine, :dispatch, :ambiguous]])
@@ -191,6 +192,50 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStartTest do
            ]
   end
 
+  test "default terminal cleanup removes workspace records through workspace engine" do
+    root = tmp_dir("runtime-scheduler-terminal-cleanup")
+
+    assert {:ok, workspace} =
+             Allocator.reserve(%{
+               installation_id: "inst-1",
+               subject_id: "subject-terminal-real",
+               subject_ref: "linear:terminal-real",
+               workspace_root: root,
+               cleanup_policy: :on_terminal
+             })
+
+    File.write!(Path.join(workspace.concrete_path, "artifact.txt"), "terminal")
+    now = DateTime.add(DateTime.utc_now(), 18, :second)
+
+    assert {:ok, summary} =
+             ReconcileOnStart.reconcile("inst-1", now,
+               terminal_cleanup_candidates: [
+                 %{
+                   subject_id: "subject-terminal-real",
+                   source_ref: "source://ticket/terminal-real",
+                   identifier: "T-300",
+                   workspace_ref: "workspace://terminal-real",
+                   workspace_record: workspace
+                 }
+               ]
+             )
+
+    assert summary.terminal_cleanup_status == "completed"
+    assert summary.terminal_cleanup_candidate_count == 1
+    assert summary.terminal_cleanup_cleaned_count == 1
+    assert summary.terminal_cleanup_skipped_count == 0
+    assert summary.terminal_cleanup_failed_count == 0
+    assert [receipt_ref] = summary.terminal_cleanup_receipt_refs
+
+    assert String.starts_with?(
+             receipt_ref,
+             "cleanup-receipt://#{workspace.workspace_id}/removed/"
+           )
+
+    refute File.exists?(workspace.concrete_path)
+    refute inspect(summary) =~ root
+  end
+
   test "terminal cleanup fetch failure warns and preserves startup recovery" do
     telemetry_ids =
       attach_telemetry([
@@ -363,6 +408,18 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStartTest do
   end
 
   defp unique_name(prefix), do: "#{prefix}:#{System.unique_integer([:positive])}"
+
+  defp tmp_dir(prefix) do
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "#{prefix}-#{System.unique_integer([:positive])}"
+      )
+
+    File.rm_rf!(path)
+    File.mkdir_p!(path)
+    path
+  end
 
   defp attach_telemetry(events) do
     Enum.map(events, fn event ->

@@ -13,6 +13,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
   alias Mezzanine.WorkflowReceiptSignal
   alias Mezzanine.WorkflowSignalReceipt
   alias Mezzanine.WorkflowTerminalReceiptPolicy
+  alias Mezzanine.WorkspaceEngine.{Cleanup, WorkspaceRecord}
 
   @release_manifest_ref "phase4-v6-milestone27-execution-lifecycle-workflow"
   @workflow_contract "Mezzanine.WorkflowExecutionLifecycleInput.v1"
@@ -427,21 +428,48 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
 
     case missing_required(attrs, [:workflow_id, :workspace_ref, :trace_id, :release_manifest_ref]) do
       [] ->
-        {:ok,
-         %{
-           activity: :cleanup_workspace,
-           activity_call_ref: "activity://#{attrs.workflow_id}/cleanup-workspace",
-           owner_repo: :mezzanine,
-           workspace_ref: attrs.workspace_ref,
-           cleanup_policy: Map.get(attrs, :workspace_cleanup_policy, "terminal_policy"),
-           trace_id: attrs.trace_id,
-           release_manifest_ref: attrs.release_manifest_ref,
-           result_ref: "workspace-cleanup://#{attrs.workflow_id}/#{attrs.workspace_ref}"
-         }}
+        result =
+          %{
+            activity: :cleanup_workspace,
+            activity_call_ref: "activity://#{attrs.workflow_id}/cleanup-workspace",
+            owner_repo: :mezzanine,
+            workspace_ref: attrs.workspace_ref,
+            cleanup_policy: Map.get(attrs, :workspace_cleanup_policy, "terminal_policy"),
+            trace_id: attrs.trace_id,
+            release_manifest_ref: attrs.release_manifest_ref,
+            result_ref: "workspace-cleanup://#{attrs.workflow_id}/#{attrs.workspace_ref}"
+          }
+          |> Map.merge(cleanup_workspace_result(attrs))
+
+        {:ok, result}
 
       missing ->
         {:error, {:missing_required_fields, missing}}
     end
+  end
+
+  defp cleanup_workspace_result(%{workspace_record: %WorkspaceRecord{} = workspace}) do
+    case Cleanup.remove(workspace) do
+      {:ok, receipt} ->
+        cleanup_receipt_fields(receipt)
+
+      {:error, {kind, receipt}} ->
+        receipt
+        |> cleanup_receipt_fields()
+        |> Map.put(:cleanup_error, kind)
+    end
+  end
+
+  defp cleanup_workspace_result(_attrs), do: %{}
+
+  defp cleanup_receipt_fields(receipt) do
+    %{
+      cleanup_receipt: receipt,
+      cleanup_receipt_ref: receipt.receipt_ref,
+      cleanup_status: receipt.status,
+      cleanup_removed?: receipt.removed?,
+      path_redacted?: receipt.path_redacted?
+    }
   end
 
   @doc "Terminal source publication activity result."

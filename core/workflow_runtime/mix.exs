@@ -53,6 +53,7 @@ defmodule MezzanineWorkflowRuntime.MixProject do
     [
       {:mezzanine_core, path: "../mezzanine_core"},
       {:mezzanine_citadel_bridge, path: "../../bridges/citadel_bridge"},
+      {:mezzanine_workspace_engine, path: "../workspace_engine"},
       DependencySources.dep(:ground_plane_persistence_policy, @repo_root, override: true),
       DependencySources.dep(:temporalex, @repo_root),
       {:ecto_sql, "~> 3.13"},
