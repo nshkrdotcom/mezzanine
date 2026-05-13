@@ -86,7 +86,7 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
          current_state_dispatches: dispatches,
          source_current_state: normalized
        }
-       |> annotate_provider_effect(opts)
+       |> annotate_current_state_provider_effect(dispatches, opts)
        |> maybe_put(:viewer_resolution, viewer_dispatch)}
     end
   end
@@ -221,6 +221,7 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
         with {:ok, viewer_dispatch} <-
                dispatch_linear(invocation, "linear.users.get_self", %{}, opts),
              {:ok, viewer} <- viewer_from_dispatch(viewer_dispatch),
+             viewer_dispatch <- annotate_provider_effect(viewer_dispatch, opts),
              viewer_opts <- Keyword.put(opts, :viewer, viewer),
              {:ok, input} <- LinearSourceFlow.candidate_fetch_input(source_binding, viewer_opts) do
           {:ok, input, viewer_opts, viewer_dispatch}
@@ -235,7 +236,8 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
     if assignee_me_filter?(source_binding) and not Keyword.has_key?(opts, :viewer) do
       with {:ok, viewer_dispatch} <-
              dispatch_linear(invocation, "linear.users.get_self", %{}, opts),
-           {:ok, viewer} <- viewer_from_dispatch(viewer_dispatch) do
+           {:ok, viewer} <- viewer_from_dispatch(viewer_dispatch),
+           viewer_dispatch <- annotate_provider_effect(viewer_dispatch, opts) do
         {:ok, Keyword.put(opts, :viewer, viewer), viewer_dispatch}
       end
     else
@@ -362,6 +364,26 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
     |> maybe_put(:credential_redeemed?, Keyword.get(opts, :credential_redeemed?))
     |> maybe_put(:lower_request_ref, lower_request_ref(dispatch))
     |> maybe_put(:lower_receipt_ref, lower_receipt_ref(dispatch))
+  end
+
+  defp annotate_current_state_provider_effect(result, [first_dispatch | _rest], opts) do
+    first_dispatch
+    |> annotate_provider_effect(opts)
+    |> Map.take([
+      :credential_redeemed?,
+      :provider_request_sent?,
+      :provider_response_received?,
+      :lower_request_ref,
+      :lower_receipt_ref
+    ])
+    |> Map.merge(result)
+  end
+
+  defp annotate_current_state_provider_effect(result, [], opts) do
+    result
+    |> Map.put(:provider_request_sent?, false)
+    |> Map.put(:provider_response_received?, false)
+    |> maybe_put(:credential_redeemed?, Keyword.get(opts, :credential_redeemed?))
   end
 
   defp lower_request_ref(dispatch) do

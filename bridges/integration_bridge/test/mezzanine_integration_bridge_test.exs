@@ -640,6 +640,10 @@ defmodule Mezzanine.IntegrationBridgeTest do
                      %{filter: %{assignee_id: "usr-linear-viewer"}}}
 
     assert result.viewer_resolution.output.user.id == "usr-linear-viewer"
+    assert result.viewer_resolution.provider_request_sent? == true
+    assert result.viewer_resolution.provider_response_received? == true
+    assert is_binary(result.viewer_resolution.lower_request_ref)
+    assert is_binary(result.viewer_resolution.lower_receipt_ref)
     assert [%{lifecycle_state: "submitted"}] = result.source_intake.subject_attrs
   end
 
@@ -680,6 +684,10 @@ defmodule Mezzanine.IntegrationBridgeTest do
            ]
 
     assert result.source_current_state.missing_issue_ids == ["lin-issue-777"]
+    assert result.provider_request_sent? == true
+    assert result.provider_response_received? == true
+    assert is_binary(result.lower_request_ref)
+    assert is_binary(result.lower_receipt_ref)
   end
 
   test "Linear issue refresh normalizes provider output into source subject attrs" do
