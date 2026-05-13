@@ -125,6 +125,167 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStartTest do
     assert Repo.aggregate(Oban.Job, :count, :id) == 0
   end
 
+  test "runs terminal cleanup candidates during startup and reports redacted counts" do
+    telemetry_ids = attach_telemetry([[:mezzanine, :startup, :terminal_cleanup, :completed]])
+    now = DateTime.add(DateTime.utc_now(), 15, :second)
+
+    candidates = [
+      %{
+        subject_id: "subject-terminal-a",
+        source_ref: "source://ticket/terminal-a",
+        identifier: "T-100",
+        workspace_ref: "workspace://terminal-a"
+      },
+      %{
+        subject_id: "subject-terminal-b",
+        source_ref: "source://ticket/terminal-b",
+        identifier: "T-101",
+        workspace_ref: "workspace://terminal-b"
+      }
+    ]
+
+    cleanup_fun = fn candidate ->
+      send(self(), {:cleanup_called, candidate.identifier, candidate.workspace_ref})
+
+      {:ok,
+       %{
+         receipt_ref: "cleanup-receipt://#{candidate.identifier}",
+         workspace_ref: candidate.workspace_ref,
+         status: "removed",
+         path_redacted?: true
+       }}
+    end
+
+    summary =
+      try do
+        assert {:ok, summary} =
+                 ReconcileOnStart.reconcile("inst-1", now,
+                   terminal_cleanup_candidates: candidates,
+                   workspace_cleanup_fun: cleanup_fun
+                 )
+
+        assert_receive {:telemetry_event, [:mezzanine, :startup, :terminal_cleanup, :completed],
+                        %{count: 2}, metadata}
+
+        assert metadata.event_name == "startup.terminal_cleanup.completed"
+        assert metadata.installation_id == "inst-1"
+        assert metadata.cleaned_count == 2
+        summary
+      after
+        detach_telemetry(telemetry_ids)
+      end
+
+    assert_receive {:cleanup_called, "T-100", "workspace://terminal-a"}
+    assert_receive {:cleanup_called, "T-101", "workspace://terminal-b"}
+
+    assert summary.last_terminal_cleanup_at == now
+    assert summary.terminal_cleanup_status == "completed"
+    assert summary.terminal_cleanup_candidate_count == 2
+    assert summary.terminal_cleanup_cleaned_count == 2
+    assert summary.terminal_cleanup_skipped_count == 0
+    assert summary.terminal_cleanup_failed_count == 0
+
+    assert summary.terminal_cleanup_receipt_refs == [
+             "cleanup-receipt://T-100",
+             "cleanup-receipt://T-101"
+           ]
+  end
+
+  test "terminal cleanup fetch failure warns and preserves startup recovery" do
+    telemetry_ids =
+      attach_telemetry([
+        [:mezzanine, :startup, :terminal_cleanup, :fetch_failed],
+        [:mezzanine, :dispatch, :ambiguous]
+      ])
+
+    source_ref = unique_name("source://ticket/restart-with-cleanup-fetch-failure")
+    suffix = unique_name("restart-cleanup-fetch")
+
+    assert {:ok, subject} = ingest_subject(source_ref)
+
+    assert {:ok, execution} =
+             dispatch_execution(subject, "trace-runtime-recovery-cleanup", suffix)
+
+    assert {:ok, dispatching_execution} =
+             ExecutionRecord.mark_dispatching(execution, %{
+               trace_id: execution.trace_id,
+               causation_id: "dispatch-workflow-claimed-cleanup"
+             })
+
+    now = DateTime.add(DateTime.utc_now(), 20, :second)
+    assert dispatching_execution.dispatch_state == :in_flight
+
+    fetcher = fn "inst-1" -> {:error, :source_timeout} end
+
+    summary =
+      try do
+        assert {:ok, summary} =
+                 ReconcileOnStart.reconcile("inst-1", now, terminal_cleanup_fetcher: fetcher)
+
+        assert_receive {:telemetry_event,
+                        [:mezzanine, :startup, :terminal_cleanup, :fetch_failed], %{count: 1},
+                        cleanup_metadata}
+
+        assert cleanup_metadata.event_name == "startup.terminal_cleanup.fetch_failed"
+        assert cleanup_metadata.installation_id == "inst-1"
+        assert cleanup_metadata.reason == :source_timeout
+
+        assert_receive {:telemetry_event, [:mezzanine, :dispatch, :ambiguous], %{count: 1},
+                        dispatch_metadata}
+
+        assert dispatch_metadata.execution_id == execution.id
+        summary
+      after
+        detach_telemetry(telemetry_ids)
+      end
+
+    assert summary.terminal_cleanup_status == "fetch_failed"
+    assert summary.terminal_cleanup_fetch_failed?
+    assert summary.terminal_cleanup_error == :source_timeout
+    assert summary.terminal_cleanup_candidate_count == 0
+    assert summary.dispatch_recovered_count == 1
+    assert summary.dispatch_recovered_execution_ids == [execution.id]
+  end
+
+  test "terminal cleanup failures are counted without aborting startup" do
+    candidates = [
+      %{identifier: "T-200", workspace_ref: "workspace://terminal-success"},
+      %{identifier: "T-201", workspace_ref: "workspace://terminal-failure"}
+    ]
+
+    cleanup_fun = fn
+      %{identifier: "T-200"} = candidate ->
+        {:ok,
+         %{
+           receipt_ref: "cleanup-receipt://#{candidate.identifier}",
+           workspace_ref: candidate.workspace_ref,
+           status: "removed"
+         }}
+
+      %{identifier: "T-201"} ->
+        {:error, :cleanup_denied}
+    end
+
+    assert {:ok, summary} =
+             ReconcileOnStart.reconcile("inst-1", DateTime.utc_now(),
+               terminal_cleanup_candidates: candidates,
+               workspace_cleanup_fun: cleanup_fun
+             )
+
+    assert summary.terminal_cleanup_status == "warning"
+    assert summary.terminal_cleanup_candidate_count == 2
+    assert summary.terminal_cleanup_cleaned_count == 1
+    assert summary.terminal_cleanup_failed_count == 1
+
+    assert summary.terminal_cleanup_failures == [
+             %{
+               identifier: "T-201",
+               reason: :cleanup_denied,
+               workspace_ref: "workspace://terminal-failure"
+             }
+           ]
+  end
+
   defp awaiting_receipt_execution(subject, suffix) do
     with {:ok, execution} <- dispatch_execution(subject, "trace-startup-reconcile", suffix) do
       ExecutionRecord.record_accepted(execution, %{

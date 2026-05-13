@@ -9,6 +9,8 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStart do
   alias Mezzanine.Execution.{DispatchState, ExecutionRecord, Repo}
   alias Mezzanine.Telemetry
 
+  require Logger
+
   @default_actor_ref %{kind: :runtime_scheduler, phase: :reconcile_on_start}
   @in_flight_states DispatchState.in_flight_state_strings()
   @accepted_active_states DispatchState.accepted_active_state_strings()
@@ -18,7 +20,16 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStart do
           dispatch_recovered_count: non_neg_integer(),
           dispatch_recovered_execution_ids: [Ecto.UUID.t()],
           reconcile_handoff_count: non_neg_integer(),
-          reconcile_handoff_execution_ids: [Ecto.UUID.t()]
+          reconcile_handoff_execution_ids: [Ecto.UUID.t()],
+          last_terminal_cleanup_at: DateTime.t(),
+          terminal_cleanup_status: String.t(),
+          terminal_cleanup_candidate_count: non_neg_integer(),
+          terminal_cleanup_cleaned_count: non_neg_integer(),
+          terminal_cleanup_skipped_count: non_neg_integer(),
+          terminal_cleanup_failed_count: non_neg_integer(),
+          terminal_cleanup_receipt_refs: [String.t()],
+          terminal_cleanup_failures: [map()],
+          terminal_cleanup_fetch_failed?: boolean()
         }
 
   @claim_reconcile_wave_sql """
@@ -37,18 +48,21 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStart do
     actor_ref = Keyword.get(opts, :actor_ref, @default_actor_ref)
     wave_id = Keyword.get(opts, :wave_id, startup_wave_id(now))
 
-    with {:ok, candidates} <- candidate_executions(installation_id) do
-      recover_candidates(candidates, now, actor_ref, wave_id)
+    with {:ok, terminal_cleanup_summary} <-
+           run_terminal_cleanup(installation_id, now, opts),
+         {:ok, candidates} <- candidate_executions(installation_id) do
+      recover_candidates(candidates, now, actor_ref, wave_id, terminal_cleanup_summary)
     end
   end
 
-  defp recover_candidates(candidates, now, actor_ref, wave_id) do
-    summary = %{
-      dispatch_recovered_count: 0,
-      dispatch_recovered_execution_ids: [],
-      reconcile_handoff_count: 0,
-      reconcile_handoff_execution_ids: []
-    }
+  defp recover_candidates(candidates, now, actor_ref, wave_id, terminal_cleanup_summary) do
+    summary =
+      Map.merge(terminal_cleanup_summary, %{
+        dispatch_recovered_count: 0,
+        dispatch_recovered_execution_ids: [],
+        reconcile_handoff_count: 0,
+        reconcile_handoff_execution_ids: []
+      })
 
     Enum.reduce_while(candidates, {:ok, summary}, fn candidate, {:ok, summary} ->
       execution_id = candidate.id
@@ -137,6 +151,226 @@ defmodule Mezzanine.RuntimeScheduler.ReconcileOnStart do
       {:error, error} ->
         {:error, error}
     end
+  end
+
+  defp run_terminal_cleanup(installation_id, now, opts) do
+    case terminal_cleanup_candidates(installation_id, opts) do
+      {:ok, candidates} ->
+        summary = cleanup_terminal_candidates(candidates, now, opts)
+        emit_terminal_cleanup_completed(installation_id, summary)
+        {:ok, summary}
+
+      {:error, reason} ->
+        Logger.warning(
+          "Skipping startup terminal workspace cleanup; failed to fetch terminal candidates: #{inspect(reason)}"
+        )
+
+        summary = terminal_cleanup_fetch_failed_summary(now, reason)
+        emit_terminal_cleanup_fetch_failed(installation_id, reason, summary)
+        {:ok, summary}
+    end
+  end
+
+  defp terminal_cleanup_candidates(installation_id, opts) do
+    if Keyword.has_key?(opts, :terminal_cleanup_candidates) do
+      opts
+      |> Keyword.get(:terminal_cleanup_candidates)
+      |> normalize_candidates()
+    else
+      fetch_terminal_cleanup_candidates(
+        installation_id,
+        Keyword.get(opts, :terminal_cleanup_fetcher)
+      )
+    end
+  end
+
+  defp fetch_terminal_cleanup_candidates(_installation_id, nil), do: {:ok, []}
+
+  defp fetch_terminal_cleanup_candidates(installation_id, fetcher)
+       when is_function(fetcher, 1) do
+    with {:ok, candidates} <- fetcher.(installation_id) do
+      normalize_candidates(candidates)
+    end
+  end
+
+  defp fetch_terminal_cleanup_candidates(_installation_id, _other),
+    do: {:error, :invalid_terminal_cleanup_fetcher}
+
+  defp normalize_candidates(candidates) do
+    {:ok, candidates |> List.wrap() |> Enum.map(&normalize_candidate/1)}
+  end
+
+  defp cleanup_terminal_candidates(candidates, now, opts) do
+    cleanup_fun = Keyword.get(opts, :workspace_cleanup_fun, &default_workspace_cleanup/1)
+
+    empty =
+      %{
+        last_terminal_cleanup_at: now,
+        terminal_cleanup_status: "completed",
+        terminal_cleanup_candidate_count: length(candidates),
+        terminal_cleanup_cleaned_count: 0,
+        terminal_cleanup_skipped_count: 0,
+        terminal_cleanup_failed_count: 0,
+        terminal_cleanup_receipt_refs: [],
+        terminal_cleanup_failures: [],
+        terminal_cleanup_fetch_failed?: false
+      }
+
+    candidates
+    |> Enum.reduce(empty, &cleanup_terminal_candidate(&1, &2, cleanup_fun))
+    |> finalize_terminal_cleanup_summary()
+  end
+
+  defp cleanup_terminal_candidate(candidate, summary, cleanup_fun)
+       when is_function(cleanup_fun, 1) do
+    case cleanup_fun.(candidate) do
+      {:ok, receipt} ->
+        record_cleanup_receipt(summary, normalize_receipt(receipt, candidate))
+
+      {:error, reason} ->
+        record_cleanup_failure(summary, candidate, reason)
+
+      other ->
+        record_cleanup_failure(summary, candidate, {:invalid_cleanup_result, other})
+    end
+  rescue
+    exception ->
+      record_cleanup_failure(summary, candidate, {:exception, exception.__struct__})
+  end
+
+  defp record_cleanup_receipt(summary, receipt) do
+    summary
+    |> Map.update!(:terminal_cleanup_receipt_refs, fn refs ->
+      maybe_append(refs, receipt.receipt_ref)
+    end)
+    |> increment_cleanup_count(receipt.status)
+  end
+
+  defp increment_cleanup_count(summary, status)
+       when status in [:removed, "removed", :cleaned, "cleaned"] do
+    Map.update!(summary, :terminal_cleanup_cleaned_count, &(&1 + 1))
+  end
+
+  defp increment_cleanup_count(summary, _status) do
+    Map.update!(summary, :terminal_cleanup_skipped_count, &(&1 + 1))
+  end
+
+  defp record_cleanup_failure(summary, candidate, reason) do
+    failure = %{
+      identifier: candidate.identifier,
+      workspace_ref: candidate.workspace_ref,
+      reason: reason
+    }
+
+    summary
+    |> Map.update!(:terminal_cleanup_failed_count, &(&1 + 1))
+    |> Map.update!(:terminal_cleanup_failures, &(&1 ++ [failure]))
+  end
+
+  defp finalize_terminal_cleanup_summary(summary) do
+    status =
+      if summary.terminal_cleanup_failed_count > 0, do: "warning", else: "completed"
+
+    %{summary | terminal_cleanup_status: status}
+  end
+
+  defp terminal_cleanup_fetch_failed_summary(now, reason) do
+    %{
+      last_terminal_cleanup_at: now,
+      terminal_cleanup_status: "fetch_failed",
+      terminal_cleanup_candidate_count: 0,
+      terminal_cleanup_cleaned_count: 0,
+      terminal_cleanup_skipped_count: 0,
+      terminal_cleanup_failed_count: 0,
+      terminal_cleanup_receipt_refs: [],
+      terminal_cleanup_failures: [],
+      terminal_cleanup_fetch_failed?: true,
+      terminal_cleanup_error: reason
+    }
+  end
+
+  defp default_workspace_cleanup(candidate) do
+    {:ok,
+     %{
+       receipt_ref:
+         "cleanup-receipt://#{candidate.identifier || candidate.workspace_ref || "unknown"}/skipped",
+       workspace_ref: candidate.workspace_ref,
+       status: "skipped",
+       reason: "workspace_cleanup_not_configured",
+       path_redacted?: true
+     }}
+  end
+
+  defp normalize_candidate(%_{} = candidate),
+    do: candidate |> Map.from_struct() |> normalize_candidate()
+
+  defp normalize_candidate(candidate) when is_list(candidate),
+    do: candidate |> Map.new() |> normalize_candidate()
+
+  defp normalize_candidate(%{} = candidate) do
+    %{
+      subject_id: value(candidate, :subject_id),
+      source_ref: value(candidate, :source_ref),
+      identifier: value(candidate, :identifier) || value(candidate, :source_identifier),
+      workspace_ref: value(candidate, :workspace_ref)
+    }
+  end
+
+  defp normalize_candidate(candidate) do
+    %{subject_id: nil, source_ref: nil, identifier: to_string(candidate), workspace_ref: nil}
+  end
+
+  defp normalize_receipt(%_{} = receipt, candidate),
+    do: receipt |> Map.from_struct() |> normalize_receipt(candidate)
+
+  defp normalize_receipt(receipt, candidate) when is_list(receipt),
+    do: receipt |> Map.new() |> normalize_receipt(candidate)
+
+  defp normalize_receipt(%{} = receipt, candidate) do
+    %{
+      receipt_ref: value(receipt, :receipt_ref),
+      workspace_ref: value(receipt, :workspace_ref) || candidate.workspace_ref,
+      status: value(receipt, :status) || "skipped"
+    }
+  end
+
+  defp normalize_receipt(_receipt, candidate) do
+    %{receipt_ref: nil, workspace_ref: candidate.workspace_ref, status: "skipped"}
+  end
+
+  defp maybe_append(values, nil), do: values
+  defp maybe_append(values, value), do: values ++ [value]
+
+  defp value(map, key) when is_map(map),
+    do: Map.get(map, key) || Map.get(map, Atom.to_string(key))
+
+  defp emit_terminal_cleanup_completed(installation_id, summary) do
+    Telemetry.emit(
+      [:startup, :terminal_cleanup, :completed],
+      %{count: summary.terminal_cleanup_candidate_count},
+      %{
+        event_name: "startup.terminal_cleanup.completed",
+        installation_id: installation_id,
+        cleanup_status: summary.terminal_cleanup_status,
+        cleaned_count: summary.terminal_cleanup_cleaned_count,
+        skipped_count: summary.terminal_cleanup_skipped_count,
+        failed_count: summary.terminal_cleanup_failed_count,
+        receipt_refs: summary.terminal_cleanup_receipt_refs
+      }
+    )
+  end
+
+  defp emit_terminal_cleanup_fetch_failed(installation_id, reason, summary) do
+    Telemetry.emit(
+      [:startup, :terminal_cleanup, :fetch_failed],
+      %{count: 1},
+      %{
+        event_name: "startup.terminal_cleanup.fetch_failed",
+        installation_id: installation_id,
+        cleanup_status: summary.terminal_cleanup_status,
+        reason: reason
+      }
+    )
   end
 
   defp restart_recovery_attrs(execution, now, actor_ref) do
