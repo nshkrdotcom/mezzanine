@@ -42,7 +42,8 @@ defmodule Mezzanine.WorkspaceEngine.Allocator do
       file_scope: value(attrs, :file_scope) || %{writable_roots: [path], read_roots: [path]},
       hook_specs: value(attrs, :hook_specs) || [],
       remote_hints: value(attrs, :remote_hints) || %{},
-      reuse?: reuse?
+      reuse?: reuse?,
+      created_now?: not reuse?
     }
   end
 

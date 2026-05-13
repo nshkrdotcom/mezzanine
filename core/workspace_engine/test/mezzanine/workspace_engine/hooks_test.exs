@@ -108,6 +108,46 @@ defmodule Mezzanine.WorkspaceEngine.HooksTest do
     assert before_remove.fatal? == true
   end
 
+  test "skips after_create hooks for reused workspaces" do
+    root = tmp_dir()
+    parent = self()
+
+    attrs = %{
+      installation_id: "installation-1",
+      subject_id: "subject-1",
+      workspace_root: root,
+      hook_specs: [
+        %{"hook_ref" => "created", "stage" => "after_create", "timeout_ms" => 100}
+      ]
+    }
+
+    assert {:ok, first} = Allocator.reserve(attrs)
+
+    assert {:ok, [_receipt]} =
+             Hooks.run(first, :after_create,
+               runner: fn hook, _context ->
+                 send(parent, {:after_create_hook, first.workspace_id, hook.hook_ref})
+                 :ok
+               end
+             )
+
+    assert_received {:after_create_hook, _, "created"}
+
+    assert {:ok, second} = Allocator.reserve(attrs)
+    assert second.reuse? == true
+    assert second.created_now? == false
+
+    assert {:ok, []} =
+             Hooks.run(second, :after_create,
+               runner: fn hook, _context ->
+                 send(parent, {:after_create_hook, second.workspace_id, hook.hook_ref})
+                 :ok
+               end
+             )
+
+    refute_received {:after_create_hook, _, "created"}
+  end
+
   test "fatal four-stage hooks fail closed" do
     {:ok, workspace} =
       Allocator.reserve(%{

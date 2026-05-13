@@ -31,12 +31,19 @@ defmodule Mezzanine.WorkspaceEngine.Hooks do
     runner = Keyword.get(opts, :runner, &default_runner/2)
 
     with {:ok, stage} <- known_stage(stage) do
-      workspace.hook_specs
-      |> Enum.map(&normalize_hook/1)
-      |> Enum.filter(&(&1.stage == stage))
-      |> run_hooks(workspace, runner, opts)
+      if skip_stage?(workspace, stage) do
+        {:ok, []}
+      else
+        workspace.hook_specs
+        |> Enum.map(&normalize_hook/1)
+        |> Enum.filter(&(&1.stage == stage))
+        |> run_hooks(workspace, runner, opts)
+      end
     end
   end
+
+  defp skip_stage?(%WorkspaceRecord{created_now?: false}, :after_create), do: true
+  defp skip_stage?(_workspace, _stage), do: false
 
   defp run_hooks(hooks, workspace, runner, opts) do
     Enum.reduce_while(hooks, {:ok, []}, fn hook, {:ok, receipts} ->

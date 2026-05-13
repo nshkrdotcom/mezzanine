@@ -33,6 +33,7 @@ defmodule Mezzanine.WorkspaceEngine.WorkspaceRecord do
     status: :reserved,
     safety_status: :validated,
     reuse?: false,
+    created_now?: false,
     contract_version: "Mezzanine.WorkspaceRecord.v1"
   ]
 
@@ -54,7 +55,8 @@ defmodule Mezzanine.WorkspaceEngine.WorkspaceRecord do
           remote_hints: map(),
           status: atom(),
           safety_status: atom(),
-          reuse?: boolean()
+          reuse?: boolean(),
+          created_now?: boolean()
         }
 
   @spec public_ref(t()) :: map()
@@ -67,6 +69,7 @@ defmodule Mezzanine.WorkspaceEngine.WorkspaceRecord do
       path_redacted?: true,
       metadata: %{
         cleanup_policy: record.cleanup_policy,
+        created_now?: record.created_now?,
         placement_kind: record.placement_kind,
         reuse?: record.reuse?,
         safety_hash: record.safety_hash,

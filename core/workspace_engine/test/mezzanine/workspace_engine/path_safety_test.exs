@@ -30,10 +30,13 @@ defmodule Mezzanine.WorkspaceEngine.PathSafetyTest do
     assert {:ok, %WorkspaceRecord{} = first} = Allocator.reserve(attrs)
     assert File.dir?(first.concrete_path)
     assert first.logical_ref == "workspace:installation-1:subject-1"
+    assert first.created_now? == true
+    assert first.reuse? == false
 
     assert {:ok, %WorkspaceRecord{} = second} = Allocator.reserve(attrs)
     assert second.concrete_path == first.concrete_path
     assert second.reuse? == true
+    assert second.created_now? == false
   end
 
   test "duplicate sanitized subject refs reuse the same directory" do
@@ -81,6 +84,7 @@ defmodule Mezzanine.WorkspaceEngine.PathSafetyTest do
     assert public_ref.path_redacted? == true
     assert public_ref.metadata.safety_hash == record.safety_hash
     assert public_ref.metadata.cleanup_policy == :on_terminal
+    assert public_ref.metadata.created_now? == record.created_now?
     refute Map.has_key?(public_ref, :concrete_path)
     refute Map.has_key?(public_ref, :concrete_root)
     refute String.contains?(inspect(public_ref), root)
