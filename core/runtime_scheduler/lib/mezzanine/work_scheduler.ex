@@ -10,6 +10,8 @@ defmodule Mezzanine.WorkScheduler do
 
   @max_priority 4
   @continuation_retry_delay_ms 1_000
+  @failure_retry_base_ms 10_000
+  @failure_retry_max_delay_ms 300_000
   @normalizable_keys [
     :active?,
     :active_states,
@@ -39,6 +41,7 @@ defmodule Mezzanine.WorkScheduler do
     :max_concurrent_agents,
     :max_concurrent_agents_by_state,
     :max_delay_ms,
+    :max_retry_backoff_ms,
     :now,
     :priority,
     :reason,
@@ -199,7 +202,7 @@ defmodule Mezzanine.WorkScheduler do
     attrs = normalize(attrs)
     execution = attrs |> value(:execution) |> normalize()
     now = value(attrs, :now) || DateTime.utc_now()
-    attempt = value(execution, :attempt) || 0
+    attempt = backoff_attempt(attrs, execution)
     max_attempts = value(attrs, :max_attempts)
 
     if is_integer(max_attempts) and attempt >= max_attempts do
@@ -217,6 +220,9 @@ defmodule Mezzanine.WorkScheduler do
        evidence_event("retry.abnormal_backoff_scheduled", execution, now,
          reason: value(attrs, :reason) || "abnormal_exit",
          safe_action: "schedule_retry",
+         status: "scheduled",
+         attempt: attempt,
+         delay_type: "failure_backoff",
          delay_ms: delay_ms,
          due_at: due_at,
          failure: value(attrs, :failure)
@@ -443,7 +449,7 @@ defmodule Mezzanine.WorkScheduler do
 
   defp continuation_retry_deferred(attrs, execution, now, reason) do
     attempt = continuation_backoff_attempt(execution)
-    delay_ms = backoff_delay_ms(attrs, attempt - 1)
+    delay_ms = backoff_delay_ms(attrs, attempt)
 
     evidence_event("continuation.deferred", execution, now,
       reason: reason,
@@ -759,11 +765,23 @@ defmodule Mezzanine.WorkScheduler do
   end
 
   defp backoff_delay_ms(attrs, attempt) do
-    base_ms = value(attrs, :retry_base_ms) || 10_000
-    max_delay_ms = value(attrs, :max_delay_ms)
-    delay_ms = base_ms * Integer.pow(2, max(attempt, 0))
+    base_ms = positive_integer(value(attrs, :retry_base_ms)) || @failure_retry_base_ms
 
-    if is_integer(max_delay_ms), do: min(delay_ms, max_delay_ms), else: delay_ms
+    max_delay_ms =
+      positive_integer(value(attrs, :max_retry_backoff_ms)) ||
+        positive_integer(value(attrs, :max_delay_ms)) ||
+        @failure_retry_max_delay_ms
+
+    delay_power = min(max(attempt - 1, 0), 10)
+    delay_ms = base_ms * Integer.pow(2, delay_power)
+
+    min(delay_ms, max_delay_ms)
+  end
+
+  defp backoff_attempt(attrs, execution) do
+    positive_integer(value(attrs, :attempt)) ||
+      positive_integer(value(execution, :attempt)) ||
+      1
   end
 
   defp normalize_tick_kind(kind) when kind in [:startup, :admission, :manual_refresh] do

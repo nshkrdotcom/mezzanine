@@ -599,8 +599,8 @@ defmodule Mezzanine.WorkSchedulerTest do
 
     assert retry.event_kind == "retry.abnormal_backoff_scheduled"
     assert retry.safe_action == "schedule_retry"
-    assert retry.delay_ms == 3_000
-    assert retry.due_at == DateTime.add(@now, 3_000, :millisecond)
+    assert retry.delay_ms == 2_000
+    assert retry.due_at == DateTime.add(@now, 2_000, :millisecond)
 
     assert {:ok, retry_cap} =
              WorkScheduler.backoff_decision(%{
@@ -611,6 +611,46 @@ defmodule Mezzanine.WorkSchedulerTest do
 
     assert retry_cap.event_kind == "retry.backoff_cap_reached"
     assert retry_cap.safe_action == "terminal_failure"
+  end
+
+  test "failure retry backoff uses one-based attempts and retry cap" do
+    execution = %{
+      execution_id: "execution-backoff",
+      subject_id: "subject-backoff",
+      workflow_id: "workflow-backoff",
+      workflow_version: "v1",
+      retry_token: "retry-current",
+      idempotency_key: "idem-backoff"
+    }
+
+    for {attempt, delay_ms} <- [{1, 10_000}, {2, 20_000}, {6, 300_000}, {12, 300_000}] do
+      assert {:ok, retry} =
+               WorkScheduler.backoff_decision(%{
+                 execution: Map.put(execution, :attempt, attempt),
+                 now: @now,
+                 failure: "agent exited"
+               })
+
+      assert retry.event_kind == "retry.abnormal_backoff_scheduled"
+      assert retry.safe_action == "schedule_retry"
+      assert retry.status == "scheduled"
+      assert retry.attempt == attempt
+      assert retry.delay_type == "failure_backoff"
+      assert retry.delay_ms == delay_ms
+      assert retry.due_at == DateTime.add(@now, delay_ms, :millisecond)
+    end
+
+    assert {:ok, capped_retry} =
+             WorkScheduler.backoff_decision(%{
+               execution: Map.put(execution, :attempt, 4),
+               now: @now,
+               retry_base_ms: 1_000,
+               max_retry_backoff_ms: 3_000,
+               failure: "agent exited"
+             })
+
+    assert capped_retry.delay_ms == 3_000
+    assert capped_retry.delay_type == "failure_backoff"
   end
 
   defp candidate(subject_id, opts) do
