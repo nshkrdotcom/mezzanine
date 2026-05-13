@@ -526,7 +526,13 @@ defmodule Mezzanine.WorkSchedulerTest do
              })
 
     assert terminal_cancel.event_kind == "cancel.terminal_source"
+    assert terminal_cancel.status == "cancel_requested"
+    assert terminal_cancel.reason == "terminal_source"
     assert terminal_cancel.safe_action == "cancel_lower_cleanup_and_complete"
+    assert terminal_cancel.cancellation_reason == "terminal_source"
+    assert terminal_cancel.workflow_signal == "operator.cancel"
+    assert terminal_cancel.workflow_action == "cancel_lower_run"
+    assert terminal_cancel.projection_mutation == "complete_subject"
     assert terminal_cancel.cleanup_required?
 
     assert {:ok, non_active_cancel} =
@@ -536,7 +542,12 @@ defmodule Mezzanine.WorkSchedulerTest do
              })
 
     assert non_active_cancel.event_kind == "cancel.non_active_source"
+    assert non_active_cancel.status == "cancel_requested"
     assert non_active_cancel.safe_action == "cancel_lower_and_block"
+    assert non_active_cancel.cancellation_reason == "non_active_source"
+    assert non_active_cancel.workflow_signal == "operator.cancel"
+    assert non_active_cancel.projection_mutation == "block_subject"
+    refute non_active_cancel.cleanup_required?
 
     assert {:ok, missing_source_cancel} =
              WorkScheduler.continuation_check(%{
@@ -545,7 +556,28 @@ defmodule Mezzanine.WorkSchedulerTest do
              })
 
     assert missing_source_cancel.event_kind == "cancel.missing_source"
+    assert missing_source_cancel.status == "cancel_requested"
     assert missing_source_cancel.safe_action == "cancel_lower_and_quarantine"
+    assert missing_source_cancel.cancellation_reason == "source_missing"
+    assert missing_source_cancel.workflow_signal == "operator.cancel"
+    assert missing_source_cancel.projection_mutation == "quarantine_subject"
+    refute missing_source_cancel.cleanup_required?
+
+    assert {:ok, reassigned_cancel} =
+             WorkScheduler.continuation_check(%{
+               execution: active_execution,
+               source: %{
+                 source_visible?: true,
+                 active?: true,
+                 terminal?: false,
+                 assigned_to_current_worker?: false
+               }
+             })
+
+    assert reassigned_cancel.event_kind == "cancel.source_reassigned"
+    assert reassigned_cancel.reason == "source_reassigned"
+    assert reassigned_cancel.safe_action == "cancel_lower_and_block"
+    assert reassigned_cancel.projection_mutation == "block_subject"
 
     assert {:ok, stale_retry} =
              WorkScheduler.retry_decision(%{

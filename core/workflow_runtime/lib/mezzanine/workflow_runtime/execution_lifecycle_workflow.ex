@@ -122,8 +122,11 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     :signal_id,
     :signal_state,
     :source_publish_ref,
+    :source_active?,
     :source_state,
+    :source_terminal?,
     :source_terminal,
+    :source_visible?,
     :stall_timeout_ms,
     :status,
     :subject_id,
@@ -152,6 +155,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     :workspace_ref,
     :workspace_root,
     :workpad_refs,
+    :assigned_to_current_worker?,
     :token_dedupe,
     :token_totals,
     :acceptable_attestation,
@@ -669,6 +673,54 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     end
   end
 
+  @doc "Maps source refresh drift into replay-safe workflow control decisions."
+  @spec source_reconciliation_decision(map() | keyword()) ::
+          {:cancel | :finalize | :continue, map()}
+  def source_reconciliation_decision(attrs) do
+    attrs = normalize(attrs)
+
+    cond do
+      Map.get(attrs, :source_visible?) == false ->
+        {:cancel,
+         source_reconciliation_fields(
+           :source_missing,
+           :cancel_lower_and_quarantine,
+           "quarantine_subject",
+           false
+         )}
+
+      Map.get(attrs, :source_active?) == false ->
+        {:cancel,
+         source_reconciliation_fields(
+           :non_active_source,
+           :cancel_lower_and_block,
+           "block_subject",
+           false
+         )}
+
+      Map.get(attrs, :assigned_to_current_worker?) == false ->
+        {:cancel,
+         source_reconciliation_fields(
+           :source_reassigned,
+           :cancel_lower_and_block,
+           "block_subject",
+           false
+         )}
+
+      source_reconciliation_terminal?(attrs) ->
+        {:finalize,
+         source_reconciliation_fields(
+           :terminal_source,
+           :terminal_cleanup,
+           "complete_subject",
+           true
+         )}
+
+      true ->
+        {:continue, %{reason: :active_source, safe_action: :continue_workflow}}
+    end
+  end
+
   @doc "Replay-safe worker failover posture for Scenario 93."
   @spec worker_failover_recovery(map() | keyword()) :: {:ok, map()} | {:error, term()}
   def worker_failover_recovery(attrs) do
@@ -710,6 +762,22 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
 
   defp terminal_state(%WorkflowReceiptSignal{terminal?: true, receipt_state: state}), do: state
   defp terminal_state(_signal), do: "accepted_active"
+
+  defp source_reconciliation_fields(reason, safe_action, projection_mutation, cleanup_required?) do
+    %{
+      reason: reason,
+      safe_action: safe_action,
+      workflow_signal: "operator.cancel",
+      projection_mutation: projection_mutation,
+      cleanup_required?: cleanup_required?
+    }
+  end
+
+  defp source_reconciliation_terminal?(attrs) do
+    Map.get(attrs, :source_terminal?) == true or
+      Map.get(attrs, :source_terminal) == true or
+      Map.get(attrs, :source_state) == "terminal"
+  end
 
   defp max_turns_reached?(attrs) do
     case {Map.get(attrs, :turn_count), Map.get(attrs, :max_turns)} do

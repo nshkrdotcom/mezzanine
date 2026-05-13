@@ -17,12 +17,14 @@ defmodule Mezzanine.WorkScheduler do
     :active_states,
     :attempt,
     :assigned_to_worker,
+    :assigned_to_current_worker?,
     :blocked?,
     :blocked_by,
     :blocker_refs,
     :candidate,
     :candidates,
     :capacity,
+    :cancellation_reason,
     :continuation_delay_ms,
     :created_at,
     :delay_ms,
@@ -72,6 +74,7 @@ defmodule Mezzanine.WorkScheduler do
     :max_concurrent_agents_per_host,
     :workers,
     :workflow_id,
+    :workflow_action,
     :workflow_version
   ]
   @key_lookup Map.new(@normalizable_keys, &{Atom.to_string(&1), &1})
@@ -147,21 +150,35 @@ defmodule Mezzanine.WorkScheduler do
     event =
       cond do
         value(source, :source_visible?) == false ->
-          evidence_event("cancel.missing_source", execution, now,
+          cancel_event("cancel.missing_source", execution, now,
             reason: "missing_source",
-            safe_action: "cancel_lower_and_quarantine"
+            cancellation_reason: "source_missing",
+            safe_action: "cancel_lower_and_quarantine",
+            projection_mutation: "quarantine_subject"
           )
 
         value(source, :active?) == false ->
-          evidence_event("cancel.non_active_source", execution, now,
+          cancel_event("cancel.non_active_source", execution, now,
             reason: "non_active_source",
-            safe_action: "cancel_lower_and_block"
+            cancellation_reason: "non_active_source",
+            safe_action: "cancel_lower_and_block",
+            projection_mutation: "block_subject"
+          )
+
+        value(source, :assigned_to_current_worker?) == false ->
+          cancel_event("cancel.source_reassigned", execution, now,
+            reason: "source_reassigned",
+            cancellation_reason: "source_reassigned",
+            safe_action: "cancel_lower_and_block",
+            projection_mutation: "block_subject"
           )
 
         truthy?(value(source, :terminal?)) ->
-          evidence_event("cancel.terminal_source", execution, now,
+          cancel_event("cancel.terminal_source", execution, now,
             reason: "terminal_source",
+            cancellation_reason: "terminal_source",
             safe_action: "cancel_lower_cleanup_and_complete",
+            projection_mutation: "complete_subject",
             cleanup_required?: true
           )
 
@@ -820,6 +837,23 @@ defmodule Mezzanine.WorkScheduler do
     |> Map.put(:worker_id, worker_id(candidate))
   end
 
+  defp cancel_event(event_kind, execution, now, opts) do
+    evidence_event(
+      event_kind,
+      execution,
+      now,
+      Keyword.merge(
+        [
+          status: "cancel_requested",
+          workflow_signal: "operator.cancel",
+          workflow_action: "cancel_lower_run",
+          cleanup_required?: false
+        ],
+        opts
+      )
+    )
+  end
+
   defp evidence_event(event_kind, attrs, now, opts) do
     attrs = normalize(attrs)
 
@@ -834,6 +868,10 @@ defmodule Mezzanine.WorkScheduler do
       attempted_attempt: Keyword.get(opts, :attempted_attempt),
       reason: Keyword.fetch!(opts, :reason),
       safe_action: Keyword.fetch!(opts, :safe_action),
+      cancellation_reason: Keyword.get(opts, :cancellation_reason),
+      workflow_signal: Keyword.get(opts, :workflow_signal),
+      workflow_action: Keyword.get(opts, :workflow_action),
+      projection_mutation: Keyword.get(opts, :projection_mutation),
       dispatch_allowed?: Keyword.get(opts, :dispatch_allowed?),
       current_retry_retained?: Keyword.get(opts, :current_retry_retained?),
       occurred_at: now,

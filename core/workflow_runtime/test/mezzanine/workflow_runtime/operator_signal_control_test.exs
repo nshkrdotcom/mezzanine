@@ -139,6 +139,7 @@ defmodule Mezzanine.WorkflowRuntime.OperatorSignalControlTest do
     assert {:ok, accepted} = OperatorSignalControl.accept_operator_signal(signal_attrs())
 
     assert accepted.signal.signal_name == "operator.cancel"
+    assert accepted.signal.reason == "operator requested cancel"
     assert accepted.receipt.authority_state == "authorized"
     assert accepted.receipt.local_state == "accepted"
     assert accepted.receipt.dispatch_state == "queued"
@@ -162,6 +163,25 @@ defmodule Mezzanine.WorkflowRuntime.OperatorSignalControlTest do
     assert acked.receipt.workflow_effect_state == "processed_by_workflow"
     assert acked.receipt.projection_state == "fresh"
     assert acked.ack.signal_effect == "cancel_requested"
+  end
+
+  test "source reconciliation cancel signal preserves cancellation reason" do
+    assert {:ok, accepted} =
+             signal_attrs()
+             |> Map.merge(%{
+               signal_id: "signal-source-missing",
+               idempotency_key: "idem-source-missing",
+               reason: "source_missing",
+               reconciliation_reason: "source_missing"
+             })
+             |> OperatorSignalControl.source_reconciliation_cancel_signal()
+
+    assert accepted.signal.signal_name == "operator.cancel"
+    assert accepted.signal.signal_version == "operator-cancel.v1"
+    assert accepted.signal.reason == "source_missing"
+    assert accepted.receipt.dispatch_state == "queued"
+    assert accepted.receipt.workflow_effect_state == "pending"
+    assert accepted.outbox.dispatch_state == "queued"
   end
 
   test "retained signal worker persists Temporal outcome before acking" do

@@ -32,10 +32,20 @@ defmodule Mezzanine.Projections.SourceReconciliation do
   defp classify(attrs) do
     cond do
       value(attrs, :source_visible?) == false ->
-        action("source_missing", "stop_lower_run", "quarantine_subject")
+        action("source_missing", "stop_lower_run", "quarantine_subject",
+          cancellation_reason: "source_missing",
+          workflow_signal: "operator.cancel",
+          projection_mutation: "quarantine_subject",
+          cleanup_required?: false
+        )
 
       value(attrs, :assigned_to_current_worker?) == false ->
-        action("source_reassigned", "stop_lower_run", "block_subject")
+        action("source_reassigned", "stop_lower_run", "block_subject",
+          cancellation_reason: "source_reassigned",
+          workflow_signal: "operator.cancel",
+          projection_mutation: "block_subject",
+          cleanup_required?: false
+        )
 
       non_terminal_blockers?(value(attrs, :blocker_refs)) ->
         action("blocked_by_source", "skip_dispatch", "block_subject")
@@ -44,7 +54,12 @@ defmodule Mezzanine.Projections.SourceReconciliation do
         action("stale_source", "retry_source_refresh", "enqueue_revalidation")
 
       terminal_source?(value(attrs, :canonical_state)) ->
-        action("terminal_source", "stop_lower_run", "complete_subject")
+        action("terminal_source", "stop_lower_run", "complete_subject",
+          cancellation_reason: "terminal_source",
+          workflow_signal: "operator.cancel",
+          projection_mutation: "complete_subject",
+          cleanup_required?: true
+        )
 
       truthy?(value(attrs, :payload_changed?)) ->
         action("source_updated", "refresh_subject_projection", "refresh_projection")
@@ -54,8 +69,17 @@ defmodule Mezzanine.Projections.SourceReconciliation do
     end
   end
 
-  defp action(reason, safe_action, mutation) do
-    %{reason: reason, safe_action: safe_action, mutation: mutation}
+  defp action(reason, safe_action, mutation, opts \\ []) do
+    %{
+      reason: reason,
+      safe_action: safe_action,
+      mutation: mutation,
+      cancellation_reason: Keyword.get(opts, :cancellation_reason),
+      workflow_signal: Keyword.get(opts, :workflow_signal),
+      projection_mutation: Keyword.get(opts, :projection_mutation),
+      cleanup_required?: Keyword.get(opts, :cleanup_required?)
+    }
+    |> compact_map()
   end
 
   defp apply_subject_action(subject, attrs, %{mutation: "complete_subject"}) do
@@ -163,12 +187,17 @@ defmodule Mezzanine.Projections.SourceReconciliation do
       reason: action.reason,
       safe_action: action.safe_action,
       mutation: action.mutation,
+      cancellation_reason: Map.get(action, :cancellation_reason),
+      workflow_signal: Map.get(action, :workflow_signal),
+      projection_mutation: Map.get(action, :projection_mutation),
+      cleanup_required?: Map.get(action, :cleanup_required?),
       source_state: value(attrs, :source_state),
       canonical_state: value(attrs, :canonical_state),
       source_revision: value(attrs, :source_revision),
       retry_at: iso8601(value(attrs, :retry_at)),
       blocker_refs: value(attrs, :blocker_refs) || []
     }
+    |> compact_map()
   end
 
   defp append_reconciliation_audit(subject, attrs, action) do
@@ -219,6 +248,12 @@ defmodule Mezzanine.Projections.SourceReconciliation do
 
   defp normalize_attrs(attrs) when is_list(attrs), do: Map.new(attrs)
   defp normalize_attrs(%{} = attrs), do: Map.new(attrs)
+
+  defp compact_map(map) do
+    map
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new()
+  end
 
   defp required!(attrs, key) do
     case value(attrs, key) do

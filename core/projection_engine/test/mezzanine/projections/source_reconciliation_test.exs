@@ -23,6 +23,18 @@ defmodule Mezzanine.Projections.SourceReconciliationTest do
 
     assert result.subject.lifecycle_state == "completed"
     assert result.action.safe_action == "stop_lower_run"
+    assert result.action.cancellation_reason == "terminal_source"
+    assert result.action.workflow_signal == "operator.cancel"
+    assert result.action.projection_mutation == "complete_subject"
+    assert result.action.cleanup_required?
+
+    assert {:ok, terminal_row} =
+             ProjectionRow.row_by_key("inst-1", "source_reconciliation_queue", subject.id)
+
+    assert terminal_row.payload["cancellation_reason"] == "terminal_source"
+    assert terminal_row.payload["workflow_signal"] == "operator.cancel"
+    assert terminal_row.payload["projection_mutation"] == "complete_subject"
+    assert terminal_row.payload["cleanup_required?"] == true
 
     assert {:ok, completed_totals} =
              ProjectionRow.row_by_key("inst-1", "source_reconciliation_totals", "completed")
@@ -53,6 +65,10 @@ defmodule Mezzanine.Projections.SourceReconciliationTest do
 
     assert row.payload["safe_action"] == "stop_lower_run"
     assert row.payload["reason"] == "source_missing"
+    assert row.payload["cancellation_reason"] == "source_missing"
+    assert row.payload["workflow_signal"] == "operator.cancel"
+    assert row.payload["projection_mutation"] == "quarantine_subject"
+    assert row.payload["cleanup_required?"] == false
   end
 
   test "reassignment, blockers, stale source, and out-of-band updates produce stable actions" do

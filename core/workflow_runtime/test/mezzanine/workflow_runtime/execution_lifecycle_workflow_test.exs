@@ -735,6 +735,60 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
              })
   end
 
+  test "source reconciliation decisions map source drift to workflow cancellation semantics" do
+    assert {:cancel, missing} =
+             ExecutionLifecycleWorkflow.source_reconciliation_decision(%{source_visible?: false})
+
+    assert missing.reason == :source_missing
+    assert missing.safe_action == :cancel_lower_and_quarantine
+    assert missing.workflow_signal == "operator.cancel"
+    assert missing.projection_mutation == "quarantine_subject"
+    refute missing.cleanup_required?
+
+    assert {:cancel, non_active} =
+             ExecutionLifecycleWorkflow.source_reconciliation_decision(%{
+               source_visible?: true,
+               source_active?: false
+             })
+
+    assert non_active.reason == :non_active_source
+    assert non_active.safe_action == :cancel_lower_and_block
+    assert non_active.projection_mutation == "block_subject"
+
+    assert {:cancel, reassigned} =
+             ExecutionLifecycleWorkflow.source_reconciliation_decision(%{
+               source_visible?: true,
+               source_active?: true,
+               assigned_to_current_worker?: false
+             })
+
+    assert reassigned.reason == :source_reassigned
+    assert reassigned.safe_action == :cancel_lower_and_block
+
+    assert {:finalize, terminal} =
+             ExecutionLifecycleWorkflow.source_reconciliation_decision(%{
+               source_visible?: true,
+               source_active?: true,
+               source_terminal?: true
+             })
+
+    assert terminal.reason == :terminal_source
+    assert terminal.safe_action == :terminal_cleanup
+    assert terminal.workflow_signal == "operator.cancel"
+    assert terminal.projection_mutation == "complete_subject"
+    assert terminal.cleanup_required?
+
+    assert {:continue, active} =
+             ExecutionLifecycleWorkflow.source_reconciliation_decision(%{
+               source_visible?: true,
+               source_active?: true,
+               source_terminal?: false
+             })
+
+    assert active.reason == :active_source
+    assert active.safe_action == :continue_workflow
+  end
+
   defp lifecycle_attrs do
     %{
       tenant_ref: "tenant-acme",

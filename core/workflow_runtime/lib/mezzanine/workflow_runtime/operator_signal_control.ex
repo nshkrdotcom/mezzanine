@@ -36,6 +36,8 @@ defmodule Mezzanine.WorkflowRuntime.OperatorSignalControl do
     :projection_state,
     :raw_history_event,
     :raw_temporalex_result,
+    :reason,
+    :reconciliation_reason,
     :release_manifest_ref,
     :resource_ref,
     :retry_after_ms,
@@ -168,6 +170,23 @@ defmodule Mezzanine.WorkflowRuntime.OperatorSignalControl do
          :ok <- ensure_registered(signal) do
       accept_registered_signal(signal, authorized?(attrs))
     end
+  end
+
+  @doc "Builds an operator.cancel signal for source-reconciliation owned cancellations."
+  @spec source_reconciliation_cancel_signal(map() | keyword()) :: {:ok, map()} | {:error, term()}
+  def source_reconciliation_cancel_signal(attrs) do
+    attrs = normalize(attrs)
+
+    reason =
+      Map.get(attrs, :reconciliation_reason) || Map.get(attrs, :reason) || "source_reconciliation"
+
+    attrs
+    |> Map.merge(%{
+      signal_name: "operator.cancel",
+      signal_version: "operator-cancel.v1",
+      reason: reason
+    })
+    |> accept_operator_signal()
   end
 
   defp accept_registered_signal(signal, true) do
