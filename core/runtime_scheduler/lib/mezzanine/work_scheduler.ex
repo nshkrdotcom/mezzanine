@@ -29,7 +29,9 @@ defmodule Mezzanine.WorkScheduler do
     :identifier,
     :idempotency_key,
     :last_lower_activity_at,
+    :agent,
     :max_attempts,
+    :max_concurrent_agents,
     :max_delay_ms,
     :now,
     :priority,
@@ -61,7 +63,7 @@ defmodule Mezzanine.WorkScheduler do
   def plan_tick(attrs) when is_map(attrs) or is_list(attrs) do
     attrs = normalize(attrs)
     now = value(attrs, :now) || DateTime.utc_now()
-    capacity = normalize_capacity(value(attrs, :capacity) || %{})
+    capacity = attrs |> configured_capacity() |> normalize_capacity()
     candidates = value(attrs, :candidates) |> List.wrap() |> Enum.map(&normalize/1)
     running = value(attrs, :running) |> List.wrap() |> Enum.map(&normalize/1)
 
@@ -381,6 +383,39 @@ defmodule Mezzanine.WorkScheduler do
     |> Map.update(:states, %{}, &normalized_state_key_map/1)
     |> Map.update(:workers, %{}, &string_key_map/1)
   end
+
+  defp configured_capacity(attrs) do
+    attrs
+    |> value(:capacity)
+    |> normalize()
+    |> put_new_positive_integer(:global, agent_global_capacity(attrs))
+  end
+
+  defp agent_global_capacity(attrs) do
+    agent = attrs |> value(:agent) |> normalize()
+
+    case positive_integer(value(agent, :max_concurrent_agents)) do
+      nil -> positive_integer(value(attrs, :max_concurrent_agents))
+      limit -> limit
+    end
+  end
+
+  defp put_new_positive_integer(map, key, value) when is_integer(value) and value > 0 do
+    Map.put_new(map, key, value)
+  end
+
+  defp put_new_positive_integer(map, _key, _value), do: map
+
+  defp positive_integer(value) when is_integer(value) and value > 0, do: value
+
+  defp positive_integer(value) when is_binary(value) do
+    case Integer.parse(String.trim(value)) do
+      {integer, ""} when integer > 0 -> integer
+      _other -> nil
+    end
+  end
+
+  defp positive_integer(_value), do: nil
 
   defp eligibility_context(attrs, running) do
     %{

@@ -56,6 +56,52 @@ defmodule Mezzanine.WorkSchedulerTest do
            ]
   end
 
+  test "derives global capacity from agent config when capacity override is absent" do
+    candidates = [
+      candidate("subject-1", priority: 1, created_at: ~U[2026-05-10 10:00:00Z], state: "todo"),
+      candidate("subject-2", priority: 1, created_at: ~U[2026-05-10 10:01:00Z], state: "todo")
+    ]
+
+    running = [
+      candidate("subject-running",
+        priority: 1,
+        created_at: ~U[2026-05-10 09:00:00Z],
+        state: "todo"
+      )
+    ]
+
+    assert {:ok, plan} =
+             WorkScheduler.plan_tick(%{
+               now: @now,
+               agent: %{max_concurrent_agents: 2},
+               candidates: candidates,
+               running: running
+             })
+
+    assert plan.capacity.configured.global == 2
+
+    assert Enum.map(plan.events, &{&1.event_kind, &1.subject_id, &1.reason}) == [
+             {"work.claimed", "subject-1", "slot_available"},
+             {"capacity.slot_exhausted", "subject-2", "global_capacity_exhausted"}
+           ]
+
+    assert {:ok, override_plan} =
+             WorkScheduler.plan_tick(%{
+               now: @now,
+               agent: %{max_concurrent_agents: 1},
+               capacity: %{global: 3},
+               candidates: candidates,
+               running: running
+             })
+
+    assert override_plan.capacity.configured.global == 3
+
+    assert Enum.map(override_plan.events, &{&1.event_kind, &1.subject_id, &1.reason}) == [
+             {"work.claimed", "subject-1", "slot_available"},
+             {"work.claimed", "subject-2", "slot_available"}
+           ]
+  end
+
   test "enforces candidate eligibility rules before claiming work" do
     candidates = [
       candidate("subject-missing-title",
