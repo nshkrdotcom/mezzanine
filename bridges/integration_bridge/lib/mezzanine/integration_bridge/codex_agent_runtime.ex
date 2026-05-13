@@ -13,6 +13,7 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
   alias Mezzanine.WorkspaceEngine.{Hooks, LocalCommandRunner, WorkspaceRecord}
 
   @capability_id "codex.session.turn"
+  @session_start_capability_id "codex.session.start"
   @connector_id "codex_cli"
   @codex_workspace_root "/tmp/jido_codex_cli_workspace"
   @scopes ["session:execute", "session:control", "session:tools"]
@@ -133,7 +134,7 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
 
     case {attempt_result, after_run_receipts} do
       {{:ok, result, invoke_opts, before_run_receipts}, receipts} ->
-        {:ok, projection(attrs, result, invoke_opts, before_run_receipts, receipts)}
+        {:ok, projection(attrs, result, invoke_opts, before_run_receipts, receipts, opts)}
 
       {{:error, reason}, []} ->
         {:error, reason}
@@ -276,20 +277,22 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
     |> compact_map()
   end
 
-  defp projection(attrs, result, invoke_opts, before_run_receipts, after_run_receipts) do
+  defp projection(attrs, result, invoke_opts, before_run_receipts, after_run_receipts, opts) do
     run = map_value(result, :run) || %{}
     attempt = map_value(result, :attempt) || %{}
     output = map_value(result, :output) || %{}
     run_ref = map_value(attrs, :run_ref)
+    run_id = map_value(run, :run_id) || ref_suffix(run_ref)
     workflow_ref = "workflow://codex-agent-runtime/#{ref_suffix(run_ref)}"
     turn_ref = "turn://codex-agent-runtime/#{ref_suffix(run_ref)}/1"
-
-    lower_request_ref =
-      "lower-request://#{map_value(run, :run_id) || ref_suffix(run_ref)}/#{@capability_id}"
+    lower_request_ref = lower_request_ref(run_id, @capability_id)
 
     lower_receipt_ref = lower_receipt_ref(attempt, lower_request_ref)
+    session_start = result |> lower_runtime_events(opts) |> session_start_evidence(run_id)
     status = output_status(output)
     observed_at = DateTime.utc_now()
+    terminal_event_seq = if session_start, do: 2, else: 1
+    after_run_event_seq = if session_start, do: 3, else: 2
 
     %{
       run_ref: run_ref,
@@ -310,14 +313,18 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
           lower_request_ref: lower_request_ref,
           lower_receipt_ref: lower_receipt_ref
         }
+        |> Map.merge(session_start_turn_fields(session_start))
       ],
-      action_receipts: [
-        %{
-          status: :succeeded,
-          lower_receipt_ref: lower_receipt_ref,
-          output_artifact_refs: output_artifact_refs(result)
-        }
-      ],
+      extensions: session_start_extensions(session_start),
+      action_receipts:
+        session_start_action_receipts(session_start) ++
+          [
+            %{
+              status: :succeeded,
+              lower_receipt_ref: lower_receipt_ref,
+              output_artifact_refs: output_artifact_refs(result)
+            }
+          ],
       runtime_events:
         hook_events(
           attrs,
@@ -328,10 +335,11 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
           0,
           before_run_receipts
         ) ++
+          session_start_runtime_events(session_start, attrs, workflow_ref, turn_ref, observed_at) ++
           [
             %{
               event_ref: "event://codex-agent-runtime/#{ref_suffix(run_ref)}/terminal",
-              event_seq: 1,
+              event_seq: terminal_event_seq,
               event_kind: "run.terminal",
               observed_at: observed_at,
               tenant_ref: Keyword.get(invoke_opts, :tenant_id),
@@ -349,19 +357,200 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
             turn_ref,
             observed_at,
             :after_run,
-            2,
+            after_run_event_seq,
             after_run_receipts
           ),
       budget_state: %{"turns_remaining" => 0},
       candidate_fact_refs: ["candidate-fact://codex-agent-runtime/#{ref_suffix(run_ref)}/1"],
       memory_proof_refs: [],
       receipt_ref_set: %{
-        lower_request_refs: [lower_request_ref],
-        lower_receipt_refs: [lower_receipt_ref],
+        lower_request_refs:
+          compact_list([session_start_lower_request_ref(session_start), lower_request_ref]),
+        lower_receipt_refs:
+          compact_list([session_start_lower_receipt_ref(session_start), lower_receipt_ref]),
         workspace_hook_refs: Enum.map(before_run_receipts ++ after_run_receipts, & &1.hook_ref)
       }
     }
   end
+
+  defp lower_request_ref(run_id, capability_id), do: "lower-request://#{run_id}/#{capability_id}"
+
+  defp lower_runtime_events(result, opts) do
+    case result |> map_value(:events) |> normalize_lower_events() do
+      [] ->
+        run = map_value(result, :run) || %{}
+        run_id = map_value(run, :run_id)
+
+        if present_binary?(run_id) do
+          opts
+          |> Keyword.get(:events_fun, &safe_lower_events/1)
+          |> call_events_fun(run_id)
+          |> normalize_lower_events()
+        else
+          []
+        end
+
+      events ->
+        events
+    end
+  end
+
+  defp call_events_fun(events_fun, run_id) when is_function(events_fun, 1),
+    do: events_fun.(run_id)
+
+  defp call_events_fun(_events_fun, _run_id), do: []
+
+  defp safe_lower_events(run_id) do
+    if Code.ensure_loaded?(V2) and function_exported?(V2, :events, 1) do
+      V2.events(run_id)
+    else
+      []
+    end
+  rescue
+    _error -> []
+  catch
+    _kind, _reason -> []
+  end
+
+  defp normalize_lower_events({:ok, events}), do: normalize_lower_events(events)
+  defp normalize_lower_events(events) when is_list(events), do: events
+  defp normalize_lower_events(_events), do: []
+
+  defp session_start_evidence(events, run_id) do
+    events
+    |> Enum.find(&session_start_event?/1)
+    |> case do
+      nil ->
+        nil
+
+      event ->
+        lifecycle = event |> map_value(:type) |> session_start_lifecycle()
+        session_id = lower_session_id(event)
+
+        if present_binary?(session_id) and present_binary?(lifecycle) do
+          lower_request_ref = lower_request_ref(run_id, @session_start_capability_id)
+
+          %{
+            operation: @session_start_capability_id,
+            lifecycle: lifecycle,
+            runtime_control_session_id: session_id,
+            runtime_control_session_ref: runtime_control_session_ref(session_id),
+            lower_event_ref: lower_event_ref(event, run_id, lifecycle, session_id),
+            lower_request_ref: lower_request_ref,
+            lower_receipt_ref: session_start_receipt_ref(run_id, session_id, lifecycle)
+          }
+        end
+    end
+  end
+
+  defp session_start_event?(event) do
+    event_type = map_value(event, :type)
+    event_type in ["session.started", "session.reused"]
+  end
+
+  defp session_start_lifecycle("session.started"), do: "started"
+  defp session_start_lifecycle("session.reused"), do: "reused"
+  defp session_start_lifecycle(_event_type), do: nil
+
+  defp lower_session_id(event) do
+    payload = map_value(event, :payload) || %{}
+
+    map_value(event, :session_id) ||
+      map_value(event, :runtime_ref_id) ||
+      map_value(payload, :session_id) ||
+      map_value(payload, :runtime_ref_id)
+  end
+
+  defp lower_event_ref(event, run_id, lifecycle, session_id) do
+    map_value(event, :event_id) ||
+      map_value(event, :event_ref) ||
+      "event://#{run_id}/#{@session_start_capability_id}/#{session_id}/#{lifecycle}"
+  end
+
+  defp runtime_control_session_ref(session_id), do: "runtime-session://#{session_id}"
+
+  defp session_start_receipt_ref(run_id, session_id, lifecycle),
+    do: "lower-receipt://#{run_id}/#{@session_start_capability_id}/#{session_id}/#{lifecycle}"
+
+  defp session_start_event_kind(%{lifecycle: "started"}), do: "codex.session.started"
+  defp session_start_event_kind(%{lifecycle: "reused"}), do: "codex.session.reused"
+
+  defp session_start_extensions(nil), do: %{}
+
+  defp session_start_extensions(evidence) do
+    %{
+      "codex_app_server_session_start" => %{
+        "confirmed?" => true,
+        "operation" => evidence.operation,
+        "lifecycle" => evidence.lifecycle,
+        "runtime_control_session_id" => evidence.runtime_control_session_id,
+        "runtime_control_session_ref" => evidence.runtime_control_session_ref,
+        "lower_event_ref" => evidence.lower_event_ref,
+        "lower_request_ref" => evidence.lower_request_ref,
+        "lower_receipt_ref" => evidence.lower_receipt_ref
+      }
+    }
+  end
+
+  defp session_start_turn_fields(nil), do: %{}
+
+  defp session_start_turn_fields(evidence) do
+    %{
+      session_start_confirmed?: true,
+      runtime_control_session_ref: evidence.runtime_control_session_ref,
+      session_start_event_kind: session_start_event_kind(evidence),
+      session_start_lower_request_ref: evidence.lower_request_ref,
+      session_start_lower_receipt_ref: evidence.lower_receipt_ref
+    }
+  end
+
+  defp session_start_action_receipts(nil), do: []
+
+  defp session_start_action_receipts(evidence) do
+    [
+      %{
+        operation: evidence.operation,
+        status: :succeeded,
+        lower_request_ref: evidence.lower_request_ref,
+        lower_receipt_ref: evidence.lower_receipt_ref,
+        runtime_control_session_ref: evidence.runtime_control_session_ref
+      }
+    ]
+  end
+
+  defp session_start_runtime_events(nil, _attrs, _workflow_ref, _turn_ref, _observed_at), do: []
+
+  defp session_start_runtime_events(evidence, attrs, workflow_ref, turn_ref, observed_at) do
+    [
+      %{
+        event_ref:
+          "event://codex-agent-runtime/#{ref_suffix(map_value(attrs, :run_ref))}/session-start",
+        event_seq: 1,
+        event_kind: session_start_event_kind(evidence),
+        observed_at: observed_at,
+        tenant_ref: map_value(attrs, :tenant_id) || map_value(attrs, :tenant_ref),
+        subject_ref: map_value(attrs, :subject_ref),
+        run_ref: map_value(attrs, :run_ref),
+        workflow_ref: workflow_ref,
+        session_ref: evidence.runtime_control_session_ref,
+        turn_ref: turn_ref,
+        level: "info",
+        message_summary: "codex session start confirmed",
+        extensions: %{
+          lower_event_ref: evidence.lower_event_ref,
+          lower_request_ref: evidence.lower_request_ref,
+          lower_receipt_ref: evidence.lower_receipt_ref,
+          lifecycle: evidence.lifecycle
+        }
+      }
+    ]
+  end
+
+  defp session_start_lower_request_ref(nil), do: nil
+  defp session_start_lower_request_ref(evidence), do: evidence.lower_request_ref
+
+  defp session_start_lower_receipt_ref(nil), do: nil
+  defp session_start_lower_receipt_ref(evidence), do: evidence.lower_receipt_ref
 
   defp hook_events(_attrs, _workflow_ref, _turn_ref, _observed_at, _stage, _seq, []), do: []
 
@@ -454,6 +643,8 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
     |> Enum.reject(fn {_key, value} -> value in [nil, "", [], %{}] end)
     |> Map.new()
   end
+
+  defp compact_list(list), do: Enum.reject(list, &is_nil/1)
 
   defp map_value(%_{} = struct, key), do: struct |> Map.from_struct() |> map_value(key)
   defp map_value(%{} = map, key), do: Map.get(map, key) || Map.get(map, Atom.to_string(key))

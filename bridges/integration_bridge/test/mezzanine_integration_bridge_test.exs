@@ -519,6 +519,84 @@ defmodule Mezzanine.IntegrationBridgeTest do
              "lower-receipt://jido-attempt-codex/codex.session.turn/succeeded"
   end
 
+  test "Codex agent runtime projects lower app-server session start evidence" do
+    attrs = %{
+      tenant_ref: "tenant://sample-app",
+      installation_ref: "installation://sample-app/codex",
+      subject_ref: "subject://sample-app/codex",
+      run_ref: "run://sample-app/codex-session-start",
+      trace_id: "trace://sample-app/codex-session-start",
+      idempotency_key: "idem-codex-session-start",
+      authority_context_ref: "authority-context://sample-app/codex-session-start"
+    }
+
+    invoke_fun = fn capability_id, input, opts ->
+      send(self(), {:codex_session_start_invoke, capability_id, input, opts})
+
+      {:ok,
+       %{
+         run: %{run_id: "jido-run-codex-session"},
+         attempt: %{attempt_id: "jido-attempt-codex-session"},
+         output: %{
+           text: "Sample App headless Codex live path is operational.",
+           provider_session_id: "codex-provider-session-42",
+           status: :completed
+         }
+       }}
+    end
+
+    events_fun = fn "jido-run-codex-session" ->
+      [
+        %{
+          event_id: "event-session-started",
+          type: "session.started",
+          session_id: "asm-session-42",
+          runtime_ref_id: "asm-session-42",
+          payload: %{operation: :start, status: :ready}
+        }
+      ]
+    end
+
+    assert {:ok, projection} =
+             CodexAgentRuntime.run(attrs,
+               invoke_fun: invoke_fun,
+               events_fun: events_fun,
+               connection_id: "conn-codex",
+               start_runtime_router?: false,
+               register_connector?: false
+             )
+
+    assert_received {:codex_session_start_invoke, "codex.session.turn", _input, _opts}
+
+    assert projection.extensions["codex_app_server_session_start"] == %{
+             "confirmed?" => true,
+             "operation" => "codex.session.start",
+             "lifecycle" => "started",
+             "runtime_control_session_id" => "asm-session-42",
+             "runtime_control_session_ref" => "runtime-session://asm-session-42",
+             "lower_event_ref" => "event-session-started",
+             "lower_request_ref" => "lower-request://jido-run-codex-session/codex.session.start",
+             "lower_receipt_ref" =>
+               "lower-receipt://jido-run-codex-session/codex.session.start/asm-session-42/started"
+           }
+
+    assert Enum.any?(projection.action_receipts, fn receipt ->
+             receipt.operation == "codex.session.start" and
+               receipt.lower_receipt_ref ==
+                 "lower-receipt://jido-run-codex-session/codex.session.start/asm-session-42/started"
+           end)
+
+    assert Enum.any?(projection.runtime_events, fn event ->
+             event.event_kind == "codex.session.started" and
+               event.session_ref == "runtime-session://asm-session-42" and
+               event.extensions.lower_event_ref == "event-session-started"
+           end)
+
+    assert "lower-request://jido-run-codex-session/codex.session.start" in projection.receipt_ref_set.lower_request_refs
+
+    assert "lower-receipt://jido-run-codex-session/codex.session.start/asm-session-42/started" in projection.receipt_ref_set.lower_receipt_refs
+  end
+
   test "Codex agent runtime gates lower invocation behind before-run workspace hooks" do
     parent = self()
     workspace_root = tmp_dir("codex-before-run")
