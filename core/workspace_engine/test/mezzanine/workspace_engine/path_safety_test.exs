@@ -9,6 +9,12 @@ defmodule Mezzanine.WorkspaceEngine.PathSafetyTest do
     assert PathSafety.slug("LIN-101: fix / unsafe path") == "LIN-101__fix___unsafe_path"
   end
 
+  test "workspace keys preserve only portable issue-identifier characters" do
+    assert PathSafety.slug("AZaz09._-") == "AZaz09._-"
+    assert PathSafety.slug("MT/Det") == "MT_Det"
+    assert PathSafety.slug("LIN 101:fix\tpath\nnext") == "LIN_101_fix_path_next"
+  end
+
   test "reserves a reusable per-subject local workspace" do
     root = tmp_dir()
 
@@ -28,6 +34,33 @@ defmodule Mezzanine.WorkspaceEngine.PathSafetyTest do
     assert {:ok, %WorkspaceRecord{} = second} = Allocator.reserve(attrs)
     assert second.concrete_path == first.concrete_path
     assert second.reuse? == true
+  end
+
+  test "duplicate sanitized subject refs reuse the same directory" do
+    root = tmp_dir()
+
+    first_attrs = %{
+      installation_id: "installation-1",
+      subject_id: "subject-1",
+      subject_ref: "task/A",
+      workspace_root: root
+    }
+
+    second_attrs = %{
+      installation_id: "installation-1",
+      subject_id: "subject-2",
+      subject_ref: "task:A",
+      workspace_root: root
+    }
+
+    assert {:ok, %WorkspaceRecord{} = first} = Allocator.reserve(first_attrs)
+    assert {:ok, %WorkspaceRecord{} = second} = Allocator.reserve(second_attrs)
+
+    assert first.slug == "task_A"
+    assert second.slug == "task_A"
+    assert second.concrete_path == first.concrete_path
+    assert second.reuse? == true
+    assert second.logical_ref == "workspace:installation-1:subject-2"
   end
 
   test "projects opaque workspace refs without concrete paths" do
