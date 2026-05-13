@@ -174,7 +174,7 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowRetryEvent do
 
       retry_token(event) != retry_token(current) ->
         {:error,
-         {:retry_token_mismatch,
+         {:stale_retry_token,
           %{
             expected: retry_token(event),
             got: retry_token(current)
@@ -185,12 +185,22 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowRetryEvent do
     end
   end
 
-  @spec retry_token(t() | map() | keyword()) :: map()
-  def retry_token(%__MODULE__{} = event), do: event |> Map.from_struct() |> retry_token()
+  @spec retry_token(t() | map() | keyword()) :: term()
+  def retry_token(%__MODULE__{retry_token: retry_token}) when not is_nil(retry_token),
+    do: retry_token
+
+  def retry_token(%__MODULE__{} = event), do: event |> Map.from_struct() |> derived_retry_token()
 
   def retry_token(attrs) do
     attrs = normalize(attrs)
 
+    case Map.fetch(attrs, :retry_token) do
+      {:ok, retry_token} when not is_nil(retry_token) -> retry_token
+      _other -> derived_retry_token(attrs)
+    end
+  end
+
+  defp derived_retry_token(attrs) do
     %{
       workflow_id: Map.get(attrs, :workflow_id),
       workflow_version: Map.get(attrs, :workflow_version),

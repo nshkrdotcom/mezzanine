@@ -569,6 +569,49 @@ defmodule Mezzanine.WorkSchedulerTest do
     assert stall.reason == "lower_activity_timeout"
   end
 
+  test "retry decision ignores superseded timer tokens without dispatching" do
+    execution = %{
+      execution_id: "execution-retry-token",
+      subject_id: "subject-retry-token",
+      workflow_id: "workflow-retry-token",
+      workflow_version: "v1",
+      attempt: 2,
+      retry_token: "retry-current",
+      idempotency_key: "idem-retry-token"
+    }
+
+    assert {:ok, stale_retry} =
+             WorkScheduler.retry_decision(%{
+               now: @now,
+               execution: execution,
+               retry: %{execution | retry_token: "retry-superseded"}
+             })
+
+    assert stale_retry.event_kind == "retry.stale_token_ignored"
+    assert stale_retry.status == "ignored"
+    assert stale_retry.safe_action == "ignore_retry"
+    assert stale_retry.reason == "stale_retry_token"
+    assert stale_retry.dispatch_allowed? == false
+    assert stale_retry.current_retry_retained? == true
+    assert stale_retry.attempt == 2
+    assert stale_retry.retry_token.retry_token == "retry-current"
+    assert stale_retry.attempted_retry_token.retry_token == "retry-superseded"
+
+    assert {:ok, accepted_retry} =
+             WorkScheduler.retry_decision(%{
+               now: @now,
+               execution: execution,
+               retry: execution
+             })
+
+    assert accepted_retry.event_kind == "retry.accepted"
+    assert accepted_retry.status == "accepted"
+    assert accepted_retry.safe_action == "retry_dispatch"
+    assert accepted_retry.dispatch_allowed? == true
+    assert accepted_retry.current_retry_retained? == false
+    assert accepted_retry.attempt == 2
+  end
+
   test "emits tick and abnormal retry backoff cap evidence" do
     execution = %{
       execution_id: "execution-1",

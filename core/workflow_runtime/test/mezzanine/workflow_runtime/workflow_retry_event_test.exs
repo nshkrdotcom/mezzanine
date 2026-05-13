@@ -93,6 +93,21 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowRetryEventTest do
              WorkflowRetryEvent.guard_retry_token(event, current(idempotency_key: "idem-2"))
   end
 
+  test "retry token guard rejects superseded raw retry tokens without attempt drift" do
+    assert {:ok, event} =
+             attrs(retry_token: "retry-token-old")
+             |> WorkflowRetryEvent.normal_continuation_retry()
+
+    assert :ok =
+             WorkflowRetryEvent.guard_retry_token(event, current(retry_token: "retry-token-old"))
+
+    assert {:error, {:stale_retry_token, stale}} =
+             WorkflowRetryEvent.guard_retry_token(event, current(retry_token: "retry-token-new"))
+
+    assert stale.expected == "retry-token-old"
+    assert stale.got == "retry-token-new"
+  end
+
   test "required fields fail closed" do
     assert {:error, {:missing_required_retry_event_field, :workflow_id}} =
              attrs()

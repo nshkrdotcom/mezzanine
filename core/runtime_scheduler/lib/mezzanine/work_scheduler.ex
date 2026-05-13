@@ -184,6 +184,11 @@ defmodule Mezzanine.WorkScheduler do
        evidence_event("retry.stale_token_ignored", execution, now,
          reason: "stale_retry_token",
          safe_action: "ignore_retry",
+         status: "ignored",
+         dispatch_allowed?: false,
+         current_retry_retained?: true,
+         attempt: value(execution, :attempt),
+         attempted_attempt: value(retry, :attempt),
          retry_token: retry_token(execution),
          attempted_retry_token: retry_token(retry)
        )}
@@ -192,6 +197,10 @@ defmodule Mezzanine.WorkScheduler do
        evidence_event("retry.accepted", execution, now,
          reason: "retry_token_current",
          safe_action: "retry_dispatch",
+         status: "accepted",
+         dispatch_allowed?: true,
+         current_retry_retained?: false,
+         attempt: value(execution, :attempt),
          retry_token: retry_token(execution)
        )}
     end
@@ -822,8 +831,11 @@ defmodule Mezzanine.WorkScheduler do
       workflow_id: value(attrs, :workflow_id),
       workflow_version: value(attrs, :workflow_version),
       attempt: Keyword.get(opts, :attempt) || value(attrs, :attempt),
+      attempted_attempt: Keyword.get(opts, :attempted_attempt),
       reason: Keyword.fetch!(opts, :reason),
       safe_action: Keyword.fetch!(opts, :safe_action),
+      dispatch_allowed?: Keyword.get(opts, :dispatch_allowed?),
+      current_retry_retained?: Keyword.get(opts, :current_retry_retained?),
       occurred_at: now,
       retry_token: Keyword.get(opts, :retry_token),
       attempted_retry_token: Keyword.get(opts, :attempted_retry_token),
