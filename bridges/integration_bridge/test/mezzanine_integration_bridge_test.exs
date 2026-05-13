@@ -591,6 +591,92 @@ defmodule Mezzanine.IntegrationBridgeTest do
            )
   end
 
+  test "Codex agent runtime sends continuation guidance without resending first prompt" do
+    first_prompt = "FIRST_PROMPT_SECRET_BODY should only be sent to turn one."
+
+    continuation_guidance =
+      "Continuation guidance: resume from current workspace state and stop at max turns."
+
+    attrs = %{
+      tenant_ref: "tenant://sample-app",
+      installation_ref: "installation://sample-app/codex",
+      subject_ref: "subject://sample-app/codex-continuation",
+      run_ref: "run://sample-app/codex-continuation",
+      trace_id: "trace://sample-app/codex-continuation",
+      idempotency_key: "idem-codex-continuation",
+      authority_context_ref: "authority-context://sample-app/codex-continuation",
+      max_turns: 2,
+      initial_input_body: first_prompt,
+      initial_input_ref: "prompt://sample-app/task/first-turn",
+      initial_input_hash: sha256(first_prompt),
+      initial_input_source_ref: "workflow://sample-app/default",
+      initial_input_rendered?: true,
+      initial_input_body_redacted?: true,
+      continuation_policy: %{mode: "until_max_turns", active_state?: true},
+      continuation_input_body: continuation_guidance,
+      continuation_input_ref: "continuation-guidance://sample-app/task/2",
+      continuation_input_hash: sha256(continuation_guidance),
+      continuation_input_source_ref: "workflow://sample-app/default",
+      continuation_input_rendered?: true,
+      continuation_input_body_redacted?: true
+    }
+
+    invoke_fun = fn capability_id, input, opts ->
+      turn_index = Process.get(:codex_continuation_turn_index, 0) + 1
+      Process.put(:codex_continuation_turn_index, turn_index)
+      send(self(), {:codex_continuation_invoke, turn_index, capability_id, input, opts})
+
+      {:ok,
+       %{
+         run: %{run_id: "jido-run-codex-continuation-#{turn_index}"},
+         attempt: %{attempt_id: "jido-attempt-codex-continuation-#{turn_index}"},
+         output: %{
+           text: "turn #{turn_index} received",
+           provider_session_id: "provider-session-continuation",
+           provider_turn_id: "provider-turn-#{turn_index}",
+           status: :completed
+         }
+       }}
+    end
+
+    on_exit(fn -> Process.delete(:codex_continuation_turn_index) end)
+
+    assert {:ok, projection} =
+             CodexAgentRuntime.run(attrs,
+               invoke_fun: invoke_fun,
+               connection_id: "conn-codex",
+               start_runtime_router?: false,
+               register_connector?: false
+             )
+
+    assert_received {:codex_continuation_invoke, 1, "codex.session.turn", first_input, _opts}
+    assert_received {:codex_continuation_invoke, 2, "codex.session.turn", second_input, _opts}
+    assert first_input.prompt == first_prompt
+    assert second_input.prompt == continuation_guidance
+    refute second_input.prompt =~ "FIRST_PROMPT_SECRET_BODY"
+
+    assert second_input.continuation == %{
+             strategy: :exact,
+             provider_session_id: "provider-session-continuation"
+           }
+
+    assert [first_turn, second_turn] = projection.turn_states
+    assert first_turn.turn_index == 1
+    assert second_turn.turn_index == 2
+    assert second_turn.continuation? == true
+    assert second_turn.continuation_guidance_ref == "continuation-guidance://sample-app/task/2"
+    assert second_turn.continuation_prompt_body_included? == false
+    assert projection.budget_state == %{"turns_remaining" => 0}
+
+    continuation = projection.extensions["codex_continuation"]
+    assert continuation["confirmed?"] == true
+    assert continuation["turn_count"] == 2
+    assert continuation["continuation_turn_count"] == 1
+    assert continuation["max_turns"] == 2
+    assert continuation["max_turns_reached?"] == true
+    refute inspect(projection) =~ "FIRST_PROMPT_SECRET_BODY"
+  end
+
   test "Codex agent runtime projects lower app-server session start evidence" do
     attrs = %{
       tenant_ref: "tenant://sample-app",

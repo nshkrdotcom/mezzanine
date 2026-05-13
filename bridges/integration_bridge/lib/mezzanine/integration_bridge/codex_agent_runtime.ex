@@ -124,9 +124,9 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
   defp run_codex_attempt(attrs, opts, invoke_fun, workspace_root, connection_id, workspace) do
     with {:ok, before_run_receipts} <- run_workspace_hooks(workspace, :before_run, opts),
          invoke_opts <- codex_invoke_opts(attrs, connection_id, opts, workspace_root),
-         input <- codex_input(attrs, opts, workspace_root),
-         {:ok, result} <- invoke_fun.(@capability_id, input, invoke_opts) do
-      {:ok, result, invoke_opts, input, before_run_receipts}
+         {:ok, turn_attempts} <-
+           run_codex_turns(attrs, opts, invoke_fun, workspace_root, invoke_opts) do
+      {:ok, turn_attempts, invoke_opts, before_run_receipts}
     end
   end
 
@@ -134,8 +134,8 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
     after_run_receipts = run_after_run_hooks(workspace, opts)
 
     case {attempt_result, after_run_receipts} do
-      {{:ok, result, invoke_opts, input, before_run_receipts}, receipts} ->
-        {:ok, projection(attrs, result, invoke_opts, input, before_run_receipts, receipts, opts)}
+      {{:ok, turn_attempts, invoke_opts, before_run_receipts}, receipts} ->
+        {:ok, projection(attrs, turn_attempts, invoke_opts, before_run_receipts, receipts, opts)}
 
       {{:error, reason}, []} ->
         {:error, reason}
@@ -243,6 +243,10 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
   end
 
   defp codex_input(attrs, opts, workspace_root) do
+    codex_input(attrs, opts, workspace_root, 1, nil)
+  end
+
+  defp codex_input(attrs, opts, workspace_root, 1, _previous_result) do
     %{
       prompt: first_turn_prompt(attrs, opts),
       cwd: workspace_root,
@@ -253,11 +257,146 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
     |> put_present(:dynamic_tool_manifest, Keyword.get(opts, :dynamic_tool_manifest))
   end
 
+  defp codex_input(attrs, opts, workspace_root, turn_index, previous_result) do
+    max_turns = requested_max_turns(attrs)
+
+    %{
+      prompt: continuation_guidance(attrs, turn_index, max_turns),
+      cwd: workspace_root,
+      provider_metadata: %{"app_server" => true, "skip_git_repo_check" => true},
+      authority_metadata: authority_metadata(attrs, turn_index, max_turns),
+      host_tools: [],
+      continuation: continuation_metadata(previous_result, turn_index, max_turns)
+    }
+    |> put_present(:dynamic_tool_manifest, Keyword.get(opts, :dynamic_tool_manifest))
+  end
+
   defp first_turn_prompt(attrs, opts) do
     Keyword.get(opts, :prompt) ||
       non_empty(map_value(attrs, :initial_input_body)) ||
       non_empty(map_value(attrs, :prompt)) ||
       "Return one concise sentence confirming the governed Codex runtime path is operational. Do not modify files."
+  end
+
+  defp run_codex_turns(attrs, opts, invoke_fun, workspace_root, invoke_opts) do
+    turn_limit = codex_turn_limit(attrs)
+
+    1..turn_limit
+    |> Enum.reduce_while({:ok, [], nil}, fn turn_index, {:ok, attempts, previous_result} ->
+      case run_codex_turn(
+             attrs,
+             opts,
+             invoke_fun,
+             workspace_root,
+             invoke_opts,
+             turn_index,
+             previous_result
+           ) do
+        {:ok, attempt, result} ->
+          next_codex_turn_step(turn_index, turn_limit, [attempt | attempts], result)
+
+        {:error, reason} ->
+          {:halt, {:error, reason}}
+      end
+    end)
+    |> case do
+      {:ok, attempts, _previous_result} -> {:ok, Enum.reverse(attempts)}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp run_codex_turn(
+         attrs,
+         opts,
+         invoke_fun,
+         workspace_root,
+         invoke_opts,
+         turn_index,
+         previous_result
+       ) do
+    input = codex_turn_input(attrs, opts, workspace_root, turn_index, previous_result)
+
+    with {:ok, result} <- invoke_fun.(@capability_id, input, invoke_opts) do
+      {:ok, %{turn_index: turn_index, input: input, result: result}, result}
+    end
+  end
+
+  defp codex_turn_input(attrs, opts, workspace_root, 1, _previous_result),
+    do: codex_input(attrs, opts, workspace_root)
+
+  defp codex_turn_input(attrs, opts, workspace_root, turn_index, previous_result),
+    do: codex_input(attrs, opts, workspace_root, turn_index, previous_result)
+
+  defp next_codex_turn_step(turn_index, turn_limit, attempts, result) do
+    if continue_after_turn?(turn_index, turn_limit, result) do
+      {:cont, {:ok, attempts, result}}
+    else
+      {:halt, {:ok, attempts, result}}
+    end
+  end
+
+  defp codex_turn_limit(attrs) do
+    max_turns = requested_max_turns(attrs)
+
+    if continuation_enabled?(attrs) do
+      max_turns
+    else
+      1
+    end
+  end
+
+  defp requested_max_turns(attrs) do
+    case map_value(attrs, :max_turns) do
+      value when is_integer(value) and value > 0 ->
+        value
+
+      value when is_binary(value) ->
+        case Integer.parse(value) do
+          {parsed, ""} when parsed > 0 -> parsed
+          _other -> 1
+        end
+
+      _other ->
+        1
+    end
+  end
+
+  defp continuation_enabled?(attrs) do
+    policy = map_value(attrs, :continuation_policy) || %{}
+    mode = map_value(policy, :mode)
+
+    requested_max_turns(attrs) > 1 and
+      (mode in [:until_max_turns, "until_max_turns", :while_active, "while_active"] or
+         truthy?(map_value(policy, :enabled?)) or truthy?(map_value(policy, :active_state?)))
+  end
+
+  defp continue_after_turn?(turn_index, turn_limit, result) do
+    turn_index < turn_limit and output_status(map_value(result, :output) || %{}) == "completed"
+  end
+
+  defp continuation_guidance(attrs, turn_index, max_turns) do
+    non_empty(map_value(attrs, :continuation_input_body)) ||
+      """
+      Continuation guidance:
+
+      - The previous Codex turn completed normally, but the subject is still active.
+      - This is continuation turn ##{turn_index} of #{max_turns} for the current agent run.
+      - Resume from the current workspace and workpad state instead of restarting from scratch.
+      - The original task instructions and prior turn context are already present in this thread, so do not restate them before acting.
+      - Focus on the remaining work and do not end the turn while the subject stays active unless you are truly blocked.
+      """
+      |> String.trim()
+  end
+
+  defp continuation_metadata(previous_result, _turn_index, _max_turns) do
+    previous_output = previous_result |> map_value(:output) || %{}
+    provider_session_id = map_value(previous_output, :provider_session_id)
+
+    %{
+      strategy: if(present_binary?(provider_session_id), do: :exact, else: :latest),
+      provider_session_id: provider_session_id
+    }
+    |> compact_map()
   end
 
   defp codex_workspace_root(opts) do
@@ -271,44 +410,64 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
   end
 
   defp authority_metadata(attrs) do
+    authority_metadata(attrs, 1, requested_max_turns(attrs))
+  end
+
+  defp authority_metadata(attrs, turn_index, max_turns) do
     %{
       "authority_context_ref" => map_value(attrs, :authority_context_ref),
       "capability_id" => @capability_id,
       "idempotency_key" => map_value(attrs, :idempotency_key),
-      "trace_id" => map_value(attrs, :trace_id)
+      "trace_id" => map_value(attrs, :trace_id),
+      "turn_index" => turn_index,
+      "max_turns" => max_turns
     }
     |> compact_map()
   end
 
   defp projection(
          attrs,
-         result,
+         turn_attempts,
          invoke_opts,
-         input,
          before_run_receipts,
          after_run_receipts,
          opts
        ) do
-    run = map_value(result, :run) || %{}
-    attempt = map_value(result, :attempt) || %{}
+    first_turn_attempt = List.first(turn_attempts)
+    final_turn_attempt = List.last(turn_attempts)
+    result = map_value(final_turn_attempt, :result) || %{}
     output = map_value(result, :output) || %{}
     run_ref = map_value(attrs, :run_ref)
-    run_id = map_value(run, :run_id) || ref_suffix(run_ref)
+    max_turns = requested_max_turns(attrs)
+    actual_turn_count = length(turn_attempts)
     workflow_ref = "workflow://codex-agent-runtime/#{ref_suffix(run_ref)}"
-    turn_ref = "turn://codex-agent-runtime/#{ref_suffix(run_ref)}/1"
-    lower_request_ref = lower_request_ref(run_id, @capability_id)
+    first_turn_ref = turn_ref(run_ref, 1)
 
-    lower_receipt_ref = lower_receipt_ref(attempt, lower_request_ref)
-    session_start = result |> lower_runtime_events(opts) |> session_start_evidence(run_id)
-    first_prompt = first_prompt_evidence(attrs, input, lower_request_ref)
+    first_run_id = turn_run_id(first_turn_attempt, run_ref)
+    first_lower_request_ref = lower_request_ref(first_run_id, @capability_id)
+
+    session_start =
+      first_turn_attempt
+      |> turn_attempt_result()
+      |> lower_runtime_events(opts)
+      |> session_start_evidence(first_run_id)
+
+    first_prompt =
+      first_prompt_evidence(
+        attrs,
+        turn_attempt_input(first_turn_attempt),
+        first_lower_request_ref
+      )
+
+    continuation = continuation_evidence(attrs, turn_attempts, max_turns)
 
     app_server_protocol =
       app_server_protocol_evidence(
-        input,
-        output,
+        turn_attempt_input(first_turn_attempt),
+        turn_attempt_output(first_turn_attempt),
         session_start,
-        lower_request_ref,
-        lower_receipt_ref
+        first_lower_request_ref,
+        turn_lower_receipt_ref(first_turn_attempt, first_lower_request_ref)
       )
 
     status = output_status(output)
@@ -316,11 +475,14 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
     session_start_event_count = if session_start, do: 1, else: 0
     first_prompt_event_count = if first_prompt, do: 1, else: 0
     app_server_protocol_event_count = if app_server_protocol, do: 1, else: 0
+    continuation_event_count = continuation_event_count(continuation)
     first_prompt_event_seq = session_start_event_count + 1
     app_server_protocol_event_seq = session_start_event_count + first_prompt_event_count + 1
+    continuation_event_seq = app_server_protocol_event_seq + app_server_protocol_event_count
 
     terminal_event_seq =
-      session_start_event_count + first_prompt_event_count + app_server_protocol_event_count + 1
+      session_start_event_count + first_prompt_event_count + app_server_protocol_event_count +
+        continuation_event_count + 1
 
     after_run_event_seq = terminal_event_seq + 1
 
@@ -330,52 +492,49 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
       workflow_ref: workflow_ref,
       status: status,
       terminal_state: status,
-      turn_states: [
-        %{
-          turn_ref: turn_ref,
-          state: status,
-          status: status,
-          session_ref: session_ref(output, run_ref),
-          operation: @capability_id,
-          credential_redeemed?: true,
-          provider_request_sent?: true,
-          provider_response_received?: true,
-          lower_request_ref: lower_request_ref,
-          lower_receipt_ref: lower_receipt_ref
-        }
-        |> Map.merge(session_start_turn_fields(session_start))
-        |> Map.merge(first_prompt_turn_fields(first_prompt))
-        |> Map.merge(app_server_protocol_turn_fields(app_server_protocol))
-      ],
+      turn_states:
+        Enum.map(
+          turn_attempts,
+          &turn_state(
+            attrs,
+            &1,
+            status,
+            session_start,
+            first_prompt,
+            app_server_protocol,
+            continuation
+          )
+        ),
       extensions:
         session_start_extensions(session_start)
         |> Map.merge(first_prompt_extensions(first_prompt))
-        |> Map.merge(app_server_protocol_extensions(app_server_protocol)),
+        |> Map.merge(app_server_protocol_extensions(app_server_protocol))
+        |> Map.merge(continuation_extensions(continuation)),
       action_receipts:
         session_start_action_receipts(session_start) ++
-          [
-            %{
-              status: :succeeded,
-              lower_receipt_ref: lower_receipt_ref,
-              output_artifact_refs: output_artifact_refs(result)
-            }
-          ],
+          Enum.map(turn_attempts, &action_receipt/1),
       runtime_events:
         hook_events(
           attrs,
           workflow_ref,
-          turn_ref,
+          first_turn_ref,
           observed_at,
           :before_run,
           0,
           before_run_receipts
         ) ++
-          session_start_runtime_events(session_start, attrs, workflow_ref, turn_ref, observed_at) ++
+          session_start_runtime_events(
+            session_start,
+            attrs,
+            workflow_ref,
+            first_turn_ref,
+            observed_at
+          ) ++
           first_prompt_runtime_events(
             first_prompt,
             attrs,
             workflow_ref,
-            turn_ref,
+            first_turn_ref,
             observed_at,
             first_prompt_event_seq
           ) ++
@@ -383,9 +542,16 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
             app_server_protocol,
             attrs,
             workflow_ref,
-            turn_ref,
+            first_turn_ref,
             observed_at,
             app_server_protocol_event_seq
+          ) ++
+          continuation_runtime_events(
+            continuation,
+            attrs,
+            workflow_ref,
+            observed_at,
+            continuation_event_seq
           ) ++
           [
             %{
@@ -397,7 +563,7 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
               subject_ref: map_value(attrs, :subject_ref),
               run_ref: run_ref,
               workflow_ref: workflow_ref,
-              turn_ref: turn_ref,
+              turn_ref: turn_ref(run_ref, actual_turn_count),
               level: "info",
               message_summary: "codex session turn completed"
             }
@@ -405,24 +571,119 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
           hook_events(
             attrs,
             workflow_ref,
-            turn_ref,
+            first_turn_ref,
             observed_at,
             :after_run,
             after_run_event_seq,
             after_run_receipts
           ),
-      budget_state: %{"turns_remaining" => 0},
-      candidate_fact_refs: ["candidate-fact://codex-agent-runtime/#{ref_suffix(run_ref)}/1"],
+      budget_state: %{"turns_remaining" => max(max_turns - actual_turn_count, 0)},
+      candidate_fact_refs:
+        Enum.map(
+          1..actual_turn_count,
+          &"candidate-fact://codex-agent-runtime/#{ref_suffix(run_ref)}/#{&1}"
+        ),
       memory_proof_refs: [],
       receipt_ref_set: %{
         lower_request_refs:
-          compact_list([session_start_lower_request_ref(session_start), lower_request_ref]),
+          compact_list(
+            [session_start_lower_request_ref(session_start)] ++
+              Enum.map(turn_attempts, &lower_request_ref(&1))
+          ),
         lower_receipt_refs:
-          compact_list([session_start_lower_receipt_ref(session_start), lower_receipt_ref]),
+          compact_list(
+            [session_start_lower_receipt_ref(session_start)] ++
+              Enum.map(turn_attempts, &lower_receipt_ref(&1))
+          ),
         workspace_hook_refs: Enum.map(before_run_receipts ++ after_run_receipts, & &1.hook_ref)
       }
     }
   end
+
+  defp turn_state(
+         attrs,
+         turn_attempt,
+         status,
+         session_start,
+         first_prompt,
+         app_server_protocol,
+         continuation
+       ) do
+    turn_index = map_value(turn_attempt, :turn_index)
+    run_ref = map_value(attrs, :run_ref)
+    result = turn_attempt_result(turn_attempt)
+    output = map_value(result, :output) || %{}
+    lower_request_ref = lower_request_ref(turn_attempt)
+    lower_receipt_ref = lower_receipt_ref(turn_attempt)
+
+    %{
+      turn_ref: turn_ref(run_ref, turn_index),
+      turn_index: turn_index,
+      state: status,
+      status: output_status(output),
+      session_ref: session_ref(output, run_ref),
+      operation: @capability_id,
+      credential_redeemed?: true,
+      provider_request_sent?: true,
+      provider_response_received?: true,
+      lower_request_ref: lower_request_ref,
+      lower_receipt_ref: lower_receipt_ref
+    }
+    |> Map.merge(if(turn_index == 1, do: session_start_turn_fields(session_start), else: %{}))
+    |> Map.merge(if(turn_index == 1, do: first_prompt_turn_fields(first_prompt), else: %{}))
+    |> Map.merge(
+      if(turn_index == 1, do: app_server_protocol_turn_fields(app_server_protocol), else: %{})
+    )
+    |> Map.merge(continuation_turn_fields(continuation, turn_index))
+  end
+
+  defp action_receipt(turn_attempt) do
+    %{
+      status: :succeeded,
+      lower_receipt_ref: lower_receipt_ref(turn_attempt),
+      output_artifact_refs: output_artifact_refs(turn_attempt_result(turn_attempt))
+    }
+  end
+
+  defp turn_ref(run_ref, turn_index),
+    do: "turn://codex-agent-runtime/#{ref_suffix(run_ref)}/#{turn_index}"
+
+  defp lower_request_ref(turn_attempt) do
+    lower_request_ref(turn_run_id(turn_attempt, nil), @capability_id)
+  end
+
+  defp lower_receipt_ref(turn_attempt) do
+    turn_lower_receipt_ref(turn_attempt, lower_request_ref(turn_attempt))
+  end
+
+  defp turn_lower_receipt_ref(turn_attempt, lower_request_ref) do
+    turn_attempt
+    |> turn_attempt_attempt()
+    |> lower_receipt_ref(lower_request_ref)
+  end
+
+  defp turn_run_id(turn_attempt, run_ref) do
+    turn_attempt
+    |> turn_attempt_result()
+    |> map_value(:run)
+    |> case do
+      %{} = run -> map_value(run, :run_id)
+      _missing -> nil
+    end
+    |> case do
+      value when is_binary(value) and value != "" -> value
+      _missing -> ref_suffix(run_ref || "run")
+    end
+  end
+
+  defp turn_attempt_result(turn_attempt), do: map_value(turn_attempt, :result) || %{}
+  defp turn_attempt_input(turn_attempt), do: map_value(turn_attempt, :input) || %{}
+
+  defp turn_attempt_output(turn_attempt),
+    do: map_value(turn_attempt_result(turn_attempt), :output) || %{}
+
+  defp turn_attempt_attempt(turn_attempt),
+    do: map_value(turn_attempt_result(turn_attempt), :attempt) || %{}
 
   defp lower_request_ref(run_id, capability_id), do: "lower-request://#{run_id}/#{capability_id}"
 
@@ -754,6 +1015,129 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
           |> compact_map()
       }
     ]
+  end
+
+  defp continuation_evidence(_attrs, turn_attempts, _max_turns) when length(turn_attempts) <= 1,
+    do: nil
+
+  defp continuation_evidence(attrs, turn_attempts, max_turns) do
+    actual_turn_count = length(turn_attempts)
+    continuation_turn_count = max(actual_turn_count - 1, 0)
+
+    %{
+      confirmed?: continuation_turn_count > 0,
+      turn_count: actual_turn_count,
+      continuation_turn_count: continuation_turn_count,
+      max_turns: max_turns,
+      max_turns_reached?: actual_turn_count >= max_turns,
+      continuation_guidance_ref: first_non_empty(attrs, [:continuation_input_ref]),
+      continuation_guidance_hash: first_non_empty(attrs, [:continuation_input_hash]),
+      continuation_guidance_source_ref: first_non_empty(attrs, [:continuation_input_source_ref]),
+      continuation_guidance_rendered?: truthy?(map_value(attrs, :continuation_input_rendered?)),
+      continuation_prompt_body_redacted?: true,
+      continuation_prompt_body_included?: false,
+      first_prompt_reused_on_continuation?: false,
+      lower_request_refs: Enum.map(Enum.drop(turn_attempts, 1), &lower_request_ref/1),
+      lower_receipt_refs: Enum.map(Enum.drop(turn_attempts, 1), &lower_receipt_ref/1)
+    }
+    |> compact_map()
+  end
+
+  defp continuation_extensions(nil), do: %{}
+
+  defp continuation_extensions(evidence) do
+    %{
+      "codex_continuation" =>
+        %{
+          "confirmed?" => evidence.confirmed?,
+          "turn_count" => map_value(evidence, :turn_count),
+          "continuation_turn_count" => map_value(evidence, :continuation_turn_count),
+          "max_turns" => map_value(evidence, :max_turns),
+          "max_turns_reached?" => map_value(evidence, :max_turns_reached?),
+          "continuation_guidance_ref" => map_value(evidence, :continuation_guidance_ref),
+          "continuation_guidance_hash" => map_value(evidence, :continuation_guidance_hash),
+          "continuation_guidance_source_ref" =>
+            map_value(evidence, :continuation_guidance_source_ref),
+          "continuation_guidance_rendered?" =>
+            map_value(evidence, :continuation_guidance_rendered?),
+          "continuation_prompt_body_redacted?" =>
+            map_value(evidence, :continuation_prompt_body_redacted?),
+          "continuation_prompt_body_included?" =>
+            map_value(evidence, :continuation_prompt_body_included?),
+          "first_prompt_reused_on_continuation?" =>
+            map_value(evidence, :first_prompt_reused_on_continuation?),
+          "lower_request_refs" => map_value(evidence, :lower_request_refs),
+          "lower_receipt_refs" => map_value(evidence, :lower_receipt_refs)
+        }
+        |> compact_map()
+    }
+  end
+
+  defp continuation_turn_fields(nil, _turn_index), do: %{}
+  defp continuation_turn_fields(_evidence, 1), do: %{}
+
+  defp continuation_turn_fields(evidence, _turn_index) do
+    %{
+      continuation?: true,
+      continuation_guidance_ref: map_value(evidence, :continuation_guidance_ref),
+      continuation_guidance_hash: map_value(evidence, :continuation_guidance_hash),
+      continuation_guidance_source_ref: map_value(evidence, :continuation_guidance_source_ref),
+      continuation_guidance_rendered?: map_value(evidence, :continuation_guidance_rendered?),
+      continuation_prompt_body_redacted?:
+        map_value(evidence, :continuation_prompt_body_redacted?),
+      continuation_prompt_body_included?:
+        map_value(evidence, :continuation_prompt_body_included?),
+      first_prompt_reused_on_continuation?:
+        map_value(evidence, :first_prompt_reused_on_continuation?)
+    }
+    |> compact_map()
+  end
+
+  defp continuation_event_count(nil), do: 0
+  defp continuation_event_count(evidence), do: map_value(evidence, :continuation_turn_count) || 0
+
+  defp continuation_runtime_events(nil, _attrs, _workflow_ref, _observed_at, _event_seq),
+    do: []
+
+  defp continuation_runtime_events(evidence, attrs, workflow_ref, observed_at, event_seq) do
+    continuation_count = continuation_event_count(evidence)
+
+    1..continuation_count
+    |> Enum.map(fn offset ->
+      turn_index = offset + 1
+
+      %{
+        event_ref:
+          "event://codex-agent-runtime/#{ref_suffix(map_value(attrs, :run_ref))}/continuation-#{turn_index}",
+        event_seq: event_seq + offset - 1,
+        event_kind: "codex.continuation_turn.confirmed",
+        observed_at: observed_at,
+        tenant_ref: map_value(attrs, :tenant_id) || map_value(attrs, :tenant_ref),
+        subject_ref: map_value(attrs, :subject_ref),
+        run_ref: map_value(attrs, :run_ref),
+        workflow_ref: workflow_ref,
+        turn_ref: turn_ref(map_value(attrs, :run_ref), turn_index),
+        level: "info",
+        message_summary: "codex continuation turn confirmed",
+        extensions:
+          %{
+            turn_index: turn_index,
+            continuation_guidance_ref: map_value(evidence, :continuation_guidance_ref),
+            continuation_guidance_hash: map_value(evidence, :continuation_guidance_hash),
+            continuation_guidance_source_ref:
+              map_value(evidence, :continuation_guidance_source_ref),
+            continuation_guidance_rendered?:
+              map_value(evidence, :continuation_guidance_rendered?),
+            continuation_prompt_body_redacted?:
+              map_value(evidence, :continuation_prompt_body_redacted?),
+            continuation_prompt_body_included?:
+              map_value(evidence, :continuation_prompt_body_included?),
+            first_prompt_reused_on_continuation?:
+              map_value(evidence, :first_prompt_reused_on_continuation?)
+          }
+          |> compact_map()
+      }
+    end)
   end
 
   defp app_server_protocol_evidence(
