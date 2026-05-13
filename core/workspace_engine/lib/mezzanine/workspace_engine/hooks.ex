@@ -58,7 +58,7 @@ defmodule Mezzanine.WorkspaceEngine.Hooks do
     context = context(workspace, hook)
     timeout_ms = timeout_ms(hook)
 
-    task = Task.async(fn -> runner.(hook, context) end)
+    task = Task.async(fn -> safe_run(runner, hook, context) end)
 
     hook_result =
       case Task.yield(task, timeout_ms) do
@@ -67,24 +67,30 @@ defmodule Mezzanine.WorkspaceEngine.Hooks do
       end
 
     case hook_result do
-      {:ok, {:ok, result}} ->
+      {:ok, {:runner_result, {:ok, result}}} ->
         {:ok, receipt(hook, :succeeded, result, nil, :continue, opts)}
 
-      {:ok, :ok} ->
+      {:ok, {:runner_result, :ok}} ->
         {:ok, receipt(hook, :succeeded, %{}, nil, :continue, opts)}
 
-      {:ok, {:error, reason}} ->
+      {:ok, {:runner_result, {:error, reason}}} ->
         hook_error(:hook_failed, hook, :failed, reason, opts)
 
-      {:ok, other} ->
+      {:ok, {:runner_result, other}} ->
         hook_error(:hook_failed, hook, :failed, {:invalid_hook_result, other}, opts)
 
-      {:exit, reason} ->
-        hook_error(:hook_failed, hook, :failed, {:hook_exit, reason}, opts)
+      {:ok, {:runner_exit, kind, reason}} ->
+        hook_error(:hook_failed, hook, :failed, {:hook_exit, kind, reason}, opts)
 
       nil ->
         hook_error(:hook_timeout, hook, :timed_out, :timeout, opts)
     end
+  end
+
+  defp safe_run(runner, hook, context) do
+    {:runner_result, runner.(hook, context)}
+  catch
+    kind, reason -> {:runner_exit, kind, reason}
   end
 
   defp default_runner(_hook, _context), do: :ok
@@ -92,10 +98,17 @@ defmodule Mezzanine.WorkspaceEngine.Hooks do
   defp context(%WorkspaceRecord{} = workspace, hook) do
     %{
       workspace_id: workspace.workspace_id,
+      workspace_ref: "workspace://#{workspace.workspace_id}",
       installation_id: workspace.installation_id,
       subject_id: workspace.subject_id,
+      subject_ref: workspace.subject_ref,
+      logical_ref: workspace.logical_ref,
+      cwd: workspace.concrete_path,
       concrete_path: workspace.concrete_path,
-      stage: hook.stage
+      stage: hook.stage,
+      created_now?: workspace.created_now?,
+      reuse?: workspace.reuse?,
+      env_refs: hook.env_refs
     }
   end
 
@@ -139,6 +152,13 @@ defmodule Mezzanine.WorkspaceEngine.Hooks do
       stage: stage,
       timeout_ms: timeout_ms(hook),
       attrs: value(hook, :attrs, %{}),
+      env_refs:
+        ref_list(
+          first_value(
+            [value(hook, :env_refs), value(hook, :environment_refs), value(hook, :env_ref)],
+            []
+          )
+        ),
       fatal?: fatal_flag(action_on_failure),
       action_on_failure: action_on_failure
     }
@@ -152,6 +172,7 @@ defmodule Mezzanine.WorkspaceEngine.Hooks do
       stage: hook,
       timeout_ms: @default_timeout_ms,
       attrs: %{},
+      env_refs: [],
       fatal?: fatal_flag(action_on_failure),
       action_on_failure: action_on_failure
     }
@@ -202,6 +223,10 @@ defmodule Mezzanine.WorkspaceEngine.Hooks do
 
   defp stage_ref(stage) when is_atom(stage), do: Atom.to_string(stage)
   defp stage_ref(stage), do: to_string(stage)
+
+  defp ref_list(values) when is_list(values), do: Enum.map(values, &to_string/1)
+  defp ref_list(value) when is_binary(value) and value != "", do: [value]
+  defp ref_list(_value), do: []
 
   defp first_value(values, default) do
     Enum.find(values, default, fn
