@@ -119,6 +119,30 @@ defmodule Mezzanine.WorkspaceEngine.PathSafetyTest do
     assert {:error, :symlink_escape} = PathSafety.validate(root, link)
   end
 
+  test "canonicalizes symlinked workspace roots before reserving subject directories" do
+    base = tmp_dir()
+    actual_root = Path.join(base, "actual-workspaces")
+    linked_root = Path.join(base, "linked-workspaces")
+    File.mkdir_p!(actual_root)
+    File.ln_s!(actual_root, linked_root)
+
+    assert {:ok, %WorkspaceRecord{} = workspace} =
+             Allocator.reserve(%{
+               installation_id: "installation-1",
+               subject_id: "subject-1",
+               subject_ref: "task-root-link",
+               workspace_root: linked_root
+             })
+
+    expected_root = Path.expand(actual_root)
+    expected_path = Path.join(expected_root, "task-root-link")
+
+    assert workspace.concrete_root == expected_root
+    assert workspace.concrete_path == expected_path
+    assert File.dir?(expected_path)
+    refute String.starts_with?(workspace.concrete_path, Path.expand(linked_root))
+  end
+
   test "rejects symlink ancestor escapes before directory creation" do
     root = tmp_dir()
     outside = tmp_dir()

@@ -29,9 +29,14 @@ defmodule Mezzanine.WorkspaceEngine.PathSafety do
     |> List.to_string()
   end
 
+  @spec canonicalize(String.t()) :: String.t()
+  def canonicalize(path) when is_binary(path), do: canonical_existing(path)
+
   @spec prepare_directory(String.t(), String.t()) :: :ok | {:error, atom()}
   def prepare_directory(root, path) when is_binary(root) and is_binary(path) do
     with :ok <- validate(root, path) do
+      path = canonicalize(path)
+
       cond do
         File.dir?(path) ->
           :ok
@@ -48,18 +53,21 @@ defmodule Mezzanine.WorkspaceEngine.PathSafety do
 
   @spec validate(String.t(), String.t()) :: :ok | {:error, atom()}
   def validate(root, path) when is_binary(root) and is_binary(path) do
-    root = canonical_root(root)
-    path = Path.expand(path)
+    expanded_root = Path.expand(root)
+    canonical_root = canonicalize(root)
+    expanded_path = Path.expand(path)
+    canonical_path = canonicalize(path)
 
     cond do
-      Path.expand(path) == root ->
+      canonical_path == canonical_root ->
         {:error, :workspace_is_root}
 
-      not under_root?(root, path) ->
-        {:error, :outside_workspace_root}
-
-      symlink_escape?(root, path) ->
+      not under_root?(canonical_root, canonical_path) and
+          (under_root?(canonical_root, expanded_path) or under_root?(expanded_root, expanded_path)) ->
         {:error, :symlink_escape}
+
+      not under_root?(canonical_root, canonical_path) ->
+        {:error, :outside_workspace_root}
 
       true ->
         :ok
@@ -68,23 +76,15 @@ defmodule Mezzanine.WorkspaceEngine.PathSafety do
 
   @spec safety_hash(String.t(), String.t(), map()) :: String.t()
   def safety_hash(root, path, metadata \\ %{}) do
-    ["workspace", canonical_root(root), Path.expand(path), metadata]
+    ["workspace", canonicalize(root), canonicalize(path), metadata]
     |> :erlang.term_to_binary()
     |> then(&:crypto.hash(:sha256, &1))
     |> Base.encode16(case: :lower)
     |> then(&("sha256:" <> &1))
   end
 
-  defp canonical_root(root) do
-    canonical_existing(root)
-  end
-
   defp under_root?(root, path) do
     String.starts_with?(Path.expand(path), root <> "/")
-  end
-
-  defp symlink_escape?(root, path) do
-    not under_root?(root, canonical_existing(path))
   end
 
   defp canonical_existing(path) do

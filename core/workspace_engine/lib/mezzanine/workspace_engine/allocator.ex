@@ -50,7 +50,7 @@ defmodule Mezzanine.WorkspaceEngine.Allocator do
     root = Path.expand(root)
 
     case File.mkdir_p(root) do
-      :ok -> {:ok, root}
+      :ok -> {:ok, PathSafety.canonicalize(root)}
       {:error, reason} -> {:error, reason}
     end
   end
