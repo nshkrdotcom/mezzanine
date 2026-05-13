@@ -9,6 +9,7 @@ defmodule Mezzanine.WorkScheduler do
   """
 
   @max_priority 4
+  @continuation_retry_delay_ms 1_000
   @normalizable_keys [
     :active?,
     :active_states,
@@ -20,8 +21,10 @@ defmodule Mezzanine.WorkScheduler do
     :candidate,
     :candidates,
     :capacity,
+    :continuation_delay_ms,
     :created_at,
     :delay_ms,
+    :delay_type,
     :due_at,
     :execution,
     :execution_id,
@@ -62,6 +65,7 @@ defmodule Mezzanine.WorkScheduler do
     :worker_host,
     :worker_id,
     :worker,
+    :workspace_path,
     :max_concurrent_agents_per_host,
     :workers,
     :workflow_id,
@@ -159,10 +163,7 @@ defmodule Mezzanine.WorkScheduler do
           )
 
         true ->
-          evidence_event("continuation.required", execution, now,
-            reason: "source_still_active",
-            safe_action: "next_turn"
-          )
+          continuation_decision(attrs, execution, source, now)
       end
 
     {:ok, event}
@@ -412,6 +413,92 @@ defmodule Mezzanine.WorkScheduler do
 
   defp refresh_missing?(attrs),
     do: value(attrs, :refresh_status) in [:missing, "missing", :not_found, "not_found"]
+
+  defp continuation_decision(attrs, execution, source, now) do
+    case continuation_capacity_exhausted(attrs, execution, source) do
+      nil ->
+        continuation_retry_scheduled(attrs, execution, now)
+
+      reason ->
+        continuation_retry_deferred(attrs, execution, now, reason)
+    end
+  end
+
+  defp continuation_retry_scheduled(attrs, execution, now) do
+    delay_ms = continuation_delay_ms(attrs)
+
+    evidence_event("continuation.required", execution, now,
+      reason: "source_still_active",
+      safe_action: "schedule_continuation_retry",
+      status: "scheduled",
+      attempt: 1,
+      delay_type: "continuation",
+      delay_ms: delay_ms,
+      due_at: DateTime.add(now, delay_ms, :millisecond),
+      continuation?: true,
+      worker_host: continuation_worker_host(attrs, execution),
+      workspace_path: continuation_workspace_path(attrs, execution)
+    )
+  end
+
+  defp continuation_retry_deferred(attrs, execution, now, reason) do
+    attempt = continuation_backoff_attempt(execution)
+    delay_ms = backoff_delay_ms(attrs, attempt - 1)
+
+    evidence_event("continuation.deferred", execution, now,
+      reason: reason,
+      safe_action: "schedule_retry",
+      status: "scheduled",
+      attempt: attempt,
+      delay_type: "backoff_after_continuation",
+      delay_ms: delay_ms,
+      due_at: DateTime.add(now, delay_ms, :millisecond),
+      continuation?: true,
+      worker_host: continuation_worker_host(attrs, execution),
+      workspace_path: continuation_workspace_path(attrs, execution)
+    )
+  end
+
+  defp continuation_capacity_exhausted(attrs, execution, source) do
+    attrs = normalize(attrs)
+
+    if continuation_capacity_check?(attrs) do
+      source =
+        source
+        |> Map.put_new(:subject_id, value(execution, :subject_id))
+        |> Map.put_new(:worker_id, value(execution, :worker_id) || value(execution, :worker_host))
+
+      running = attrs |> value(:running) |> List.wrap() |> Enum.map(&normalize/1)
+      capacity = attrs |> configured_capacity() |> normalize_capacity()
+      counters = capacity_counters(running)
+
+      capacity_exhausted(source, counters, capacity)
+    end
+  end
+
+  defp continuation_capacity_check?(attrs) do
+    Enum.any?([:capacity, :agent, :worker, :running], fn key ->
+      value(attrs, key) not in [nil, [], %{}]
+    end)
+  end
+
+  defp continuation_delay_ms(attrs),
+    do: positive_integer(value(attrs, :continuation_delay_ms)) || @continuation_retry_delay_ms
+
+  defp continuation_backoff_attempt(execution) do
+    case positive_integer(value(execution, :attempt)) do
+      nil -> 2
+      attempt -> attempt + 1
+    end
+  end
+
+  defp continuation_worker_host(attrs, execution) do
+    value(attrs, :worker_host) || value(execution, :worker_host) || value(execution, :worker_id)
+  end
+
+  defp continuation_workspace_path(attrs, execution) do
+    value(attrs, :workspace_path) || value(execution, :workspace_path)
+  end
 
   defp candidate_admission_decision(candidate, eligibility) do
     source_visibility_decision(candidate) ||
@@ -716,25 +803,29 @@ defmodule Mezzanine.WorkScheduler do
       execution_id: value(attrs, :execution_id),
       workflow_id: value(attrs, :workflow_id),
       workflow_version: value(attrs, :workflow_version),
-      attempt: value(attrs, :attempt),
+      attempt: Keyword.get(opts, :attempt) || value(attrs, :attempt),
       reason: Keyword.fetch!(opts, :reason),
       safe_action: Keyword.fetch!(opts, :safe_action),
       occurred_at: now,
       retry_token: Keyword.get(opts, :retry_token),
       attempted_retry_token: Keyword.get(opts, :attempted_retry_token),
+      delay_type: Keyword.get(opts, :delay_type),
       delay_ms: Keyword.get(opts, :delay_ms),
       due_at: Keyword.get(opts, :due_at),
       failure: Keyword.get(opts, :failure),
+      continuation?: Keyword.get(opts, :continuation?),
       cleanup_required?: Keyword.get(opts, :cleanup_required?),
       stall_timeout_ms: Keyword.get(opts, :stall_timeout_ms),
       last_lower_activity_at: Keyword.get(opts, :last_lower_activity_at),
-      status: Keyword.get(opts, :revalidation_status),
+      status: Keyword.get(opts, :status) || Keyword.get(opts, :revalidation_status),
       revalidation_status: Keyword.get(opts, :revalidation_status),
       source_ref: Keyword.get(opts, :source_ref),
       provider_revision: Keyword.get(opts, :provider_revision),
       previous_provider_revision: Keyword.get(opts, :previous_provider_revision),
       stale_snapshot?: Keyword.get(opts, :stale_snapshot?),
-      refresh_error: Keyword.get(opts, :refresh_error)
+      refresh_error: Keyword.get(opts, :refresh_error),
+      worker_host: Keyword.get(opts, :worker_host),
+      workspace_path: Keyword.get(opts, :workspace_path)
     }
     |> compact_map()
   end

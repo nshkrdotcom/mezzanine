@@ -7,6 +7,8 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowRetryEvent do
   by WorkflowRuntime.
   """
 
+  @normal_continuation_retry_delay_ms 1_000
+
   @derive Jason.Encoder
   @enforce_keys [
     :event_id,
@@ -93,10 +95,10 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowRetryEvent do
     |> Map.merge(%{
       event_kind: :normal_continuation_retry,
       retry_class: "normal_continuation",
-      safe_action: "retry_now",
+      safe_action: "retry_after_continuation_delay",
       terminal?: false,
       allowed?: true,
-      backoff_ms: 0
+      backoff_ms: @normal_continuation_retry_delay_ms
     })
     |> new()
   end

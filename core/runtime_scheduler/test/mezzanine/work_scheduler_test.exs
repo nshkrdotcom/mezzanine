@@ -475,17 +475,49 @@ defmodule Mezzanine.WorkSchedulerTest do
       attempt: 2,
       retry_token: "retry-current",
       idempotency_key: "idem-1",
+      worker_host: "worker-a",
+      workspace_path: "/workspace/subject-1",
       last_lower_activity_at: ~U[2026-05-10 21:40:00Z]
     }
 
     assert {:ok, continuation} =
              WorkScheduler.continuation_check(%{
+               now: @now,
                execution: active_execution,
                source: %{source_visible?: true, active?: true, terminal?: false}
              })
 
     assert continuation.event_kind == "continuation.required"
-    assert continuation.safe_action == "next_turn"
+    assert continuation.safe_action == "schedule_continuation_retry"
+    assert continuation.status == "scheduled"
+    assert continuation.attempt == 1
+    assert continuation.delay_type == "continuation"
+    assert continuation.delay_ms == 1_000
+    assert continuation.due_at == DateTime.add(@now, 1_000, :millisecond)
+    assert continuation.continuation?
+    assert continuation.worker_host == "worker-a"
+    assert continuation.workspace_path == "/workspace/subject-1"
+
+    assert {:ok, capacity_deferred} =
+             WorkScheduler.continuation_check(%{
+               now: @now,
+               execution: %{active_execution | attempt: 1},
+               source: %{source_visible?: true, active?: true, terminal?: false, state: "Todo"},
+               running: [
+                 candidate("subject-running", priority: 1, created_at: @now, state: "Todo")
+               ],
+               capacity: %{global: 1},
+               retry_base_ms: 1_000
+             })
+
+    assert capacity_deferred.event_kind == "continuation.deferred"
+    assert capacity_deferred.reason == "global_capacity_exhausted"
+    assert capacity_deferred.safe_action == "schedule_retry"
+    assert capacity_deferred.status == "scheduled"
+    assert capacity_deferred.attempt == 2
+    assert capacity_deferred.delay_type == "backoff_after_continuation"
+    assert capacity_deferred.delay_ms == 2_000
+    assert capacity_deferred.due_at == DateTime.add(@now, 2_000, :millisecond)
 
     assert {:ok, terminal_cancel} =
              WorkScheduler.continuation_check(%{

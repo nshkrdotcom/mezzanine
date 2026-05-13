@@ -719,6 +719,8 @@ defmodule Mezzanine.WorkQueries do
   defp retry_queue_projection(execution) do
     if retry_scheduled?(execution) do
       attempt_number = retry_attempt_number(execution)
+      metadata = normalize_value(execution.last_dispatch_error_payload || %{})
+      scheduled_at = runtime_timestamp(execution.next_dispatch_at)
 
       [
         %{
@@ -726,10 +728,16 @@ defmodule Mezzanine.WorkQueries do
           "attempt_ref" => "attempt://#{execution.id}/#{attempt_number}",
           "status" => "scheduled",
           "reason" => execution.last_dispatch_error_kind,
-          "scheduled_at" => runtime_timestamp(execution.next_dispatch_at),
+          "scheduled_at" => scheduled_at,
+          "due_at" => map_value(metadata, :due_at) || scheduled_at,
+          "delay_ms" => map_value(metadata, :delay_ms),
+          "delay_type" => map_value(metadata, :delay_type),
+          "continuation?" => map_value(metadata, :continuation?),
+          "worker_ref" => map_value(metadata, :worker_ref),
+          "workspace_ref" => map_value(metadata, :workspace_ref),
           "last_error_ref" =>
             "execution-error://#{execution.id}/#{execution.last_dispatch_error_kind}",
-          "metadata" => normalize_value(execution.last_dispatch_error_payload || %{})
+          "metadata" => metadata
         }
         |> compact_map()
       ]

@@ -3,15 +3,15 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowRetryEventTest do
 
   alias Mezzanine.WorkflowRuntime.WorkflowRetryEvent
 
-  test "normal continuation retry is allowed and immediate" do
+  test "normal continuation retry uses the fixed post-exit continuation delay" do
     assert {:ok, event} = WorkflowRetryEvent.normal_continuation_retry(attrs())
 
     assert event.event_kind == :normal_continuation_retry
     assert event.retry_class == "normal_continuation"
-    assert event.safe_action == "retry_now"
+    assert event.safe_action == "retry_after_continuation_delay"
     assert event.allowed?
     refute event.terminal?
-    assert event.backoff_ms == 0
+    assert event.backoff_ms == 1_000
     assert event.event_id =~ "workflow.retry.continuation"
     assert event.retry_token == WorkflowRetryEvent.retry_token(event)
   end

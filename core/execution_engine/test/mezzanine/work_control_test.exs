@@ -177,7 +177,14 @@ defmodule Mezzanine.WorkControlTest do
       SET dispatch_state = 'in_flight',
           next_dispatch_at = $2,
           last_dispatch_error_kind = 'restart_recovery',
-          last_dispatch_error_payload = jsonb_build_object('reason', 'dispatch_worker_restarted'),
+          last_dispatch_error_payload = jsonb_build_object(
+            'reason', 'dispatch_worker_restarted',
+            'delay_type', 'continuation',
+            'delay_ms', 1000,
+            'continuation?', true,
+            'worker_ref', 'worker://worker-a',
+            'workspace_ref', 'workspace://work-1'
+          ),
           updated_at = $3
       WHERE id::text = $1
       """,
@@ -201,11 +208,18 @@ defmodule Mezzanine.WorkControlTest do
                "attempt_ref" => ^expected_attempt_ref,
                "status" => "scheduled",
                "reason" => "restart_recovery",
-               "scheduled_at" => scheduled_at
+               "scheduled_at" => scheduled_at,
+               "due_at" => due_at,
+               "delay_type" => "continuation",
+               "delay_ms" => 1000,
+               "continuation?" => true,
+               "worker_ref" => "worker://worker-a",
+               "workspace_ref" => "workspace://work-1"
              }
            ] = retry_projection.runtime["retry_queue"]
 
     assert DateTime.compare(scheduled_at, retry_at) == :eq
+    assert DateTime.compare(due_at, retry_at) == :eq
 
     completed_at = ~U[2026-05-10 22:40:00Z]
 
