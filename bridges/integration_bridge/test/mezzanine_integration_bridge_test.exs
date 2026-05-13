@@ -519,6 +519,162 @@ defmodule Mezzanine.IntegrationBridgeTest do
              "lower-receipt://jido-attempt-codex/codex.session.turn/succeeded"
   end
 
+  test "Codex agent runtime gates lower invocation behind before-run workspace hooks" do
+    parent = self()
+    workspace_root = tmp_dir("codex-before-run")
+
+    attrs =
+      codex_agent_attrs()
+      |> Map.put(:workspace_ref, "workspace://codex-before-run")
+      |> Map.put(:run_ref, "run://neutral/codex-before-run")
+
+    hook_specs = [
+      %{
+        "hook_ref" => "preflight",
+        "stage" => "before_run",
+        "timeout_ms" => 100,
+        "env_refs" => ["env://SAFE_TOKEN"],
+        "attrs" => %{"command" => "echo ready"}
+      }
+    ]
+
+    prepare_workspace_fun = fn root ->
+      send(parent, {:codex_phase, :prepare_workspace, root})
+      File.mkdir_p(root)
+    end
+
+    hook_runner = fn hook, context ->
+      send(
+        parent,
+        {:codex_phase, :before_run_hook, hook.hook_ref, context.cwd, context.env_refs,
+         Map.has_key?(context, :env), context.run_ref, context.workflow_ref}
+      )
+
+      {:ok, %{stdout: "ready secret-token", stderr: ""}}
+    end
+
+    invoke_fun = fn capability_id, input, opts ->
+      send(parent, {:codex_phase, :invoke, capability_id, input.cwd, opts})
+
+      {:ok,
+       %{
+         run: %{run_id: "jido-run-before-run"},
+         attempt: %{attempt_id: "jido-attempt-before-run"},
+         output: %{provider_session_id: "codex-session-before-run", status: :completed}
+       }}
+    end
+
+    assert {:ok, projection} =
+             CodexAgentRuntime.run(attrs,
+               cwd: workspace_root,
+               workspace_hook_specs: hook_specs,
+               workspace_hook_runner: hook_runner,
+               hook_redactions: ["secret-token"],
+               prepare_workspace_fun: prepare_workspace_fun,
+               invoke_fun: invoke_fun,
+               connection_id: "conn-codex",
+               start_runtime_router?: false,
+               register_connector?: false
+             )
+
+    assert_receive {:codex_phase, :prepare_workspace, ^workspace_root}
+
+    assert_receive {:codex_phase, :before_run_hook, "preflight", ^workspace_root,
+                    ["env://SAFE_TOKEN"], false, "run://neutral/codex-before-run",
+                    "workflow://codex-agent-runtime/run-neutral-codex-before-run"}
+
+    assert_receive {:codex_phase, :invoke, "codex.session.turn", ^workspace_root, invoke_opts}
+    assert Keyword.fetch!(invoke_opts, :connection_id) == "conn-codex"
+
+    assert [hook_event] =
+             Enum.filter(
+               projection.runtime_events,
+               &(&1.event_kind == "workspace.hook.before_run")
+             )
+
+    assert hook_event.event_seq == 0
+    assert hook_event.extensions.path_redacted? == true
+    assert [receipt] = hook_event.extensions.hook_receipts
+    assert receipt.stage == :before_run
+    assert receipt.status == :succeeded
+    assert receipt.result.stdout == "ready [REDACTED]"
+    refute Map.has_key?(receipt, :cwd)
+  end
+
+  test "Codex agent runtime blocks lower invocation when before-run hook fails" do
+    parent = self()
+
+    attrs =
+      codex_agent_attrs()
+      |> Map.put(:workspace_ref, "workspace://codex-before-run-failure")
+      |> Map.put(:run_ref, "run://neutral/codex-before-run-failure")
+
+    invoke_fun = fn _capability_id, _input, _opts ->
+      send(parent, :unexpected_codex_invoke)
+      {:ok, %{}}
+    end
+
+    assert {:error, {:hook_failed, receipt}} =
+             CodexAgentRuntime.run(attrs,
+               cwd: tmp_dir("codex-before-run-failure"),
+               workspace_hook_specs: [
+                 %{"hook_ref" => "preflight", "stage" => "before_run", "timeout_ms" => 100}
+               ],
+               workspace_hook_runner: fn _hook, _context ->
+                 {:error, %{stdout: "blocked secret-token", stderr: "nope"}}
+               end,
+               hook_redactions: ["secret-token"],
+               invoke_fun: invoke_fun,
+               connection_id: "conn-codex",
+               start_runtime_router?: false,
+               register_connector?: false
+             )
+
+    refute_received :unexpected_codex_invoke
+    assert receipt.stage == :before_run
+    assert receipt.status == :failed
+    assert receipt.fatal? == true
+    assert receipt.action == :halt
+    assert receipt.reason.stdout == "blocked [REDACTED]"
+    assert receipt.reason.stderr == "nope"
+  end
+
+  test "Codex agent runtime blocks lower invocation when before-run hook times out" do
+    parent = self()
+
+    attrs =
+      codex_agent_attrs()
+      |> Map.put(:workspace_ref, "workspace://codex-before-run-timeout")
+      |> Map.put(:run_ref, "run://neutral/codex-before-run-timeout")
+
+    invoke_fun = fn _capability_id, _input, _opts ->
+      send(parent, :unexpected_codex_invoke)
+      {:ok, %{}}
+    end
+
+    assert {:error, {:hook_timeout, receipt}} =
+             CodexAgentRuntime.run(attrs,
+               cwd: tmp_dir("codex-before-run-timeout"),
+               workspace_hook_specs: [
+                 %{"hook_ref" => "preflight", "stage" => "before_run", "timeout_ms" => 1}
+               ],
+               workspace_hook_runner: fn _hook, _context ->
+                 Process.sleep(50)
+                 :ok
+               end,
+               invoke_fun: invoke_fun,
+               connection_id: "conn-codex",
+               start_runtime_router?: false,
+               register_connector?: false
+             )
+
+    refute_received :unexpected_codex_invoke
+    assert receipt.stage == :before_run
+    assert receipt.status == :timed_out
+    assert receipt.fatal? == true
+    assert receipt.action == :halt
+  end
+
   test "Codex agent runtime installs credentials in the run tenant and requests connector sandbox" do
     attrs = %{
       tenant_ref: "tenant://sample-app-live",
@@ -2076,5 +2232,28 @@ defmodule Mezzanine.IntegrationBridgeTest do
       ref: "head-sha",
       check_runs: [%{name: "mix ci", status: "completed", conclusion: "success"}]
     }
+  end
+
+  defp codex_agent_attrs do
+    %{
+      tenant_ref: "tenant://neutral",
+      installation_ref: "installation://neutral/codex",
+      subject_ref: "subject://neutral/codex",
+      run_ref: "run://neutral/codex",
+      trace_id: "trace://neutral/codex",
+      idempotency_key: "idem-codex-neutral",
+      authority_context_ref: "authority-context://neutral/codex"
+    }
+  end
+
+  defp tmp_dir(label) do
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "mezzanine-integration-#{label}-#{System.unique_integer([:positive])}"
+      )
+
+    File.rm_rf!(path)
+    path
   end
 end

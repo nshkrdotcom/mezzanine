@@ -53,6 +53,7 @@ defmodule MezzanineIntegrationBridge.MixProject do
       {:mezzanine_audit_engine, path: "../../core/audit_engine"},
       {:mezzanine_evidence_engine, path: "../../core/evidence_engine"},
       {:mezzanine_source_engine, path: "../../core/source_engine"},
+      {:mezzanine_workspace_engine, path: "../../core/workspace_engine"},
       DependencySources.dep(:jido_integration_v2, @repo_root),
       DependencySources.dep(:jido_integration_v2_codex_cli, @repo_root),
       DependencySources.dep(:jido_integration_v2_github, @repo_root),

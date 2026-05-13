@@ -1,7 +1,7 @@
 defmodule Mezzanine.WorkspaceEngine.HooksTest do
   use ExUnit.Case, async: true
 
-  alias Mezzanine.WorkspaceEngine.{Allocator, Hooks}
+  alias Mezzanine.WorkspaceEngine.{Allocator, Hooks, LocalCommandRunner}
 
   test "runs matching workspace hooks and returns receipts" do
     {:ok, workspace} =
@@ -258,6 +258,31 @@ defmodule Mezzanine.WorkspaceEngine.HooksTest do
     assert receipt.stage == :before_run
     assert receipt.fatal? == true
     assert receipt.action == :halt
+  end
+
+  test "local command runner executes normalized hook command in prepared cwd" do
+    {:ok, workspace} =
+      Allocator.reserve(%{
+        installation_id: "installation-1",
+        subject_id: "subject-1",
+        workspace_root: tmp_dir(),
+        hook_specs: [
+          %{
+            "hook_ref" => "pre-run",
+            "stage" => "before_run",
+            "timeout_ms" => 100,
+            "command" => "printf cwd-ready > marker.txt && printf ok"
+          }
+        ]
+      })
+
+    assert {:ok, [receipt]} =
+             Hooks.run(workspace, :before_run, runner: LocalCommandRunner.runner())
+
+    assert receipt.status == :succeeded
+    assert receipt.result.status == 0
+    assert receipt.result.stdout == "ok"
+    assert File.read!(Path.join(workspace.concrete_path, "marker.txt")) == "cwd-ready"
   end
 
   test "hook receipts redact and truncate output" do

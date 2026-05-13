@@ -10,6 +10,7 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
   alias Jido.Integration.V2
   alias Jido.Integration.V2.Connectors.CodexCli
   alias Jido.Integration.V2.RuntimeRouter
+  alias Mezzanine.WorkspaceEngine.{Hooks, LocalCommandRunner, WorkspaceRecord}
 
   @capability_id "codex.session.turn"
   @connector_id "codex_cli"
@@ -29,10 +30,11 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
          :ok <- maybe_register_connector(opts),
          {:ok, connection_id} <- codex_connection_id(attrs, opts),
          :ok <- prepare_workspace(workspace_root, opts),
+         {:ok, before_run_receipts} <- run_before_run_hooks(attrs, opts, workspace_root),
          invoke_opts <- codex_invoke_opts(attrs, connection_id, opts, workspace_root),
          {:ok, result} <-
            invoke_fun.(@capability_id, codex_input(attrs, opts, workspace_root), invoke_opts) do
-      {:ok, projection(attrs, result, invoke_opts)}
+      {:ok, projection(attrs, result, invoke_opts, before_run_receipts)}
     end
   end
 
@@ -105,6 +107,84 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
 
   defp prepare_workspace(_workspace_root, _opts), do: :ok
 
+  defp run_before_run_hooks(attrs, opts, workspace_root) do
+    hook_specs = workspace_hook_specs(attrs, opts)
+
+    if hook_specs == [] do
+      {:ok, []}
+    else
+      workspace =
+        opts
+        |> Keyword.get(:workspace_record)
+        |> workspace_record(attrs, workspace_root, hook_specs)
+
+      Hooks.run(workspace, :before_run,
+        runner: workspace_hook_runner(opts),
+        redactions: Keyword.get(opts, :hook_redactions, []),
+        max_output_bytes: Keyword.get(opts, :hook_max_output_bytes, 4_096)
+      )
+    end
+  end
+
+  defp workspace_hook_specs(attrs, opts) do
+    opts
+    |> Keyword.get(:workspace_hook_specs, map_value(attrs, :workspace_hook_specs))
+    |> case do
+      nil -> map_value(attrs, :hook_specs)
+      specs -> specs
+    end
+    |> List.wrap()
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp workspace_hook_runner(opts) do
+    Keyword.get(
+      opts,
+      :workspace_hook_runner,
+      LocalCommandRunner.runner(env: Keyword.get(opts, :workspace_hook_env, %{}))
+    )
+  end
+
+  defp workspace_record(%WorkspaceRecord{} = record, _attrs, _workspace_root, hook_specs),
+    do: %{record | hook_specs: hook_specs}
+
+  defp workspace_record(_record, attrs, workspace_root, hook_specs) do
+    subject_ref = map_value(attrs, :subject_ref)
+    installation_id = map_value(attrs, :installation_ref) || "installation://unknown"
+    subject_id = subject_ref || "subject://unknown"
+    workspace_id = workspace_id(attrs, workspace_root)
+
+    %WorkspaceRecord{
+      workspace_id: workspace_id,
+      installation_id: installation_id,
+      subject_id: subject_id,
+      subject_ref: subject_ref,
+      logical_ref: "workspace:#{installation_id}:#{subject_id}",
+      concrete_root: workspace_root,
+      concrete_path: workspace_root,
+      slug: ref_suffix(workspace_id),
+      placement_kind: :local,
+      cleanup_policy: :never,
+      safety_hash: digest([workspace_id, workspace_root]),
+      file_scope: %{writable_roots: [workspace_root], read_roots: [workspace_root]},
+      hook_specs: hook_specs,
+      remote_hints: %{
+        run_ref: map_value(attrs, :run_ref),
+        workflow_ref: "workflow://codex-agent-runtime/#{ref_suffix(map_value(attrs, :run_ref))}"
+      },
+      created_now?: false,
+      reuse?: true
+    }
+  end
+
+  defp workspace_id(attrs, workspace_root) do
+    case map_value(attrs, :workspace_ref) do
+      "workspace://" <> id when id != "" -> id
+      value when is_binary(value) and value != "" -> value
+      _missing -> "codex-agent-runtime-#{ref_suffix(workspace_root)}"
+    end
+  end
+
   defp codex_invoke_opts(attrs, connection_id, opts, workspace_root) do
     [
       connection_id: connection_id,
@@ -162,7 +242,7 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
     |> compact_map()
   end
 
-  defp projection(attrs, result, invoke_opts) do
+  defp projection(attrs, result, invoke_opts, before_run_receipts) do
     run = map_value(result, :run) || %{}
     attempt = map_value(result, :attempt) || %{}
     output = map_value(result, :output) || %{}
@@ -204,29 +284,59 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
           output_artifact_refs: output_artifact_refs(result)
         }
       ],
-      runtime_events: [
-        %{
-          event_ref: "event://codex-agent-runtime/#{ref_suffix(run_ref)}/terminal",
-          event_seq: 1,
-          event_kind: "run.terminal",
-          observed_at: observed_at,
-          tenant_ref: Keyword.get(invoke_opts, :tenant_id),
-          subject_ref: map_value(attrs, :subject_ref),
-          run_ref: run_ref,
-          workflow_ref: workflow_ref,
-          turn_ref: turn_ref,
-          level: "info",
-          message_summary: "codex session turn completed"
-        }
-      ],
+      runtime_events:
+        hook_events(attrs, workflow_ref, turn_ref, observed_at, before_run_receipts) ++
+          [
+            %{
+              event_ref: "event://codex-agent-runtime/#{ref_suffix(run_ref)}/terminal",
+              event_seq: 1,
+              event_kind: "run.terminal",
+              observed_at: observed_at,
+              tenant_ref: Keyword.get(invoke_opts, :tenant_id),
+              subject_ref: map_value(attrs, :subject_ref),
+              run_ref: run_ref,
+              workflow_ref: workflow_ref,
+              turn_ref: turn_ref,
+              level: "info",
+              message_summary: "codex session turn completed"
+            }
+          ],
       budget_state: %{"turns_remaining" => 0},
       candidate_fact_refs: ["candidate-fact://codex-agent-runtime/#{ref_suffix(run_ref)}/1"],
       memory_proof_refs: [],
       receipt_ref_set: %{
         lower_request_refs: [lower_request_ref],
-        lower_receipt_refs: [lower_receipt_ref]
+        lower_receipt_refs: [lower_receipt_ref],
+        workspace_hook_refs: Enum.map(before_run_receipts, & &1.hook_ref)
       }
     }
+  end
+
+  defp hook_events(_attrs, _workflow_ref, _turn_ref, _observed_at, []), do: []
+
+  defp hook_events(attrs, workflow_ref, turn_ref, observed_at, receipts) do
+    run_ref = map_value(attrs, :run_ref)
+
+    [
+      %{
+        event_ref: "event://codex-agent-runtime/#{ref_suffix(run_ref)}/before-run-hook",
+        event_seq: 0,
+        event_kind: "workspace.hook.before_run",
+        observed_at: observed_at,
+        tenant_ref: map_value(attrs, :tenant_ref),
+        subject_ref: map_value(attrs, :subject_ref),
+        run_ref: run_ref,
+        workflow_ref: workflow_ref,
+        turn_ref: turn_ref,
+        level: "info",
+        message_summary: "before_run hook completed",
+        extensions: %{
+          hook_receipts: receipts,
+          hook_receipt: List.first(receipts),
+          path_redacted?: true
+        }
+      }
+    ]
   end
 
   defp lower_receipt_ref(attempt, lower_request_ref) do
@@ -267,6 +377,13 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
     |> map_value(:artifact_refs)
     |> List.wrap()
     |> Enum.filter(&present_binary?/1)
+  end
+
+  defp digest(value) do
+    value
+    |> :erlang.term_to_binary()
+    |> then(&:crypto.hash(:sha256, &1))
+    |> Base.encode16(case: :lower)
   end
 
   defp normalize(%_{} = struct), do: struct |> Map.from_struct() |> normalize()

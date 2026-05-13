@@ -96,12 +96,17 @@ defmodule Mezzanine.WorkspaceEngine.Hooks do
   defp default_runner(_hook, _context), do: :ok
 
   defp context(%WorkspaceRecord{} = workspace, hook) do
+    runtime_refs = workspace.remote_hints || %{}
+
     %{
       workspace_id: workspace.workspace_id,
       workspace_ref: "workspace://#{workspace.workspace_id}",
       installation_id: workspace.installation_id,
       subject_id: workspace.subject_id,
       subject_ref: workspace.subject_ref,
+      run_ref: value(runtime_refs, :run_ref),
+      workflow_ref: value(runtime_refs, :workflow_ref),
+      attempt_ref: value(runtime_refs, :attempt_ref),
       logical_ref: workspace.logical_ref,
       cwd: workspace.concrete_path,
       concrete_path: workspace.concrete_path,
@@ -151,7 +156,7 @@ defmodule Mezzanine.WorkspaceEngine.Hooks do
         ),
       stage: stage,
       timeout_ms: timeout_ms(hook),
-      attrs: value(hook, :attrs, %{}),
+      attrs: hook_attrs(hook),
       env_refs:
         ref_list(
           first_value(
@@ -176,6 +181,18 @@ defmodule Mezzanine.WorkspaceEngine.Hooks do
       fatal?: fatal_flag(action_on_failure),
       action_on_failure: action_on_failure
     }
+  end
+
+  defp hook_attrs(hook) do
+    attrs = value(hook, :attrs, %{}) || %{}
+
+    case value(hook, :command) do
+      command when is_binary(command) and command != "" ->
+        Map.put_new(attrs, "command", command)
+
+      _missing ->
+        attrs
+    end
   end
 
   defp timeout_ms(hook) do
