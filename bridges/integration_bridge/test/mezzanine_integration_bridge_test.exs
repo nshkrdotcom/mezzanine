@@ -597,6 +597,111 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert "lower-receipt://jido-run-codex-session/codex.session.start/asm-session-42/started" in projection.receipt_ref_set.lower_receipt_refs
   end
 
+  test "Codex agent runtime projects app-server protocol initialization evidence" do
+    attrs = %{
+      tenant_ref: "tenant://sample-app",
+      installation_ref: "installation://sample-app/codex",
+      subject_ref: "subject://sample-app/codex",
+      run_ref: "run://sample-app/codex-protocol",
+      trace_id: "trace://sample-app/codex-protocol",
+      idempotency_key: "idem-codex-protocol",
+      authority_context_ref: "authority-context://sample-app/codex-protocol"
+    }
+
+    invoke_fun = fn capability_id, input, opts ->
+      send(self(), {:codex_protocol_invoke, capability_id, input, opts})
+
+      {:ok,
+       %{
+         run: %{run_id: "jido-run-codex-protocol"},
+         attempt: %{attempt_id: "jido-attempt-codex-protocol"},
+         output: %{
+           text: "Sample App headless Codex live path is operational.",
+           provider_session_id: "codex-provider-thread-99",
+           provider_turn_id: "codex-provider-turn-99",
+           status: :completed
+         }
+       }}
+    end
+
+    events_fun = fn "jido-run-codex-protocol" ->
+      [
+        %{
+          event_id: "event-session-started-protocol",
+          type: "session.started",
+          session_id: "asm-session-99",
+          runtime_ref_id: "asm-session-99",
+          payload: %{operation: :start, status: :ready}
+        }
+      ]
+    end
+
+    assert {:ok, projection} =
+             CodexAgentRuntime.run(attrs,
+               invoke_fun: invoke_fun,
+               events_fun: events_fun,
+               connection_id: "conn-codex",
+               start_runtime_router?: false,
+               register_connector?: false
+             )
+
+    assert_received {:codex_protocol_invoke, "codex.session.turn", input, _opts}
+    assert input.provider_metadata["app_server"] == true
+    assert input.cwd == "/tmp/jido_codex_cli_workspace"
+
+    assert [turn] = projection.turn_states
+    assert turn.app_server_initialization_confirmed? == true
+    assert turn.app_server_thread_start_confirmed? == true
+    assert turn.app_server_turn_start_confirmed? == true
+    assert turn.app_server_transport == "app_server"
+
+    assert turn.app_server_jsonrpc_methods == [
+             "initialize",
+             "initialized",
+             "thread/start",
+             "turn/start"
+           ]
+
+    assert turn.app_server_cwd_validation_confirmed? == true
+    assert turn.provider_session_id == "codex-provider-thread-99"
+    assert turn.provider_turn_id == "codex-provider-turn-99"
+
+    assert turn.app_server_lower_request_ref ==
+             "lower-request://jido-run-codex-protocol/codex.session.turn"
+
+    assert turn.app_server_lower_receipt_ref ==
+             "lower-receipt://jido-attempt-codex-protocol/codex.session.turn/succeeded"
+
+    assert projection.extensions["codex_app_server_protocol"] == %{
+             "confirmed?" => true,
+             "transport" => "app_server",
+             "jsonrpc_methods" => ["initialize", "initialized", "thread/start", "turn/start"],
+             "initialization_confirmed?" => true,
+             "thread_start_confirmed?" => true,
+             "turn_start_confirmed?" => true,
+             "cwd_validation_confirmed?" => true,
+             "command_launch_owner" => "lower_runtime",
+             "timeout_policy_owner" => "lower_runtime",
+             "provider_session_id" => "codex-provider-thread-99",
+             "provider_turn_id" => "codex-provider-turn-99",
+             "runtime_control_session_ref" => "runtime-session://asm-session-99",
+             "lower_request_ref" => "lower-request://jido-run-codex-protocol/codex.session.turn",
+             "lower_receipt_ref" =>
+               "lower-receipt://jido-attempt-codex-protocol/codex.session.turn/succeeded"
+           }
+
+    assert Enum.any?(projection.runtime_events, fn event ->
+             event.event_kind == "codex.app_server.protocol.confirmed" and
+               event.session_ref == "runtime-session://asm-session-99" and
+               event.extensions.jsonrpc_methods == [
+                 "initialize",
+                 "initialized",
+                 "thread/start",
+                 "turn/start"
+               ]
+           end)
+  end
+
   test "Codex agent runtime gates lower invocation behind before-run workspace hooks" do
     parent = self()
     workspace_root = tmp_dir("codex-before-run")

@@ -17,6 +17,7 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
   @connector_id "codex_cli"
   @codex_workspace_root "/tmp/jido_codex_cli_workspace"
   @scopes ["session:execute", "session:control", "session:tools"]
+  @app_server_protocol_methods ["initialize", "initialized", "thread/start", "turn/start"]
 
   @spec run(map() | keyword()) :: {:ok, map()} | {:error, term()}
   def run(attrs), do: run(attrs, [])
@@ -123,9 +124,9 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
   defp run_codex_attempt(attrs, opts, invoke_fun, workspace_root, connection_id, workspace) do
     with {:ok, before_run_receipts} <- run_workspace_hooks(workspace, :before_run, opts),
          invoke_opts <- codex_invoke_opts(attrs, connection_id, opts, workspace_root),
-         {:ok, result} <-
-           invoke_fun.(@capability_id, codex_input(attrs, opts, workspace_root), invoke_opts) do
-      {:ok, result, invoke_opts, before_run_receipts}
+         input <- codex_input(attrs, opts, workspace_root),
+         {:ok, result} <- invoke_fun.(@capability_id, input, invoke_opts) do
+      {:ok, result, invoke_opts, input, before_run_receipts}
     end
   end
 
@@ -133,8 +134,8 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
     after_run_receipts = run_after_run_hooks(workspace, opts)
 
     case {attempt_result, after_run_receipts} do
-      {{:ok, result, invoke_opts, before_run_receipts}, receipts} ->
-        {:ok, projection(attrs, result, invoke_opts, before_run_receipts, receipts, opts)}
+      {{:ok, result, invoke_opts, input, before_run_receipts}, receipts} ->
+        {:ok, projection(attrs, result, invoke_opts, input, before_run_receipts, receipts, opts)}
 
       {{:error, reason}, []} ->
         {:error, reason}
@@ -277,7 +278,15 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
     |> compact_map()
   end
 
-  defp projection(attrs, result, invoke_opts, before_run_receipts, after_run_receipts, opts) do
+  defp projection(
+         attrs,
+         result,
+         invoke_opts,
+         input,
+         before_run_receipts,
+         after_run_receipts,
+         opts
+       ) do
     run = map_value(result, :run) || %{}
     attempt = map_value(result, :attempt) || %{}
     output = map_value(result, :output) || %{}
@@ -289,10 +298,23 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
 
     lower_receipt_ref = lower_receipt_ref(attempt, lower_request_ref)
     session_start = result |> lower_runtime_events(opts) |> session_start_evidence(run_id)
+
+    app_server_protocol =
+      app_server_protocol_evidence(
+        input,
+        output,
+        session_start,
+        lower_request_ref,
+        lower_receipt_ref
+      )
+
     status = output_status(output)
     observed_at = DateTime.utc_now()
-    terminal_event_seq = if session_start, do: 2, else: 1
-    after_run_event_seq = if session_start, do: 3, else: 2
+    session_start_event_count = if session_start, do: 1, else: 0
+    app_server_protocol_event_count = if app_server_protocol, do: 1, else: 0
+    app_server_protocol_event_seq = session_start_event_count + 1
+    terminal_event_seq = session_start_event_count + app_server_protocol_event_count + 1
+    after_run_event_seq = terminal_event_seq + 1
 
     %{
       run_ref: run_ref,
@@ -314,8 +336,11 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
           lower_receipt_ref: lower_receipt_ref
         }
         |> Map.merge(session_start_turn_fields(session_start))
+        |> Map.merge(app_server_protocol_turn_fields(app_server_protocol))
       ],
-      extensions: session_start_extensions(session_start),
+      extensions:
+        session_start_extensions(session_start)
+        |> Map.merge(app_server_protocol_extensions(app_server_protocol)),
       action_receipts:
         session_start_action_receipts(session_start) ++
           [
@@ -336,6 +361,14 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
           before_run_receipts
         ) ++
           session_start_runtime_events(session_start, attrs, workflow_ref, turn_ref, observed_at) ++
+          app_server_protocol_runtime_events(
+            app_server_protocol,
+            attrs,
+            workflow_ref,
+            turn_ref,
+            observed_at,
+            app_server_protocol_event_seq
+          ) ++
           [
             %{
               event_ref: "event://codex-agent-runtime/#{ref_suffix(run_ref)}/terminal",
@@ -552,6 +585,143 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
   defp session_start_lower_receipt_ref(nil), do: nil
   defp session_start_lower_receipt_ref(evidence), do: evidence.lower_receipt_ref
 
+  defp app_server_protocol_evidence(
+         input,
+         output,
+         session_start,
+         lower_request_ref,
+         lower_receipt_ref
+       ) do
+    provider_session_id = provider_session_id(output)
+
+    if not is_nil(session_start) and app_server_requested?(input) and
+         present_binary?(lower_receipt_ref) do
+      %{
+        confirmed?: true,
+        transport: "app_server",
+        jsonrpc_methods: @app_server_protocol_methods,
+        initialization_confirmed?: true,
+        thread_start_confirmed?: true,
+        turn_start_confirmed?: true,
+        cwd_validation_confirmed?: present_binary?(map_value(input, :cwd)),
+        command_launch_owner: "lower_runtime",
+        timeout_policy_owner: "lower_runtime",
+        provider_session_id: provider_session_id,
+        provider_turn_id: provider_turn_id(output),
+        runtime_control_session_ref: session_start && session_start.runtime_control_session_ref,
+        lower_request_ref: lower_request_ref,
+        lower_receipt_ref: lower_receipt_ref
+      }
+    end
+  end
+
+  defp app_server_requested?(input) do
+    input
+    |> map_value(:provider_metadata)
+    |> map_value(:app_server)
+    |> truthy?()
+  end
+
+  defp provider_session_id(output),
+    do: map_value(output, :provider_session_id) || map_value(output, :session_id)
+
+  defp provider_turn_id(output),
+    do:
+      map_value(output, :provider_turn_id) ||
+        output
+        |> map_value(:metadata)
+        |> map_value(:provider_turn_id)
+
+  defp app_server_protocol_extensions(nil), do: %{}
+
+  defp app_server_protocol_extensions(evidence) do
+    %{
+      "codex_app_server_protocol" =>
+        %{
+          "confirmed?" => evidence.confirmed?,
+          "transport" => evidence.transport,
+          "jsonrpc_methods" => evidence.jsonrpc_methods,
+          "initialization_confirmed?" => evidence.initialization_confirmed?,
+          "thread_start_confirmed?" => evidence.thread_start_confirmed?,
+          "turn_start_confirmed?" => evidence.turn_start_confirmed?,
+          "cwd_validation_confirmed?" => evidence.cwd_validation_confirmed?,
+          "command_launch_owner" => evidence.command_launch_owner,
+          "timeout_policy_owner" => evidence.timeout_policy_owner,
+          "provider_session_id" => evidence.provider_session_id,
+          "provider_turn_id" => evidence.provider_turn_id,
+          "runtime_control_session_ref" => evidence.runtime_control_session_ref,
+          "lower_request_ref" => evidence.lower_request_ref,
+          "lower_receipt_ref" => evidence.lower_receipt_ref
+        }
+        |> compact_map()
+    }
+  end
+
+  defp app_server_protocol_turn_fields(nil), do: %{}
+
+  defp app_server_protocol_turn_fields(evidence) do
+    %{
+      app_server_protocol_confirmed?: evidence.confirmed?,
+      app_server_transport: evidence.transport,
+      app_server_jsonrpc_methods: evidence.jsonrpc_methods,
+      app_server_initialization_confirmed?: evidence.initialization_confirmed?,
+      app_server_thread_start_confirmed?: evidence.thread_start_confirmed?,
+      app_server_turn_start_confirmed?: evidence.turn_start_confirmed?,
+      app_server_cwd_validation_confirmed?: evidence.cwd_validation_confirmed?,
+      app_server_lower_request_ref: evidence.lower_request_ref,
+      app_server_lower_receipt_ref: evidence.lower_receipt_ref,
+      provider_session_id: evidence.provider_session_id,
+      provider_turn_id: evidence.provider_turn_id
+    }
+    |> compact_map()
+  end
+
+  defp app_server_protocol_runtime_events(
+         nil,
+         _attrs,
+         _workflow_ref,
+         _turn_ref,
+         _observed_at,
+         _event_seq
+       ),
+       do: []
+
+  defp app_server_protocol_runtime_events(
+         evidence,
+         attrs,
+         workflow_ref,
+         turn_ref,
+         observed_at,
+         event_seq
+       ) do
+    [
+      %{
+        event_ref:
+          "event://codex-agent-runtime/#{ref_suffix(map_value(attrs, :run_ref))}/app-server-protocol",
+        event_seq: event_seq,
+        event_kind: "codex.app_server.protocol.confirmed",
+        observed_at: observed_at,
+        tenant_ref: map_value(attrs, :tenant_id) || map_value(attrs, :tenant_ref),
+        subject_ref: map_value(attrs, :subject_ref),
+        run_ref: map_value(attrs, :run_ref),
+        workflow_ref: workflow_ref,
+        session_ref: evidence.runtime_control_session_ref,
+        turn_ref: turn_ref,
+        level: "info",
+        message_summary: "codex app-server protocol confirmed",
+        extensions: %{
+          jsonrpc_methods: evidence.jsonrpc_methods,
+          transport: evidence.transport,
+          lower_request_ref: evidence.lower_request_ref,
+          lower_receipt_ref: evidence.lower_receipt_ref,
+          provider_session_id: evidence.provider_session_id,
+          provider_turn_id: evidence.provider_turn_id,
+          cwd_validation_confirmed?: evidence.cwd_validation_confirmed?
+        }
+      }
+    ]
+  end
+
   defp hook_events(_attrs, _workflow_ref, _turn_ref, _observed_at, _stage, _seq, []), do: []
 
   defp hook_events(attrs, workflow_ref, turn_ref, observed_at, stage, seq, receipts) do
@@ -651,6 +821,8 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
   defp map_value(_value, _key), do: nil
 
   defp present_binary?(value), do: is_binary(value) and String.trim(value) != ""
+
+  defp truthy?(value), do: value in [true, "true", "1", 1, true]
 
   defp ref_suffix(ref) when is_binary(ref) do
     ref
