@@ -274,6 +274,19 @@ defmodule Mezzanine.WorkControlTest do
                normalized_payload: Map.put(source_payload, "payload", source_payload)
              })
 
+    assert {:ok, summaries} = WorkQueries.list_subjects(tenant_id, program.id, %{})
+    summary = Enum.find(summaries, &(&1.subject_id == source_subject.subject_id))
+    assert summary
+    assert summary.source_payload["provider_external_ref"] == "lin-issue-777"
+    assert summary.source_payload["source_binding_id"] == "linear_primary"
+    assert summary.source_payload["branch_ref"] == "nshkrdotcom/extravaganza/eng-777"
+    assert summary.source_payload["labels"] == ["ops", "phase-7"]
+
+    assert {:ok, detail} = WorkQueries.get_subject_detail(tenant_id, source_subject.subject_id)
+    assert detail.source_payload["source_url"] == "https://linear.app/example/issue/ENG-777"
+    assert [%{"provider_external_ref" => "lin-issue-776"}] = detail.source_payload["blocker_refs"]
+    assert detail.source_payload["state_mapping"]["reason"] == "blocked_by_non_terminal"
+
     attrs = %{
       trace_id: "trace-source-payload",
       actor_ref: "ops_lead",

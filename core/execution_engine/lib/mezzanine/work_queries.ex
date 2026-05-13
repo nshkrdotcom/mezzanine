@@ -82,6 +82,7 @@ defmodule Mezzanine.WorkQueries do
          status: work_object.status,
          priority: work_object.priority,
          source_kind: work_object.source_kind,
+         source_payload: source_payload(work_object),
          current_plan_id: current_plan_id(current_plan),
          current_plan_status: current_plan_status(current_plan),
          active_run_id: active_run_id(active_run),
@@ -242,6 +243,7 @@ defmodule Mezzanine.WorkQueries do
       status: work_object.status,
       priority: work_object.priority,
       source_kind: work_object.source_kind,
+      source_payload: source_payload(work_object),
       current_plan_id: work_object.current_plan_id,
       inserted_at: work_object.inserted_at,
       updated_at: work_object.updated_at
