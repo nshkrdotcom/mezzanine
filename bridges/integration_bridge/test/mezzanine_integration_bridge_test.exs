@@ -351,6 +351,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
 
   test "Linear source candidate fetch uses governed direct connector dispatch and SourceEngine normalization" do
     invocation = authorized_invocation_allowing(["linear.issues.list"])
+    source_binding = put_in(source_binding(), [:candidate_filters, :team_id], "team-eng")
 
     invoke_fun = fn capability, input, opts ->
       send(self(), {:invoke, capability, input, opts})
@@ -368,13 +369,14 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert {:ok, result} =
              IntegrationBridge.fetch_linear_candidates(
                invocation,
-               source_binding(),
+               source_binding,
                invoke_fun: invoke_fun,
                viewer: %{id: "usr-linear-viewer"}
              )
 
     assert_received {:invoke, "linear.issues.list", input, opts}
     assert input.filter.state_names == ["Todo", "Backlog"]
+    assert input.filter.team_id == "team-eng"
     assert input.filter.assignee_id == "usr-linear-viewer"
     assert input.governed_lower_envelope["lower_runtime_kind"] == "direct_connector"
     assert Keyword.fetch!(opts, :governed_lower_envelope).capability_id == "linear.issues.list"

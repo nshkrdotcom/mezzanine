@@ -263,7 +263,7 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
   test "builds governed Linear candidate fetch input from source binding state and viewer routing" do
     binding = %{
       source_binding()
-      | candidate_filters: %{project_slug: "ops-automation", assignee: "me"}
+      | candidate_filters: %{project_slug: "ops-automation", team_id: "team-eng", assignee: "me"}
     }
 
     assert {:ok, input} =
@@ -276,6 +276,7 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
     assert input == %{
              filter: %{
                project_slug: "ops-automation",
+               team_id: "team-eng",
                state_names: ["Todo"],
                assignee_id: "usr-linear-viewer"
              },

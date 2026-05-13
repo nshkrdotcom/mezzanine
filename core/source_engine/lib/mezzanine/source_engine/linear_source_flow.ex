@@ -23,6 +23,7 @@ defmodule Mezzanine.SourceEngine.LinearSourceFlow do
       filter =
         %{}
         |> maybe_put(:project_slug, string_value(filters, :project_slug))
+        |> maybe_put(:team_id, string_value(filters, :team_id))
         |> maybe_put(:state_names, state_names(binding, filters))
         |> maybe_put(:assignee_id, assignee_id)
         |> compact()
