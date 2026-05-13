@@ -11,9 +11,12 @@ defmodule Mezzanine.WorkScheduler do
   @max_priority 4
   @normalizable_keys [
     :active?,
+    :active_states,
     :attempt,
     :assigned_to_worker,
     :blocked?,
+    :blocked_by,
+    :blocker_refs,
     :candidates,
     :capacity,
     :created_at,
@@ -42,8 +45,10 @@ defmodule Mezzanine.WorkScheduler do
     :state,
     :states,
     :subject_id,
+    :terminal_states,
     :terminal?,
     :tick_kind,
+    :title,
     :worker_host,
     :worker_id,
     :workers,
@@ -62,10 +67,11 @@ defmodule Mezzanine.WorkScheduler do
 
     sorted_candidates = Enum.sort_by(candidates, &candidate_sort_key/1)
     counters = capacity_counters(running)
+    eligibility = eligibility_context(attrs, running)
 
     {events, final_counters} =
       Enum.map_reduce(sorted_candidates, counters, fn candidate, counters ->
-        {event, counters} = decide_candidate(candidate, counters, capacity, now)
+        {event, counters} = decide_candidate(candidate, counters, capacity, now, eligibility)
         {event, counters}
       end)
 
@@ -220,53 +226,110 @@ defmodule Mezzanine.WorkScheduler do
      }}
   end
 
-  defp decide_candidate(candidate, counters, capacity, now) do
+  defp decide_candidate(candidate, counters, capacity, now, eligibility) do
+    case candidate_admission_decision(candidate, eligibility) do
+      :admit ->
+        decide_candidate_capacity(candidate, counters, capacity, now)
+
+      {event_kind, opts} ->
+        {candidate_event(event_kind, candidate, now, opts), counters}
+    end
+  end
+
+  defp decide_candidate_capacity(candidate, counters, capacity, now) do
+    case capacity_exhausted(candidate, counters, capacity) do
+      nil ->
+        {candidate_event("work.claimed", candidate, now,
+           reason: "slot_available",
+           safe_action: "dispatch_workflow"
+         ), increment_counters(counters, candidate)}
+
+      reason ->
+        {candidate_event("capacity.slot_exhausted", candidate, now,
+           reason: reason,
+           safe_action: "defer_candidate"
+         ), counters}
+    end
+  end
+
+  defp candidate_admission_decision(candidate, eligibility) do
+    source_visibility_decision(candidate) ||
+      required_fields_decision(candidate) ||
+      terminal_decision(candidate, eligibility) ||
+      inactive_state_decision(candidate, eligibility) ||
+      duplicate_dispatch_decision(candidate, eligibility) ||
+      assignment_decision(candidate) ||
+      blocked_decision(candidate, eligibility) ||
+      :admit
+  end
+
+  defp source_visibility_decision(candidate) do
     cond do
       value(candidate, :source_visible?) == false ->
-        {candidate_event("cancel.missing_source", candidate, now,
-           reason: "missing_source",
-           safe_action: "cancel_lower_and_quarantine"
-         ), counters}
+        {"cancel.missing_source",
+         reason: "missing_source", safe_action: "cancel_lower_and_quarantine"}
 
       value(candidate, :active?) == false ->
-        {candidate_event("cancel.non_active_source", candidate, now,
-           reason: "non_active_source",
-           safe_action: "cancel_lower_and_block"
-         ), counters}
-
-      truthy?(value(candidate, :terminal?)) ->
-        {candidate_event("cancel.terminal_source", candidate, now,
-           reason: "terminal_source",
-           safe_action: "cancel_lower_cleanup_and_complete",
-           cleanup_required?: true
-         ), counters}
-
-      value(candidate, :assigned_to_worker) == false ->
-        {candidate_event("claim.reassignment_denied", candidate, now,
-           reason: "assigned_to_other_worker",
-           safe_action: "deny_reassignment"
-         ), counters}
-
-      truthy?(value(candidate, :blocked?)) ->
-        {candidate_event("work.skipped", candidate, now,
-           reason: "blocked_by_source",
-           safe_action: "skip_dispatch"
-         ), counters}
+        {"cancel.non_active_source",
+         reason: "non_active_source", safe_action: "cancel_lower_and_block"}
 
       true ->
-        case capacity_exhausted(candidate, counters, capacity) do
-          nil ->
-            {candidate_event("work.claimed", candidate, now,
-               reason: "slot_available",
-               safe_action: "dispatch_workflow"
-             ), increment_counters(counters, candidate)}
+        nil
+    end
+  end
 
-          reason ->
-            {candidate_event("capacity.slot_exhausted", candidate, now,
-               reason: reason,
-               safe_action: "defer_candidate"
-             ), counters}
-        end
+  defp required_fields_decision(candidate) do
+    if missing_required_candidate_fields?(candidate) do
+      {"work.skipped", reason: "missing_required_fields", safe_action: "skip_dispatch"}
+    end
+  end
+
+  defp terminal_decision(candidate, eligibility) do
+    if truthy?(value(candidate, :terminal?)) or
+         terminal_issue_state?(candidate, eligibility.terminal_states) do
+      {"cancel.terminal_source",
+       reason: "terminal_source",
+       safe_action: "cancel_lower_cleanup_and_complete",
+       cleanup_required?: true}
+    end
+  end
+
+  defp inactive_state_decision(candidate, eligibility) do
+    if inactive_issue_state?(candidate, eligibility.active_states) do
+      {"work.skipped", reason: "source_state_not_dispatchable", safe_action: "skip_dispatch"}
+    end
+  end
+
+  defp duplicate_dispatch_decision(candidate, eligibility) do
+    cond do
+      candidate_identity(candidate) in eligibility.claimed ->
+        {"work.skipped", reason: "already_claimed", safe_action: "skip_dispatch"}
+
+      candidate_identity(candidate) in eligibility.running ->
+        {"work.skipped", reason: "already_running", safe_action: "skip_dispatch"}
+
+      true ->
+        nil
+    end
+  end
+
+  defp assignment_decision(candidate) do
+    if value(candidate, :assigned_to_worker) == false do
+      {"claim.reassignment_denied",
+       reason: "assigned_to_other_worker", safe_action: "deny_reassignment"}
+    end
+  end
+
+  defp blocked_decision(candidate, eligibility) do
+    cond do
+      truthy?(value(candidate, :blocked?)) ->
+        {"work.skipped", reason: "blocked_by_source", safe_action: "skip_dispatch"}
+
+      todo_issue_blocked_by_non_terminal?(candidate, eligibility.terminal_states) ->
+        {"work.skipped", reason: "non_terminal_dependency", safe_action: "skip_dispatch"}
+
+      true ->
+        nil
     end
   end
 
@@ -315,8 +378,17 @@ defmodule Mezzanine.WorkScheduler do
   defp normalize_capacity(capacity) do
     capacity
     |> normalize()
-    |> Map.update(:states, %{}, &string_key_map/1)
+    |> Map.update(:states, %{}, &normalized_state_key_map/1)
     |> Map.update(:workers, %{}, &string_key_map/1)
+  end
+
+  defp eligibility_context(attrs, running) do
+    %{
+      active_states: state_set(value(attrs, :active_states)),
+      terminal_states: state_set(value(attrs, :terminal_states)),
+      claimed: identity_set(value(attrs, :claimed)),
+      running: identity_set(running)
+    }
   end
 
   defp string_key_map(map) when is_map(map) do
@@ -324,6 +396,12 @@ defmodule Mezzanine.WorkScheduler do
   end
 
   defp string_key_map(_other), do: %{}
+
+  defp normalized_state_key_map(map) when is_map(map) do
+    Map.new(map, fn {key, value} -> {normalize_state(key), value} end)
+  end
+
+  defp normalized_state_key_map(_other), do: %{}
 
   defp candidate_sort_key(candidate) do
     {
@@ -416,15 +494,102 @@ defmodule Mezzanine.WorkScheduler do
   end
 
   defp event_ref(event_kind, attrs, now) do
-    subject_id = value(attrs, :subject_id) || value(attrs, :execution_id) || "unknown"
+    subject_id = candidate_identity(attrs) || value(attrs, :execution_id) || "unknown"
     micros = DateTime.to_unix(now, :microsecond)
     "work-scheduler://#{event_kind}/#{subject_id}/#{micros}"
   end
 
-  defp state(item), do: to_string(value(item, :state) || value(item, :source_state) || "unknown")
+  defp missing_required_candidate_fields?(candidate) do
+    candidate_identity(candidate) in [nil, ""] or
+      not present_binary?(value(candidate, :identifier)) or
+      not present_binary?(value(candidate, :title)) or
+      not present_binary?(value(candidate, :state) || value(candidate, :source_state))
+  end
+
+  defp inactive_issue_state?(candidate, active_states) do
+    MapSet.size(active_states) > 0 and not MapSet.member?(active_states, state(candidate))
+  end
+
+  defp terminal_issue_state?(candidate, terminal_states) do
+    MapSet.member?(terminal_states, state(candidate))
+  end
+
+  defp todo_issue_blocked_by_non_terminal?(candidate, terminal_states) do
+    state(candidate) == "todo" and
+      candidate
+      |> blocker_refs()
+      |> Enum.any?(fn blocker ->
+        not MapSet.member?(terminal_states, state(blocker))
+      end)
+  end
+
+  defp blocker_refs(candidate) do
+    [
+      value(candidate, :blocked_by),
+      value(candidate, :blocker_refs)
+    ]
+    |> Enum.flat_map(&list_wrap/1)
+    |> Enum.filter(&is_map/1)
+  end
+
+  defp state(item), do: normalize_state(value(item, :state) || value(item, :source_state))
+
+  defp normalize_state(value) when is_binary(value) do
+    value
+    |> String.trim()
+    |> String.downcase()
+  end
+
+  defp normalize_state(value) when is_atom(value),
+    do: value |> Atom.to_string() |> normalize_state()
+
+  defp normalize_state(_value), do: "unknown"
 
   defp worker_id(item),
     do: to_string(value(item, :worker_id) || value(item, :worker_host) || "local")
+
+  defp state_set(values) do
+    values
+    |> list_wrap()
+    |> Enum.map(&normalize_state/1)
+    |> Enum.reject(&(&1 in ["", "unknown"]))
+    |> MapSet.new()
+  end
+
+  defp identity_set(values) do
+    values
+    |> list_wrap()
+    |> Enum.map(&candidate_identity/1)
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> MapSet.new()
+  end
+
+  defp candidate_identity(item) do
+    case item do
+      value when is_binary(value) -> value
+      value when is_atom(value) -> Atom.to_string(value)
+      value when is_integer(value) -> Integer.to_string(value)
+      _other -> identity_from_attrs(item)
+    end
+  end
+
+  defp identity_from_attrs(item) do
+    attrs = normalize(item)
+
+    case value(attrs, :subject_id) || value(attrs, :id) do
+      value when is_binary(value) -> value
+      value when is_atom(value) -> Atom.to_string(value)
+      value when is_integer(value) -> Integer.to_string(value)
+      _other -> nil
+    end
+  end
+
+  defp list_wrap(nil), do: []
+  defp list_wrap(%MapSet{} = values), do: MapSet.to_list(values)
+  defp list_wrap(values) when is_list(values), do: values
+  defp list_wrap(value), do: [value]
+
+  defp present_binary?(value), do: is_binary(value) and String.trim(value) != ""
 
   defp normalize(nil), do: %{}
   defp normalize(attrs) when is_list(attrs), do: attrs |> Map.new() |> normalize()

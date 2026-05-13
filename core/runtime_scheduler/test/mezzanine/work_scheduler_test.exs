@@ -56,6 +56,97 @@ defmodule Mezzanine.WorkSchedulerTest do
            ]
   end
 
+  test "enforces Symphony candidate eligibility rules before claiming work" do
+    candidates = [
+      candidate("subject-missing-title",
+        priority: 1,
+        created_at: ~U[2026-05-10 10:00:00Z],
+        state: "Todo",
+        title: nil
+      ),
+      candidate("subject-inactive",
+        priority: 1,
+        created_at: ~U[2026-05-10 10:01:00Z],
+        state: "Backlog"
+      ),
+      candidate("subject-terminal",
+        priority: 1,
+        created_at: ~U[2026-05-10 10:02:00Z],
+        state: "Done"
+      ),
+      candidate("subject-claimed",
+        priority: 1,
+        created_at: ~U[2026-05-10 10:03:00Z],
+        state: "Todo"
+      ),
+      candidate("subject-running",
+        priority: 1,
+        created_at: ~U[2026-05-10 10:04:00Z],
+        state: "Todo"
+      ),
+      candidate("subject-blocked",
+        priority: 1,
+        created_at: ~U[2026-05-10 10:05:00Z],
+        state: "Todo",
+        blocked_by: [%{identifier: "LIN-999", state: "In Progress"}]
+      ),
+      candidate("subject-ready-terminal-blocker",
+        priority: 1,
+        created_at: ~U[2026-05-10 10:06:00Z],
+        state: "Todo",
+        blocked_by: [%{identifier: "LIN-998", state: "Done"}]
+      ),
+      candidate("subject-second-todo",
+        priority: 1,
+        created_at: ~U[2026-05-10 10:07:00Z],
+        state: "Todo"
+      ),
+      candidate("subject-ready-progress",
+        priority: 1,
+        created_at: ~U[2026-05-10 10:08:00Z],
+        state: "In Progress"
+      ),
+      candidate("subject-over-global",
+        priority: 1,
+        created_at: ~U[2026-05-10 10:09:00Z],
+        state: "In Progress"
+      )
+    ]
+
+    assert {:ok, plan} =
+             WorkScheduler.plan_tick(%{
+               now: @now,
+               active_states: ["Todo", "In Progress"],
+               terminal_states: ["Done", "Canceled"],
+               claimed: ["subject-claimed"],
+               candidates: candidates,
+               running: [
+                 candidate("subject-running",
+                   priority: 1,
+                   created_at: ~U[2026-05-10 09:00:00Z],
+                   state: "Review"
+                 )
+               ],
+               capacity: %{
+                 global: 3,
+                 states: %{"todo" => 1, "in progress" => 2}
+               }
+             })
+
+    assert Enum.map(plan.events, &{&1.event_kind, &1.subject_id, &1.reason}) == [
+             {"work.skipped", "subject-missing-title", "missing_required_fields"},
+             {"work.skipped", "subject-inactive", "source_state_not_dispatchable"},
+             {"cancel.terminal_source", "subject-terminal", "terminal_source"},
+             {"work.skipped", "subject-claimed", "already_claimed"},
+             {"work.skipped", "subject-running", "already_running"},
+             {"work.skipped", "subject-blocked", "non_terminal_dependency"},
+             {"work.claimed", "subject-ready-terminal-blocker", "slot_available"},
+             {"capacity.slot_exhausted", "subject-second-todo", "state_capacity_exhausted"},
+             {"work.claimed", "subject-ready-progress", "slot_available"},
+             {"capacity.slot_exhausted", "subject-over-global", "global_capacity_exhausted"}
+           ]
+  end
+
   test "emits continuation, cancel, stale retry, and stall evidence" do
     active_execution = %{
       execution_id: "execution-1",
@@ -175,6 +266,7 @@ defmodule Mezzanine.WorkSchedulerTest do
     %{
       subject_id: subject_id,
       identifier: String.replace(subject_id, "subject", "LIN"),
+      title: Keyword.get(opts, :title, "Work #{subject_id}"),
       priority: Keyword.fetch!(opts, :priority),
       created_at: Keyword.fetch!(opts, :created_at),
       state: Keyword.fetch!(opts, :state),
@@ -182,6 +274,7 @@ defmodule Mezzanine.WorkSchedulerTest do
       source_visible?: true,
       active?: true,
       blocked?: false,
+      blocked_by: Keyword.get(opts, :blocked_by, []),
       assigned_to_worker: Keyword.get(opts, :assigned_to_worker, true),
       terminal?: Keyword.get(opts, :terminal?, false)
     }
