@@ -337,6 +337,135 @@ defmodule Mezzanine.WorkSchedulerTest do
            ]
   end
 
+  test "pre-dispatch revalidation releases stale claims for missing or ineligible refreshed sources" do
+    candidate =
+      candidate("subject-1", priority: 1, created_at: ~U[2026-05-10 10:00:00Z], state: "Todo")
+
+    assert {:ok, missing_source} =
+             WorkScheduler.pre_dispatch_revalidation(%{
+               now: @now,
+               candidate: candidate,
+               refresh_status: :missing,
+               active_states: ["Todo", "In Progress"],
+               terminal_states: ["Done"]
+             })
+
+    assert {missing_source.event_kind, missing_source.reason, missing_source.safe_action} ==
+             {"pre_dispatch.released", "missing_source", "release_claim"}
+
+    assert missing_source.status == "released"
+
+    assert {:ok, terminal_source} =
+             WorkScheduler.pre_dispatch_revalidation(%{
+               now: @now,
+               candidate: candidate,
+               refreshed_source: Map.merge(candidate, %{state: "Done", terminal?: true}),
+               active_states: ["Todo", "In Progress"],
+               terminal_states: ["Done"]
+             })
+
+    assert {terminal_source.event_kind, terminal_source.reason, terminal_source.safe_action} ==
+             {"pre_dispatch.released", "terminal_source", "cancel_lower_cleanup_and_complete"}
+
+    assert terminal_source.cleanup_required?
+
+    assert {:ok, inactive_source} =
+             WorkScheduler.pre_dispatch_revalidation(%{
+               now: @now,
+               candidate: candidate,
+               refreshed_source: Map.put(candidate, :state, "Backlog"),
+               active_states: ["Todo", "In Progress"],
+               terminal_states: ["Done"]
+             })
+
+    assert {inactive_source.event_kind, inactive_source.reason, inactive_source.safe_action} ==
+             {"pre_dispatch.released", "source_state_not_dispatchable", "release_claim"}
+
+    assert {:ok, blocked_source} =
+             WorkScheduler.pre_dispatch_revalidation(%{
+               now: @now,
+               candidate: candidate,
+               refreshed_source:
+                 Map.put(candidate, :blocked_by, [%{identifier: "DEP-1", state: "In Progress"}]),
+               active_states: ["Todo", "In Progress"],
+               terminal_states: ["Done"]
+             })
+
+    assert {blocked_source.event_kind, blocked_source.reason, blocked_source.safe_action} ==
+             {"pre_dispatch.released", "non_terminal_dependency", "release_claim"}
+
+    assert {:ok, refresh_failed} =
+             WorkScheduler.pre_dispatch_revalidation(%{
+               now: @now,
+               candidate: candidate,
+               refresh_status: :error,
+               refresh_error: :timeout
+             })
+
+    assert {refresh_failed.event_kind, refresh_failed.reason, refresh_failed.safe_action} ==
+             {"pre_dispatch.refresh_failed", "source_refresh_failed", "defer_dispatch"}
+
+    assert refresh_failed.status == "deferred"
+    assert refresh_failed.refresh_error == :timeout
+  end
+
+  test "pre-dispatch revalidation enforces capacity and accepts refreshed stale snapshots" do
+    candidate =
+      candidate("subject-1",
+        priority: 1,
+        created_at: ~U[2026-05-10 10:00:00Z],
+        state: "Todo",
+        worker_id: "host-a"
+      )
+      |> Map.put(:provider_revision, "rev-1")
+
+    running =
+      candidate("subject-running",
+        priority: 1,
+        created_at: ~U[2026-05-10 09:00:00Z],
+        state: "Todo",
+        worker_id: "host-a"
+      )
+
+    for {capacity, reason} <- [
+          {%{global: 1}, "global_capacity_exhausted"},
+          {%{global: 2, states: %{"todo" => 1}}, "state_capacity_exhausted"},
+          {%{global: 2, workers: %{"host-a" => 1}}, "worker_capacity_exhausted"}
+        ] do
+      assert {:ok, released} =
+               WorkScheduler.pre_dispatch_revalidation(%{
+                 now: @now,
+                 candidate: candidate,
+                 refreshed_source: candidate,
+                 running: [running],
+                 capacity: capacity,
+                 active_states: ["Todo"],
+                 terminal_states: ["Done"]
+               })
+
+      assert {released.event_kind, released.reason, released.safe_action} ==
+               {"pre_dispatch.released", reason, "release_claim_and_retry"}
+    end
+
+    assert {:ok, accepted} =
+             WorkScheduler.pre_dispatch_revalidation(%{
+               now: @now,
+               candidate: candidate,
+               refreshed_source: Map.put(candidate, :provider_revision, "rev-2"),
+               running: [],
+               capacity: %{global: 1},
+               active_states: ["Todo"],
+               terminal_states: ["Done"]
+             })
+
+    assert accepted.event_kind == "pre_dispatch.accepted"
+    assert accepted.status == "accepted"
+    assert accepted.reason == "source_refreshed"
+    assert accepted.safe_action == "dispatch_refreshed_source"
+    assert accepted.stale_snapshot?
+    assert accepted.provider_revision == "rev-2"
+  end
+
   test "emits continuation, cancel, stale retry, and stall evidence" do
     active_execution = %{
       execution_id: "execution-1",

@@ -103,6 +103,7 @@ defmodule Mezzanine.SourceEngine.LinearIssue do
          assignee: compact_user(value(issue, :assignee)),
          project: compact_project(value(issue, :project)),
          team: compact_team(value(issue, :team)),
+         pre_dispatch_revalidation: map_value(issue, :pre_dispatch_revalidation),
          created_at: string_value(issue, :created_at),
          updated_at: string_value(issue, :updated_at)
        }}
@@ -185,6 +186,7 @@ defmodule Mezzanine.SourceEngine.LinearIssue do
       branch_ref: issue.branch_ref,
       source_url: issue.source_url,
       source_routing: source_routing(issue, source_ref),
+      pre_dispatch_revalidation: issue.pre_dispatch_revalidation,
       payload_schema_revision: @payload_schema_revision,
       subject_kind: @subject_kind,
       lifecycle_state: lifecycle_state,

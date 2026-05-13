@@ -17,6 +17,7 @@ defmodule Mezzanine.WorkScheduler do
     :blocked?,
     :blocked_by,
     :blocker_refs,
+    :candidate,
     :candidates,
     :capacity,
     :created_at,
@@ -24,6 +25,7 @@ defmodule Mezzanine.WorkScheduler do
     :due_at,
     :execution,
     :execution_id,
+    :external_ref,
     :failure,
     :global,
     :identifier,
@@ -37,11 +39,15 @@ defmodule Mezzanine.WorkScheduler do
     :now,
     :priority,
     :reason,
+    :refreshed_source,
+    :refresh_error,
+    :refresh_status,
     :retry,
     :retry_base_ms,
     :retry_token,
     :running,
     :source,
+    :source_ref,
     :source_state,
     :source_visible?,
     :ssh_hosts,
@@ -93,6 +99,35 @@ defmodule Mezzanine.WorkScheduler do
        },
        decided_at: now
      }}
+  end
+
+  @spec pre_dispatch_revalidation(map() | keyword()) :: {:ok, map()} | {:error, term()}
+  def pre_dispatch_revalidation(attrs) when is_map(attrs) or is_list(attrs) do
+    attrs = normalize(attrs)
+    now = value(attrs, :now) || DateTime.utc_now()
+    candidate = attrs |> value(:candidate) |> normalize()
+
+    cond do
+      refresh_failed?(attrs) ->
+        {:ok,
+         revalidation_event("pre_dispatch.refresh_failed", candidate, now,
+           reason: "source_refresh_failed",
+           safe_action: "defer_dispatch",
+           revalidation_status: "deferred",
+           refresh_error: value(attrs, :refresh_error)
+         )}
+
+      refresh_missing?(attrs) ->
+        {:ok,
+         revalidation_event("pre_dispatch.released", candidate, now,
+           reason: "missing_source",
+           safe_action: "release_claim",
+           revalidation_status: "released"
+         )}
+
+      true ->
+        revalidate_refreshed_source(attrs, candidate, now)
+    end
   end
 
   @spec continuation_check(map() | keyword()) :: {:ok, map()} | {:error, term()}
@@ -257,6 +292,126 @@ defmodule Mezzanine.WorkScheduler do
          ), counters}
     end
   end
+
+  defp revalidate_refreshed_source(attrs, candidate, now) do
+    source = revalidation_source(attrs, candidate)
+    running = attrs |> value(:running) |> List.wrap() |> Enum.map(&normalize/1)
+    capacity = attrs |> configured_capacity() |> normalize_capacity()
+    counters = capacity_counters(running)
+    eligibility = eligibility_context(attrs, running)
+
+    {decision, _counters} = decide_candidate(source, counters, capacity, now, eligibility)
+
+    {:ok, revalidation_event_from_decision(decision, candidate, source, now)}
+  end
+
+  defp revalidation_source(attrs, candidate) do
+    refreshed_source = attrs |> value(:refreshed_source) |> normalize()
+    source = attrs |> value(:source) |> normalize()
+
+    cond do
+      map_size(refreshed_source) > 0 -> refreshed_source
+      map_size(source) > 0 -> source
+      true -> candidate
+    end
+  end
+
+  defp revalidation_event_from_decision(
+         %{event_kind: "work.claimed"} = decision,
+         candidate,
+         source,
+         now
+       ) do
+    revalidation_event("pre_dispatch.accepted", source, now,
+      reason: revalidation_acceptance_reason(candidate, source),
+      safe_action: "dispatch_refreshed_source",
+      revalidation_status: "accepted",
+      provider_revision: provider_revision(source),
+      previous_provider_revision: provider_revision(candidate),
+      stale_snapshot?: stale_snapshot?(candidate, source)
+    )
+    |> Map.put(:state, decision.state)
+    |> Map.put(:worker_id, decision.worker_id)
+  end
+
+  defp revalidation_event_from_decision(
+         %{event_kind: "capacity.slot_exhausted"} = decision,
+         _candidate,
+         source,
+         now
+       ) do
+    revalidation_event("pre_dispatch.released", source, now,
+      reason: decision.reason,
+      safe_action: "release_claim_and_retry",
+      revalidation_status: "released",
+      provider_revision: provider_revision(source)
+    )
+    |> Map.put(:state, decision.state)
+    |> Map.put(:worker_id, decision.worker_id)
+  end
+
+  defp revalidation_event_from_decision(decision, _candidate, source, now) do
+    revalidation_event("pre_dispatch.released", source, now,
+      reason: decision.reason,
+      safe_action: revalidation_release_action(decision),
+      revalidation_status: "released",
+      cleanup_required?: Map.get(decision, :cleanup_required?),
+      provider_revision: provider_revision(source)
+    )
+    |> Map.put(:state, Map.get(decision, :state, state(source)))
+    |> Map.put(:worker_id, Map.get(decision, :worker_id, worker_id(source)))
+  end
+
+  defp revalidation_event(event_kind, source, now, opts) do
+    evidence_event(event_kind, source, now,
+      reason: Keyword.fetch!(opts, :reason),
+      safe_action: Keyword.fetch!(opts, :safe_action),
+      cleanup_required?: Keyword.get(opts, :cleanup_required?),
+      revalidation_status: Keyword.get(opts, :revalidation_status),
+      source_ref: source_ref(source),
+      provider_revision: Keyword.get(opts, :provider_revision) || provider_revision(source),
+      previous_provider_revision: Keyword.get(opts, :previous_provider_revision),
+      stale_snapshot?: Keyword.get(opts, :stale_snapshot?),
+      refresh_error: Keyword.get(opts, :refresh_error)
+    )
+  end
+
+  defp revalidation_release_action(%{safe_action: "cancel_lower_cleanup_and_complete"}),
+    do: "cancel_lower_cleanup_and_complete"
+
+  defp revalidation_release_action(%{safe_action: "cancel_lower_and_quarantine"}),
+    do: "release_claim"
+
+  defp revalidation_release_action(%{safe_action: "cancel_lower_and_block"}),
+    do: "release_claim"
+
+  defp revalidation_release_action(_decision), do: "release_claim"
+
+  defp revalidation_acceptance_reason(candidate, source) do
+    if stale_snapshot?(candidate, source), do: "source_refreshed", else: "source_current"
+  end
+
+  defp stale_snapshot?(candidate, source) do
+    previous = provider_revision(candidate)
+    current = provider_revision(source)
+    present_binary?(previous) and present_binary?(current) and previous != current
+  end
+
+  defp provider_revision(source),
+    do: value(source, :provider_revision) || value(source, :updated_at)
+
+  defp source_ref(source) do
+    value(source, :source_ref) || value(source, :external_ref) ||
+      value(source, :provider_external_ref)
+  end
+
+  defp refresh_failed?(attrs) do
+    value(attrs, :refresh_status) in [:error, "error", :failed, "failed"] or
+      not is_nil(value(attrs, :refresh_error))
+  end
+
+  defp refresh_missing?(attrs),
+    do: value(attrs, :refresh_status) in [:missing, "missing", :not_found, "not_found"]
 
   defp candidate_admission_decision(candidate, eligibility) do
     source_visibility_decision(candidate) ||
@@ -572,7 +727,14 @@ defmodule Mezzanine.WorkScheduler do
       failure: Keyword.get(opts, :failure),
       cleanup_required?: Keyword.get(opts, :cleanup_required?),
       stall_timeout_ms: Keyword.get(opts, :stall_timeout_ms),
-      last_lower_activity_at: Keyword.get(opts, :last_lower_activity_at)
+      last_lower_activity_at: Keyword.get(opts, :last_lower_activity_at),
+      status: Keyword.get(opts, :revalidation_status),
+      revalidation_status: Keyword.get(opts, :revalidation_status),
+      source_ref: Keyword.get(opts, :source_ref),
+      provider_revision: Keyword.get(opts, :provider_revision),
+      previous_provider_revision: Keyword.get(opts, :previous_provider_revision),
+      stale_snapshot?: Keyword.get(opts, :stale_snapshot?),
+      refresh_error: Keyword.get(opts, :refresh_error)
     }
     |> compact_map()
   end
