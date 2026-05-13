@@ -169,6 +169,83 @@ defmodule Mezzanine.WorkSchedulerTest do
            ]
   end
 
+  test "derives worker capacity from worker host config when worker override is absent" do
+    candidates = [
+      candidate("subject-1",
+        priority: 1,
+        created_at: ~U[2026-05-10 10:00:00Z],
+        state: "todo",
+        worker_id: "host-a"
+      ),
+      candidate("subject-2",
+        priority: 1,
+        created_at: ~U[2026-05-10 10:01:00Z],
+        state: "todo",
+        worker_id: "host-b"
+      )
+    ]
+
+    running = [
+      candidate("subject-running",
+        priority: 1,
+        created_at: ~U[2026-05-10 09:00:00Z],
+        state: "todo",
+        worker_id: "host-a"
+      )
+    ]
+
+    assert {:ok, plan} =
+             WorkScheduler.plan_tick(%{
+               now: @now,
+               agent: %{max_concurrent_agents: 3},
+               worker: %{
+                 ssh_hosts: ["host-a", "host-b"],
+                 max_concurrent_agents_per_host: 1
+               },
+               candidates: candidates,
+               running: running
+             })
+
+    assert plan.capacity.configured.workers == %{"host-a" => 1, "host-b" => 1}
+
+    assert Enum.map(plan.events, &{&1.event_kind, &1.subject_id, &1.reason}) == [
+             {"capacity.slot_exhausted", "subject-1", "worker_capacity_exhausted"},
+             {"work.claimed", "subject-2", "slot_available"}
+           ]
+
+    assert {:ok, override_plan} =
+             WorkScheduler.plan_tick(%{
+               now: @now,
+               capacity: %{workers: %{"host-a" => 2}},
+               worker: %{
+                 ssh_hosts: ["host-a"],
+                 max_concurrent_agents_per_host: 1
+               },
+               candidates: [
+                 candidate("subject-3",
+                   priority: 1,
+                   created_at: ~U[2026-05-10 10:02:00Z],
+                   state: "todo",
+                   worker_id: "host-a"
+                 ),
+                 candidate("subject-4",
+                   priority: 1,
+                   created_at: ~U[2026-05-10 10:03:00Z],
+                   state: "todo",
+                   worker_id: "host-a"
+                 )
+               ],
+               running: running
+             })
+
+    assert override_plan.capacity.configured.workers == %{"host-a" => 2}
+
+    assert Enum.map(override_plan.events, &{&1.event_kind, &1.subject_id, &1.reason}) == [
+             {"work.claimed", "subject-3", "slot_available"},
+             {"capacity.slot_exhausted", "subject-4", "worker_capacity_exhausted"}
+           ]
+  end
+
   test "enforces candidate eligibility rules before claiming work" do
     candidates = [
       candidate("subject-missing-title",
@@ -383,7 +460,7 @@ defmodule Mezzanine.WorkSchedulerTest do
       priority: Keyword.fetch!(opts, :priority),
       created_at: Keyword.fetch!(opts, :created_at),
       state: Keyword.fetch!(opts, :state),
-      worker_id: "worker-a",
+      worker_id: Keyword.get(opts, :worker_id, "worker-a"),
       source_visible?: true,
       active?: true,
       blocked?: false,

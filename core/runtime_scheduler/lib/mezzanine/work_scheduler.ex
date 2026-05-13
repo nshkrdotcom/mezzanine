@@ -44,6 +44,7 @@ defmodule Mezzanine.WorkScheduler do
     :source,
     :source_state,
     :source_visible?,
+    :ssh_hosts,
     :stall_timeout_ms,
     :state,
     :states,
@@ -54,6 +55,8 @@ defmodule Mezzanine.WorkScheduler do
     :title,
     :worker_host,
     :worker_id,
+    :worker,
+    :max_concurrent_agents_per_host,
     :workers,
     :workflow_id,
     :workflow_version
@@ -391,6 +394,7 @@ defmodule Mezzanine.WorkScheduler do
     |> normalize()
     |> put_new_positive_integer(:global, agent_global_capacity(attrs))
     |> put_new_non_empty_map(:states, agent_state_capacity(attrs))
+    |> put_new_non_empty_map(:workers, worker_host_capacity(attrs))
   end
 
   defp agent_global_capacity(attrs) do
@@ -421,6 +425,20 @@ defmodule Mezzanine.WorkScheduler do
 
   defp put_new_non_empty_map(map, _key, _value), do: map
 
+  defp worker_host_capacity(attrs) do
+    worker = attrs |> value(:worker) |> normalize()
+    limit = positive_integer(value(worker, :max_concurrent_agents_per_host))
+
+    if is_integer(limit) do
+      worker
+      |> value(:ssh_hosts)
+      |> string_list()
+      |> Map.new(&{&1, limit})
+    else
+      %{}
+    end
+  end
+
   defp positive_integer(value) when is_integer(value) and value > 0, do: value
 
   defp positive_integer(value) when is_binary(value) do
@@ -439,6 +457,14 @@ defmodule Mezzanine.WorkScheduler do
   end
 
   defp positive_integer_map(_value), do: %{}
+
+  defp string_list(values) do
+    values
+    |> list_wrap()
+    |> Enum.map(&to_string/1)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+  end
 
   defp eligibility_context(attrs, running) do
     %{
