@@ -3,8 +3,9 @@ defmodule Mezzanine.WorkspaceEngine.Cleanup do
   Redacted local workspace cleanup receipts.
 
   Cleanup revalidates path safety immediately before deletion, runs
-  `before_remove` hooks through the workspace hook contract, and never includes
-  concrete filesystem paths in the returned receipt.
+  `before_remove` hooks through the workspace hook contract without letting hook
+  failures block deletion, and never includes concrete filesystem paths in the
+  returned receipt.
   """
 
   alias Mezzanine.WorkspaceEngine.{Hooks, PathSafety, WorkspaceRecord}
@@ -13,9 +14,7 @@ defmodule Mezzanine.WorkspaceEngine.Cleanup do
 
   @spec remove(WorkspaceRecord.t(), keyword()) ::
           {:ok, map()}
-          | {:error,
-             {:cleanup_denied | :cleanup_failed | :cleanup_hook_failed | :cleanup_hook_timeout,
-              map()}}
+          | {:error, {:cleanup_denied | :cleanup_failed, map()}}
   def remove(%WorkspaceRecord{} = workspace, opts \\ []) when is_list(opts) do
     if cleanup_policy_removes?(workspace.cleanup_policy) do
       remove_workspace(workspace, opts)
@@ -25,26 +24,27 @@ defmodule Mezzanine.WorkspaceEngine.Cleanup do
   end
 
   defp remove_workspace(workspace, opts) do
-    with :ok <- PathSafety.validate(workspace.concrete_root, workspace.concrete_path),
-         {:ok, hook_receipts} <- Hooks.run(workspace, :before_remove, opts),
-         {:ok, removed?} <- remove_path(workspace.concrete_path) do
-      {:ok, receipt(workspace, :removed, removed?, nil, hook_receipts)}
-    else
-      {:error, {:hook_failed, hook_receipt}} ->
-        {:error,
-         {:cleanup_hook_failed,
-          receipt(workspace, :failed, false, hook_receipt.reason, [hook_receipt])}}
+    case PathSafety.validate(workspace.concrete_root, workspace.concrete_path) do
+      :ok ->
+        hook_receipts = before_remove_hook_receipts(workspace, opts)
 
-      {:error, {:hook_timeout, hook_receipt}} ->
-        {:error,
-         {:cleanup_hook_timeout,
-          receipt(workspace, :failed, false, hook_receipt.reason, [hook_receipt])}}
+        case remove_path(workspace.concrete_path) do
+          {:ok, removed?} ->
+            {:ok, receipt(workspace, :removed, removed?, nil, hook_receipts)}
 
-      {:error, {:remove_failed, reason}} ->
-        {:error, {:cleanup_failed, receipt(workspace, :failed, false, reason, [])}}
+          {:error, {:remove_failed, reason}} ->
+            {:error, {:cleanup_failed, receipt(workspace, :failed, false, reason, hook_receipts)}}
+        end
 
       {:error, reason} when is_atom(reason) ->
         {:error, {:cleanup_denied, receipt(workspace, :denied, false, reason, [])}}
+    end
+  end
+
+  defp before_remove_hook_receipts(workspace, opts) do
+    case Hooks.run(workspace, :before_remove, opts) do
+      {:ok, hook_receipts} -> hook_receipts
+      {:error, {_kind, hook_receipt}} -> [hook_receipt]
     end
   end
 

@@ -16,7 +16,7 @@ defmodule Mezzanine.WorkspaceEngine.Hooks do
     after_create: :halt,
     before_run: :halt,
     after_run: :continue,
-    before_remove: :halt,
+    before_remove: :continue,
     prepare_workspace: :halt,
     after_turn: :continue
   }

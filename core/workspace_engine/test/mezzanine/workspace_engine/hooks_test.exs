@@ -104,8 +104,15 @@ defmodule Mezzanine.WorkspaceEngine.HooksTest do
     assert after_run.action == :continue
     assert after_run.reason == :telemetry_unavailable
 
-    assert {:ok, [before_remove]} = Hooks.run(workspace, :before_remove)
-    assert before_remove.fatal? == true
+    assert {:ok, [before_remove]} =
+             Hooks.run(workspace, :before_remove,
+               runner: fn _hook, _context -> {:error, :cleanup_unavailable} end
+             )
+
+    assert before_remove.status == :failed
+    assert before_remove.fatal? == false
+    assert before_remove.action == :continue
+    assert before_remove.reason == :cleanup_unavailable
   end
 
   test "skips after_create hooks for reused workspaces" do

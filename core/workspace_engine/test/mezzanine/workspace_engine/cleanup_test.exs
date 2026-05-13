@@ -74,7 +74,7 @@ defmodule Mezzanine.WorkspaceEngine.CleanupTest do
     refute String.contains?(inspect(receipt), outside)
   end
 
-  test "before_remove hook failures abort cleanup" do
+  test "before_remove hook failures continue cleanup with redacted receipt evidence" do
     root = tmp_dir()
 
     {:ok, workspace} =
@@ -84,20 +84,65 @@ defmodule Mezzanine.WorkspaceEngine.CleanupTest do
         workspace_root: root,
         cleanup_policy: :on_terminal,
         hook_specs: [
-          %{"hook_ref" => "pre-remove", "stage" => "before_remove", "timeout_ms" => 100}
+          %{
+            "hook_ref" => "pre-remove",
+            "stage" => "before_remove",
+            "timeout_ms" => 100,
+            "on_error" => "halt"
+          }
         ]
       })
 
-    assert {:error, {:cleanup_hook_failed, receipt}} =
+    assert {:ok, receipt} =
              Cleanup.remove(workspace,
-               runner: fn _hook, _context -> {:error, :archive_unavailable} end
+               runner: fn _hook, _context ->
+                 {:error, %{stdout: "archive unavailable secret-token", stderr: root}}
+               end,
+               redactions: ["secret-token", root]
              )
 
-    assert receipt.status == :failed
-    assert receipt.reason == :archive_unavailable
+    assert receipt.status == :removed
+    assert receipt.reason == nil
+    assert receipt.removed? == true
     assert [hook_receipt] = receipt.hook_receipts
     assert hook_receipt.stage == :before_remove
-    assert File.dir?(workspace.concrete_path)
+    assert hook_receipt.status == :failed
+    assert hook_receipt.action == :halt
+    assert hook_receipt.reason.stdout == "archive unavailable [REDACTED]"
+    assert hook_receipt.reason.stderr == "[REDACTED]"
+    refute File.exists?(workspace.concrete_path)
+    refute String.contains?(inspect(receipt), root)
+  end
+
+  test "before_remove hook timeouts continue cleanup with timeout receipt evidence" do
+    root = tmp_dir()
+
+    {:ok, workspace} =
+      Allocator.reserve(%{
+        installation_id: "installation-1",
+        subject_id: "subject-1",
+        workspace_root: root,
+        cleanup_policy: :on_terminal,
+        hook_specs: [
+          %{"hook_ref" => "pre-remove", "stage" => "before_remove", "timeout_ms" => 1}
+        ]
+      })
+
+    assert {:ok, receipt} =
+             Cleanup.remove(workspace,
+               runner: fn _hook, _context ->
+                 Process.sleep(50)
+                 :ok
+               end
+             )
+
+    assert receipt.status == :removed
+    assert receipt.removed? == true
+    assert [hook_receipt] = receipt.hook_receipts
+    assert hook_receipt.stage == :before_remove
+    assert hook_receipt.status == :timed_out
+    assert hook_receipt.action == :continue
+    refute File.exists?(workspace.concrete_path)
     refute String.contains?(inspect(receipt), root)
   end
 
