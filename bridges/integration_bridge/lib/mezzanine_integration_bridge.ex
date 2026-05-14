@@ -72,6 +72,12 @@ defmodule Mezzanine.IntegrationBridge do
     to: LinearCredentialIngress,
     as: :prepare_api_key_invocation
 
+  @spec prepare_linear_connection_invocation(String.t(), map() | keyword(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  defdelegate prepare_linear_connection_invocation(connection_id, attrs, opts \\ []),
+    to: LinearCredentialIngress,
+    as: :prepare_connection_invocation
+
   @spec execute_dynamic_tool(AuthorizedInvocation.t(), String.t(), term(), keyword()) ::
           {:ok, map()} | {:error, term()}
   defdelegate execute_dynamic_tool(invocation, tool_name, arguments, opts \\ []),

@@ -55,6 +55,41 @@ defmodule Mezzanine.IntegrationBridge.LinearCredentialIngress do
 
   def prepare_api_key_invocation(_api_key, _attrs, _opts), do: {:error, :invalid_linear_api_key}
 
+  @spec prepare_connection_invocation(String.t(), map() | keyword(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  def prepare_connection_invocation(connection_id, attrs, opts \\ [])
+
+  def prepare_connection_invocation(connection_id, attrs, opts)
+      when is_binary(connection_id) and connection_id != "" and
+             (is_map(attrs) or is_list(attrs)) and is_list(opts) do
+    attrs = normalize_attrs(attrs)
+
+    with {:ok, invocation} <- AuthorizedInvocation.new(invocation_attrs(attrs)) do
+      credential_ref_id =
+        string_value(opts, :credential_ref_id) || string_value(opts, :credential_ref)
+
+      {:ok,
+       %{
+         authorized_invocation: invocation,
+         connection_id: connection_id,
+         credential_ref_id: credential_ref_id,
+         source_opts:
+           [
+             invoke_opts: [
+               connection_id: connection_id,
+               actor_id: value(attrs, :actor_id)
+             ],
+             credential_redeemed?: true
+           ]
+           |> maybe_put(:credential_ref_id, credential_ref_id)
+           |> maybe_put(:credential_lease_ref, string_value(opts, :credential_lease_ref))
+       }}
+    end
+  end
+
+  def prepare_connection_invocation(_connection_id, _attrs, _opts),
+    do: {:error, :invalid_linear_connection_id}
+
   defp api_key_binding(api_key) do
     {:ok, InstallBinding.from_api_key(api_key)}
   rescue
@@ -192,5 +227,10 @@ defmodule Mezzanine.IntegrationBridge.LinearCredentialIngress do
     end
   end
 
+  defp value(list, key) when is_list(list), do: Keyword.get(list, key)
   defp value(%{} = map, key), do: Map.get(map, key) || Map.get(map, Atom.to_string(key))
+
+  defp maybe_put(opts, _key, nil), do: opts
+  defp maybe_put(opts, _key, ""), do: opts
+  defp maybe_put(opts, key, value), do: Keyword.put(opts, key, value)
 end

@@ -443,6 +443,67 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert result.source_intake.operation == "linear.issues.list"
   end
 
+  test "Linear existing connection ingress prepares authorized invocation without raw credentials" do
+    assert {:ok, prepared} =
+             IntegrationBridge.prepare_linear_connection_invocation(
+               "connection-linear-existing",
+               %{
+                 tenant_id: "tenant-linear-existing",
+                 installation_id: "inst-linear-existing",
+                 subject_id: "subject-linear-existing",
+                 execution_id: "exec-linear-existing",
+                 trace_id: "trace-linear-existing",
+                 idempotency_key: "idem-linear-existing",
+                 submission_dedupe_key: "dedupe-linear-existing",
+                 actor_id: "operator-linear-existing",
+                 allowed_operations: ["linear.issues.list"]
+               },
+               credential_ref_id: "credential-ref-linear-existing",
+               credential_lease_ref: "credential-lease-linear-existing"
+             )
+
+    assert %AuthorizedInvocation{} = prepared.authorized_invocation
+    assert prepared.connection_id == "connection-linear-existing"
+    assert prepared.credential_ref_id == "credential-ref-linear-existing"
+
+    assert Keyword.fetch!(prepared.source_opts, :invoke_opts)[:connection_id] ==
+             "connection-linear-existing"
+
+    assert Keyword.fetch!(prepared.source_opts, :credential_ref_id) ==
+             "credential-ref-linear-existing"
+
+    assert Keyword.fetch!(prepared.source_opts, :credential_lease_ref) ==
+             "credential-lease-linear-existing"
+
+    refute inspect(prepared) =~ "lin_api"
+
+    invoke_fun = fn capability, input, opts ->
+      send(self(), {:invoke, capability, input, opts})
+
+      {:ok,
+       %{
+         output: %{
+           issues: [linear_issue()],
+           page_info: %{has_next_page: false}
+         }
+       }}
+    end
+
+    assert {:ok, result} =
+             IntegrationBridge.fetch_linear_candidates(
+               prepared.authorized_invocation,
+               source_binding(),
+               Keyword.merge(prepared.source_opts,
+                 invoke_fun: invoke_fun,
+                 viewer: %{id: "usr-linear-viewer"}
+               )
+             )
+
+    assert_received {:invoke, "linear.issues.list", _input, opts}
+    assert Keyword.fetch!(opts, :connection_id) == "connection-linear-existing"
+    assert result.credential_redeemed? == true
+  end
+
   test "Linear API key credential ingress defaults include workflow-state lookup" do
     assert {:ok, prepared} =
              IntegrationBridge.prepare_linear_api_key_invocation("lin_api_live_secret", %{
