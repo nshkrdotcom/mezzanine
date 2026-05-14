@@ -136,25 +136,25 @@ internals.
 
 ```mermaid
 flowchart TD
-  AppKit["AppKit bridge"] --> Admission["Lifecycle admission"]
-  Admission --> Ledger["Execution and subject rows"]
-  Admission --> Outbox["Workflow-start outbox"]
-  Outbox --> Temporal["WorkflowRuntime and Temporal"]
-  Temporal --> Lower["Jido Integration lower gateway"]
-  Lower --> Receipts["Terminal receipts"]
-  Receipts --> Reducer["ReceiptReducer"]
-  Reducer --> Projections["Operator, review, evidence, audit projections"]
+  AppKit["AppKit<br/>bridge"] --> Admission["Lifecycle<br/>admission"]
+  Admission --> Ledger["Execution<br/>subject rows"]
+  Admission --> Outbox["Workflow<br/>outbox"]
+  Outbox --> Temporal["WorkflowRuntime<br/>Temporal"]
+  Temporal --> Lower["Lower<br/>gateway"]
+  Lower --> Receipts["Terminal<br/>receipts"]
+  Receipts --> Reducer["Receipt<br/>reducer"]
+  Reducer --> Projections["Operator<br/>projections"]
   Projections --> AppKit
 ```
 
 ```mermaid
 flowchart LR
-  Source["SourceEngine"] --> Scheduler["WorkScheduler"]
-  Scheduler --> Workspace["WorkspaceEngine"]
-  Workspace --> Runtime["WorkflowRuntime"]
-  Runtime --> Reconcile["SourceReconciliation"]
-  Reconcile --> ReviewGate["ReviewGate"]
-  ReviewGate --> Audit["Audit and archival engines"]
+  Source["Source<br/>Engine"] --> Scheduler["Work<br/>Scheduler"]
+  Scheduler --> Workspace["Workspace<br/>Engine"]
+  Workspace --> Runtime["Workflow<br/>Runtime"]
+  Runtime --> Reconcile["Source<br/>reconcile"]
+  Reconcile --> ReviewGate["Review<br/>Gate"]
+  ReviewGate --> Audit["Audit<br/>archival"]
 ```
 
 ## Status
