@@ -61,6 +61,77 @@ mezzanine/
 - generalized models for distributed AI operations
 - product-neutral logic above `app_kit`
 
+## Current Operational Surface
+
+Mezzanine is the reusable operating layer that now makes the product loop real.
+It is not a UI repo and it is not a connector SDK. Its job is to hold the
+durable, product-neutral engines that connect AppKit-facing product commands to
+Citadel governance, Jido Integration runtime execution, source admission,
+workspace lifecycle, reviews, evidence, projections, audit, and recovery.
+
+The current runtime path is assembled from these neutral surfaces:
+
+- `Mezzanine.AppKitBridge` exposes the product-safe bridge consumed by AppKit
+  and keeps product repos out of lower internals.
+- `Mezzanine.WorkControl`, work surfaces, operator surfaces, and review
+  surfaces coordinate submit, refresh, pause, resume, cancel, accept, reject,
+  rework, waive, expire, and readback flows.
+- `Mezzanine.CitadelBridge` hands governed work into Citadel authority without
+  moving Brain governance ownership into product code.
+- `Mezzanine.IntegrationBridge` hands lower execution and lower-facts reads to
+  Jido Integration with tenant scope and typed read leases.
+- `Mezzanine.WorkflowRuntime` owns Temporal-backed execution handoff, workflow
+  start outbox processing, compact workflow evidence, and runtime dispatch
+  activities.
+- `Mezzanine.ExecutionLifecycleWorkflow` and lifecycle reducers keep execution
+  rows, subject state, decisions, evidence, projections, source reconciliation,
+  and audit ledgers coherent as lower receipts arrive.
+- `Mezzanine.WorkScheduler` owns queue capacity, candidate eligibility,
+  pre-dispatch revalidation, retry due times, failure backoff, stale token
+  defense, and startup/running reconciliation.
+- `Mezzanine.WorkspaceEngine` owns workspace key contracts, root containment,
+  create/before-run/after-run/before-remove/cleanup hooks, and cleanup
+  continuation after hook failures.
+
+Recent buildout has made the coding-agent loop observable from above without
+letting products bypass the reusable engines. Mezzanine now projects Codex
+session start and stop receipts, app-server protocol evidence, first-prompt
+evidence, continuation-turn evidence, event-stream evidence, runtime stall
+decisions, token accounting totals, and terminal workspace cleanup into the
+product read models. It also carries Linear candidate team filters, current
+source telemetry, dynamic GraphQL tool execution, state-publication variants,
+publication dry-run denial, GitHub PR evidence runtime, source blocker dispatch
+denial, and source payload readback.
+
+That is the core accomplishment of the current repo: Mezzanine has enough
+neutral engines for a product to submit governed coding work, dispatch it
+through the lower runtime, track the workspace and source lifecycle, reduce
+receipts into operator-visible projections, handle retries and cleanup, and
+present review/evidence state through AppKit. The implementation is still
+deliberately neutral. Extravaganza owns product defaults and operator copy;
+Jido Integration owns connector and runtime adapter behavior; Citadel owns
+governance compilation; Execution Plane owns the lower node/lane substrate.
+
+## Runtime Owner Model
+
+Mezzanine treats runtime state as owned, typed, and replayable:
+
+- products provide installation, pack, source, and work intent through AppKit
+- source admission turns provider objects into tenant-scoped subjects without
+  making provider payloads durable product truth
+- lifecycle admission writes durable execution state and explicit workflow-start
+  outbox rows in the same transaction
+- WorkflowRuntime dispatches to Temporal and lower gateway activities while
+  preserving compact evidence instead of raw workflow history
+- terminal receipts are reduced into stable execution, subject, decision,
+  evidence, projection, and audit ledgers
+- review gates update subject state and projection state through the same
+  reducer path instead of ad hoc product mutations
+
+This owner model is why the product can show usable queue, runtime, source,
+review, evidence, retry, and cleanup readback without importing lower repo
+internals.
+
 ## Status
 
 The active buildout in this repo is the neutral core scaffold:
