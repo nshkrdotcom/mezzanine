@@ -1289,6 +1289,203 @@ defmodule Mezzanine.IntegrationBridgeTest do
              "codex_usage_absolute"
   end
 
+  test "Codex agent runtime marks active no-event runs stalled from run start timeout" do
+    now = ~U[2026-05-14 00:10:00Z]
+    started_at = ~U[2026-05-14 00:09:55Z]
+
+    attrs =
+      codex_agent_attrs()
+      |> Map.merge(%{
+        subject_ref: "subject://neutral/codex-no-event-stall",
+        run_ref: "run://neutral/codex-no-event-stall",
+        attempt_ref: "attempt://neutral/codex-no-event-stall/1",
+        worker_ref: "worker://neutral/codex-no-event-stall",
+        workspace_ref: "workspace://neutral/codex-no-event-stall",
+        started_at: started_at,
+        timeout_policy: %{stall_timeout_ms: 1_000}
+      })
+
+    invoke_fun = fn capability_id, input, opts ->
+      send(self(), {:codex_no_event_stall_invoke, capability_id, input, opts})
+
+      {:ok,
+       %{
+         run: %{run_id: "jido-run-codex-no-event-stall", started_at: started_at},
+         attempt: %{attempt_id: "jido-attempt-codex-no-event-stall", started_at: started_at},
+         output: %{
+           provider_session_id: "provider-session-no-event-stall",
+           provider_turn_id: "provider-turn-no-event-stall",
+           status: :running
+         },
+         events: []
+       }}
+    end
+
+    assert {:ok, projection} =
+             CodexAgentRuntime.run(attrs,
+               invoke_fun: invoke_fun,
+               now: now,
+               connection_id: "conn-codex",
+               start_runtime_router?: false,
+               register_connector?: false
+             )
+
+    assert_received {:codex_no_event_stall_invoke, "codex.session.turn", _input, _opts}
+    assert projection.status == "stalled"
+    assert projection.terminal_state == "stalled"
+
+    assert %{} = stall = projection.stall_decision
+    assert stall.runtime_state == "stalled"
+    assert stall.status_reason == "stall_timeout"
+    assert stall.elapsed_ms == 5_000
+    assert stall.stall_timeout_ms == 1_000
+    assert stall.last_activity_at == started_at
+    assert stall.activity_source == "started_at"
+    assert stall.safe_action == "terminate_lower_and_schedule_retry"
+    assert stall.workflow_signal == "operator.cancel"
+    assert stall.cancel_lower_run? == true
+    assert stall.cleanup_workspace? == false
+    assert stall.attempt_ref == "attempt://neutral/codex-no-event-stall/1"
+    assert stall.session_ref == "session://codex/provider-session-no-event-stall"
+
+    assert stall.retry.status == "scheduled"
+    assert stall.retry.reason == "stall_timeout"
+    assert stall.retry.scheduled_at == now
+    assert stall.retry.due_at == DateTime.add(now, 10_000, :millisecond)
+    assert stall.retry.delay_ms == 10_000
+    assert stall.retry.delay_type == "failure_backoff"
+    assert stall.retry.metadata.safe_action == "terminate_lower_and_schedule_retry"
+    assert stall.diagnostic.code == "runtime_stall_timeout"
+  end
+
+  test "Codex agent runtime leaves active runs unstalled when stall timeout is disabled" do
+    for timeout <- [0, -1] do
+      attrs =
+        codex_agent_attrs()
+        |> Map.merge(%{
+          run_ref: "run://neutral/codex-disabled-stall-#{timeout}",
+          started_at: ~U[2026-05-14 00:00:00Z],
+          timeout_policy: %{stall_timeout_ms: timeout}
+        })
+
+      invoke_fun = fn _capability_id, _input, _opts ->
+        {:ok,
+         %{
+           run: %{run_id: "jido-run-disabled-stall-#{timeout}"},
+           attempt: %{attempt_id: "jido-attempt-disabled-stall-#{timeout}"},
+           output: %{provider_session_id: "provider-disabled-stall-#{timeout}", status: :running},
+           events: []
+         }}
+      end
+
+      assert {:ok, projection} =
+               CodexAgentRuntime.run(attrs,
+                 invoke_fun: invoke_fun,
+                 now: ~U[2026-05-14 00:10:00Z],
+                 connection_id: "conn-codex",
+                 start_runtime_router?: false,
+                 register_connector?: false
+               )
+
+      assert projection.status == "running"
+      refute Map.has_key?(projection, :stall_decision)
+    end
+  end
+
+  test "Codex agent runtime marks active runs stalled from stale lower event timestamp" do
+    now = ~U[2026-05-14 00:10:00Z]
+    started_at = ~U[2026-05-14 00:00:00Z]
+    last_event_at = ~U[2026-05-14 00:04:30Z]
+
+    attrs =
+      codex_agent_attrs()
+      |> Map.merge(%{
+        subject_ref: "subject://neutral/codex-stale-event-stall",
+        run_ref: "run://neutral/codex-stale-event-stall",
+        attempt_ref: "attempt://neutral/codex-stale-event-stall/1",
+        started_at: started_at,
+        timeout_policy: %{stall_timeout_ms: 300_000}
+      })
+
+    invoke_fun = fn _capability_id, _input, _opts ->
+      {:ok,
+       %{
+         run: %{run_id: "jido-run-codex-stale-event-stall", started_at: started_at},
+         attempt: %{attempt_id: "jido-attempt-codex-stale-event-stall"},
+         output: %{
+           provider_session_id: "provider-session-stale-event-stall",
+           provider_turn_id: "provider-turn-stale-event-stall",
+           status: :running
+         },
+         events: [
+           %{
+             event_id: "event-codex-stale-agent-message",
+             type: "codex.app_server.message",
+             observed_at: last_event_at,
+             payload: %{
+               "method" => "codex/event/agent_message_delta",
+               "params" => %{"msg" => %{"delta" => "STALE_BODY_DO_NOT_EXPOSE"}}
+             }
+           }
+         ]
+       }}
+    end
+
+    assert {:ok, projection} =
+             CodexAgentRuntime.run(attrs,
+               invoke_fun: invoke_fun,
+               now: now,
+               connection_id: "conn-codex",
+               start_runtime_router?: false,
+               register_connector?: false
+             )
+
+    assert projection.status == "stalled"
+    assert projection.stall_decision.elapsed_ms == 330_000
+    assert projection.stall_decision.stall_timeout_ms == 300_000
+    assert projection.stall_decision.last_activity_at == last_event_at
+    assert projection.stall_decision.activity_source == "last_runtime_event_at"
+
+    assert projection.stall_decision.session_ref ==
+             "session://codex/provider-session-stale-event-stall"
+
+    refute inspect(projection) =~ "STALE_BODY_DO_NOT_EXPOSE"
+  end
+
+  test "Codex agent runtime does not stall terminal runs even when activity is stale" do
+    for status <- [:completed, :failed, :cancelled, :timeout] do
+      attrs =
+        codex_agent_attrs()
+        |> Map.merge(%{
+          run_ref: "run://neutral/codex-terminal-no-stall-#{status}",
+          started_at: ~U[2026-05-14 00:00:00Z],
+          timeout_policy: %{stall_timeout_ms: 1_000}
+        })
+
+      invoke_fun = fn _capability_id, _input, _opts ->
+        {:ok,
+         %{
+           run: %{run_id: "jido-run-terminal-no-stall-#{status}"},
+           attempt: %{attempt_id: "jido-attempt-terminal-no-stall-#{status}"},
+           output: %{provider_session_id: "provider-terminal-no-stall-#{status}", status: status},
+           events: []
+         }}
+      end
+
+      assert {:ok, projection} =
+               CodexAgentRuntime.run(attrs,
+                 invoke_fun: invoke_fun,
+                 now: ~U[2026-05-14 00:10:00Z],
+                 connection_id: "conn-codex",
+                 start_runtime_router?: false,
+                 register_connector?: false
+               )
+
+      assert projection.status == Atom.to_string(status)
+      refute Map.has_key?(projection, :stall_decision)
+    end
+  end
+
   test "Codex agent runtime gates lower invocation behind before-run workspace hooks" do
     parent = self()
     workspace_root = tmp_dir("codex-before-run")

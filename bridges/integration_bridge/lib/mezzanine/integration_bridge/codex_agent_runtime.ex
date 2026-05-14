@@ -507,8 +507,20 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
 
     event_stream = codex_event_stream_evidence(attrs, turn_attempts, opts, output)
     token_accounting = codex_token_accounting_evidence(event_stream)
-    status = terminal_status(output, event_stream)
-    observed_at = DateTime.utc_now()
+    observed_at = observed_now(opts)
+    base_status = terminal_status(output, event_stream)
+
+    stall_decision =
+      codex_stall_decision(
+        attrs,
+        turn_attempts,
+        event_stream,
+        base_status,
+        observed_at,
+        workflow_ref
+      )
+
+    status = stalled_runtime_state(stall_decision) || base_status
     session_start_event_count = if session_start, do: 1, else: 0
     first_prompt_event_count = if first_prompt, do: 1, else: 0
     app_server_protocol_event_count = if app_server_protocol, do: 1, else: 0
@@ -647,6 +659,7 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
         workspace_hook_refs: Enum.map(before_run_receipts ++ after_run_receipts, & &1.hook_ref)
       }
     }
+    |> put_map_present(:stall_decision, stall_decision)
   end
 
   defp turn_state(
@@ -1241,6 +1254,7 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
       lower_event_ref: codex_lower_event_ref(event, turn_attempt, category),
       turn_index: map_value(turn_attempt, :turn_index),
       event_kind: codex_event_kind(category),
+      observed_at: lower_event_observed_at(event),
       status: codex_event_status(category),
       level: codex_event_level(category),
       message_summary: codex_event_message_summary(category)
@@ -1756,7 +1770,7 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
         event_ref: "event://codex-agent-runtime/#{ref_suffix(run_ref)}/codex-event-#{index}",
         event_seq: event_seq + index - 1,
         event_kind: map_value(event, :event_kind),
-        observed_at: observed_at,
+        observed_at: map_value(event, :observed_at) || observed_at,
         tenant_ref: map_value(attrs, :tenant_id) || map_value(attrs, :tenant_ref),
         subject_ref: map_value(attrs, :subject_ref),
         run_ref: run_ref,
@@ -2189,6 +2203,289 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
     end
   end
 
+  defp codex_stall_decision(
+         attrs,
+         turn_attempts,
+         event_stream,
+         base_status,
+         observed_at,
+         workflow_ref
+       ) do
+    timeout_ms = stall_timeout_ms(attrs)
+
+    cond do
+      not active_runtime_status?(base_status) ->
+        nil
+
+      not is_integer(timeout_ms) or timeout_ms <= 0 ->
+        nil
+
+      true ->
+        codex_stall_decision_for_timeout(
+          attrs,
+          turn_attempts,
+          event_stream,
+          timeout_ms,
+          observed_at,
+          workflow_ref
+        )
+    end
+  end
+
+  defp active_runtime_status?(status) when status in ["running", "active", "pending"],
+    do: true
+
+  defp active_runtime_status?(status) when status in ["in_progress", "started", "queued"],
+    do: true
+
+  defp active_runtime_status?(_status), do: false
+
+  defp codex_stall_decision_for_timeout(
+         attrs,
+         turn_attempts,
+         event_stream,
+         timeout_ms,
+         observed_at,
+         workflow_ref
+       ) do
+    case runtime_last_activity(attrs, turn_attempts, event_stream) do
+      {%DateTime{} = last_activity_at, activity_source} ->
+        elapsed_ms = DateTime.diff(observed_at, last_activity_at, :millisecond)
+
+        if elapsed_ms >= timeout_ms do
+          build_codex_stall_decision(
+            attrs,
+            turn_attempts,
+            timeout_ms,
+            observed_at,
+            workflow_ref,
+            last_activity_at,
+            activity_source,
+            elapsed_ms
+          )
+        end
+
+      _missing ->
+        nil
+    end
+  end
+
+  defp runtime_last_activity(attrs, turn_attempts, event_stream) do
+    case latest_runtime_event_observed_at(event_stream) do
+      %DateTime{} = observed_at ->
+        {observed_at, "last_runtime_event_at"}
+
+      nil ->
+        case run_started_at(attrs, List.first(turn_attempts)) do
+          %DateTime{} = started_at -> {started_at, "started_at"}
+          nil -> nil
+        end
+    end
+  end
+
+  defp build_codex_stall_decision(
+         attrs,
+         turn_attempts,
+         timeout_ms,
+         observed_at,
+         workflow_ref,
+         last_activity_at,
+         activity_source,
+         elapsed_ms
+       ) do
+    run_ref = map_value(attrs, :run_ref)
+    final_turn_attempt = List.last(turn_attempts)
+    result = turn_attempt_result(final_turn_attempt)
+    output = map_value(result, :output) || %{}
+    current_attempt_ref = current_attempt_ref(attrs, final_turn_attempt, run_ref)
+    retry_delay_ms = stall_retry_delay_ms(attrs)
+    retry_due_at = DateTime.add(observed_at, retry_delay_ms, :millisecond)
+    safe_action = "terminate_lower_and_schedule_retry"
+
+    %{
+      state: "stalled",
+      runtime_state: "stalled",
+      status_reason: "stall_timeout",
+      event_ref: "event://codex-agent-runtime/#{ref_suffix(run_ref)}/runtime-stalled",
+      observed_at: observed_at,
+      elapsed_ms: elapsed_ms,
+      stall_timeout_ms: timeout_ms,
+      last_activity_at: last_activity_at,
+      activity_source: activity_source,
+      safe_action: safe_action,
+      workflow_signal: "operator.cancel",
+      cancel_lower_run?: true,
+      cleanup_workspace?: false,
+      run_ref: run_ref,
+      workflow_ref: workflow_ref,
+      attempt_ref: current_attempt_ref,
+      session_ref: session_ref(output, run_ref),
+      worker_ref: map_value(attrs, :worker_ref),
+      workspace_ref: map_value(attrs, :workspace_ref),
+      retry: %{
+        retry_ref: "retry://codex-agent-runtime/#{ref_suffix(run_ref)}/stall-timeout-1",
+        next_attempt_ref: "attempt://codex-agent-runtime/#{ref_suffix(run_ref)}/retry-1",
+        status: "scheduled",
+        reason: "stall_timeout",
+        scheduled_at: observed_at,
+        due_at: retry_due_at,
+        delay_ms: retry_delay_ms,
+        delay_type: "failure_backoff",
+        metadata: %{safe_action: safe_action}
+      },
+      diagnostic: %{
+        code: "runtime_stall_timeout",
+        severity: "warning",
+        message: "runtime activity exceeded stall timeout",
+        observed_at: observed_at,
+        stale_after_ms: timeout_ms
+      }
+    }
+    |> compact_map()
+  end
+
+  defp stalled_runtime_state(nil), do: nil
+  defp stalled_runtime_state(stall_decision), do: map_value(stall_decision, :runtime_state)
+
+  defp latest_runtime_event_observed_at(nil), do: nil
+
+  defp latest_runtime_event_observed_at(event_stream) do
+    event_stream
+    |> map_value(:events)
+    |> List.wrap()
+    |> Enum.map(&map_value(&1, :observed_at))
+    |> latest_datetime()
+  end
+
+  defp run_started_at(attrs, first_turn_attempt) do
+    result = turn_attempt_result(first_turn_attempt)
+    run = map_value(result, :run) || %{}
+    attempt = map_value(result, :attempt) || %{}
+
+    [
+      map_value(attrs, :run_started_at),
+      map_value(attrs, :started_at),
+      map_value(run, :started_at),
+      map_value(run, :inserted_at),
+      map_value(attempt, :started_at),
+      map_value(attempt, :inserted_at)
+    ]
+    |> first_datetime()
+  end
+
+  defp lower_event_observed_at(event) do
+    payload = map_value(event, :payload) || %{}
+
+    [
+      map_value(event, :observed_at),
+      map_value(event, :timestamp),
+      map_value(event, :inserted_at),
+      map_value(event, :created_at),
+      map_value(payload, :observed_at),
+      map_value(payload, :timestamp)
+    ]
+    |> first_datetime()
+  end
+
+  defp current_attempt_ref(attrs, turn_attempt, run_ref) do
+    attempt = turn_attempt_attempt(turn_attempt)
+
+    map_value(attrs, :attempt_ref) ||
+      map_value(turn_attempt, :attempt_ref) ||
+      map_value(attempt, :attempt_ref) ||
+      case map_value(attempt, :attempt_id) do
+        value when is_binary(value) and value != "" ->
+          "attempt://codex-agent-runtime/#{ref_suffix(value)}"
+
+        _missing ->
+          "attempt://codex-agent-runtime/#{ref_suffix(run_ref)}/1"
+      end
+  end
+
+  defp stall_timeout_ms(attrs) do
+    policy = map_value(attrs, :timeout_policy) || %{}
+
+    [
+      map_value(policy, :stall_timeout_ms),
+      map_value(policy, :codex_stall_timeout_ms),
+      map_value(attrs, :stall_timeout_ms),
+      map_value(attrs, :codex_stall_timeout_ms)
+    ]
+    |> Enum.find_value(&integer_value/1)
+  end
+
+  defp stall_retry_delay_ms(attrs) do
+    policy = map_value(attrs, :retry_policy) || map_value(attrs, :timeout_policy) || %{}
+
+    [
+      map_value(policy, :stall_retry_delay_ms),
+      map_value(policy, :retry_delay_ms),
+      map_value(attrs, :stall_retry_delay_ms)
+    ]
+    |> Enum.find_value(&positive_integer_value/1)
+    |> case do
+      nil -> 10_000
+      value -> value
+    end
+  end
+
+  defp observed_now(opts) do
+    opts
+    |> Keyword.get(:now)
+    |> normalize_datetime()
+    |> case do
+      nil -> DateTime.utc_now()
+      now -> now
+    end
+  end
+
+  defp first_datetime(values), do: Enum.find_value(values, &normalize_datetime/1)
+
+  defp latest_datetime(values) do
+    values
+    |> Enum.map(&normalize_datetime/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.reduce(nil, fn
+      value, nil ->
+        value
+
+      value, acc ->
+        if DateTime.compare(value, acc) == :gt, do: value, else: acc
+    end)
+  end
+
+  defp normalize_datetime(%DateTime{} = value), do: value
+
+  defp normalize_datetime(%NaiveDateTime{} = value),
+    do: DateTime.from_naive!(value, "Etc/UTC")
+
+  defp normalize_datetime(value) when is_binary(value) do
+    case DateTime.from_iso8601(value) do
+      {:ok, datetime, _offset} -> datetime
+      _error -> nil
+    end
+  end
+
+  defp normalize_datetime(_value), do: nil
+
+  defp integer_value(value) when is_integer(value), do: value
+
+  defp integer_value(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {integer, ""} -> integer
+      _other -> nil
+    end
+  end
+
+  defp integer_value(_value), do: nil
+
+  defp positive_integer_value(value) do
+    case integer_value(value) do
+      integer when is_integer(integer) and integer > 0 -> integer
+      _other -> nil
+    end
+  end
+
   defp output_status(output) do
     case map_value(output, :status) do
       value when value in [:completed, "completed", :ok, "ok", :succeeded, "succeeded"] ->
@@ -2249,12 +2546,14 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
   defp action_receipt_status(_status), do: :failed
 
   defp terminal_level("completed"), do: "info"
+  defp terminal_level("stalled"), do: "warning"
   defp terminal_level("cancelled"), do: "warning"
   defp terminal_level("canceled"), do: "warning"
   defp terminal_level("timeout"), do: "warning"
   defp terminal_level(_status), do: "error"
 
   defp terminal_message_summary("completed"), do: "codex session turn completed"
+  defp terminal_message_summary("stalled"), do: "codex session turn stalled"
   defp terminal_message_summary("cancelled"), do: "codex session turn cancelled"
   defp terminal_message_summary("canceled"), do: "codex session turn cancelled"
   defp terminal_message_summary("timeout"), do: "codex session turn timed out"
@@ -2295,6 +2594,9 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
 
   defp put_present(keyword, _key, nil), do: keyword
   defp put_present(keyword, key, value), do: Keyword.put(keyword, key, value)
+
+  defp put_map_present(map, _key, nil), do: map
+  defp put_map_present(map, key, value), do: Map.put(map, key, value)
 
   defp compact_map(map) do
     map
