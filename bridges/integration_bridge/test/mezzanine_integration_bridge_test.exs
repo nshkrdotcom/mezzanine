@@ -11,6 +11,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
   alias Mezzanine.IntegrationBridge.AuthorizedInvocation
   alias Mezzanine.IntegrationBridge.CodexAgentRuntime
   alias Mezzanine.IntegrationBridge.GitHubPrEvidenceRuntime
+  alias Mezzanine.IntegrationBridge.ProviderAuthorityAdmission
   alias Mezzanine.Intent.{EffectIntent, ReadIntent, RunIntent}
 
   defmodule LowerFactsStub do
@@ -204,6 +205,87 @@ defmodule Mezzanine.IntegrationBridgeTest do
              )
 
     refute_received :unexpected_provider_dispatch
+  end
+
+  test "provider authority admission rejects provider credential material by name" do
+    forbidden_material = %{
+      :linear_api_key => "lin_api_phase53_secret",
+      "LINEAR_API_KEY" => "lin_api_env_phase53_secret",
+      :github_token => "github_phase53_secret",
+      "GITHUB_TOKEN" => "github_env_phase53_secret",
+      :gh_token => "gh_phase53_secret",
+      "GH_TOKEN" => "gh_env_phase53_secret",
+      :openai_api_key => "openai_phase53_secret",
+      "OPENAI_API_KEY" => "openai_env_phase53_secret",
+      :codex_api_key => "codex_phase53_secret",
+      "CODEX_API_KEY" => "codex_env_phase53_secret",
+      :access_token => "access_phase53_secret",
+      :authorization => "Bearer phase53_secret"
+    }
+
+    for {key, value} <- forbidden_material do
+      assert {:error, {:forbidden_authority_material, forbidden}} =
+               ProviderAuthorityAdmission.authorize_provider_dispatch(
+                 Map.put(valid_provider_authority_attrs(), key, value),
+                 []
+               )
+
+      assert normalize_forbidden_key(key) in forbidden
+    end
+  end
+
+  test "provider authority admission ignores raw credential options when building handoff attrs" do
+    invocation = authorized_invocation()
+
+    raw_values = [
+      "lin_api_phase53_secret",
+      "github_phase53_secret",
+      "openai_phase53_secret",
+      "codex_phase53_secret"
+    ]
+
+    authority_admission_fun = fn attrs ->
+      encoded_attrs = inspect(attrs)
+
+      for raw <- raw_values do
+        refute encoded_attrs =~ raw
+      end
+
+      {:ok,
+       attrs
+       |> Map.take([
+         :authority_packet_ref,
+         :connector_binding_ref,
+         :credential_lease_ref,
+         :provider_family
+       ])
+       |> Map.put(:handoff_ref, "workflow-authority-handoff://#{attrs.idempotency_key}")
+       |> Map.put(:raw_material_present?, false)}
+    end
+
+    invoke_fun = fn _capability, _input, _opts ->
+      {:ok, %{status: :completed}}
+    end
+
+    assert {:ok, result} =
+             IntegrationBridge.invoke_run_intent(
+               invocation,
+               invoke_fun: invoke_fun,
+               invoke_opts: [
+                 connection_id: "conn-1",
+                 linear_api_key: Enum.at(raw_values, 0),
+                 github_token: Enum.at(raw_values, 1)
+               ],
+               openai_api_key: Enum.at(raw_values, 2),
+               codex_api_key: Enum.at(raw_values, 3),
+               authority_admission_fun: authority_admission_fun
+             )
+
+    encoded_result = inspect(result)
+
+    for raw <- raw_values do
+      refute encoded_result =~ raw
+    end
   end
 
   test "invoke_run_intent returns a governed lower denial for dry-run writes before provider dispatch" do
@@ -3547,6 +3629,39 @@ defmodule Mezzanine.IntegrationBridgeTest do
       })
 
     AuthorizedInvocation.new!(attrs)
+  end
+
+  defp valid_provider_authority_attrs do
+    %{
+      system_authorization_ref: "system-authority://tenant/idem-phase53",
+      authority_packet_ref: "authority-decision://phase53",
+      provider_family: "linear",
+      provider_account_ref: "provider-account://linear/conn-phase53",
+      connector_instance_ref: "connector-instance://linear/jido-connectors-linear",
+      connector_binding_ref: "connector-binding://linear/conn-phase53",
+      credential_handle_ref: "credential-handle://linear/conn-phase53",
+      credential_lease_ref: "credential-lease://linear/conn-phase53/linear.issues.list",
+      target_ref: "target://phase53",
+      attach_grant_ref: "attach-grant://phase53",
+      target_auth_posture_ref: "target-auth-posture://phase53",
+      boundary_session_id: "run://phase53",
+      workspace_ref: "workspace://phase53",
+      no_egress_posture_ref: "no-egress-posture://phase53",
+      process_target_identity_ref: "process-target-identity://phase53",
+      stream_target_identity_ref: "stream-target-identity://phase53",
+      operation_scope_ref: "operation-scope://linear/linear.issues.list",
+      operation_policy_ref: "operation-policy://linear/linear.issues.list",
+      policy_revision_ref: "policy-revision://phase53",
+      idempotency_key: "idem-phase53"
+    }
+  end
+
+  defp normalize_forbidden_key(key) when is_atom(key), do: key
+
+  defp normalize_forbidden_key(key) when is_binary(key) do
+    key
+    |> String.downcase()
+    |> String.to_atom()
   end
 
   defp authorized_invocation_attrs do

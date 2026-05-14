@@ -35,12 +35,21 @@ defmodule Mezzanine.IntegrationBridge.ProviderAuthorityAdmission do
 
   @forbidden_material [
     :api_key,
+    :access_token,
     :auth_json,
+    :authorization,
     :authorization_header,
+    :bearer_token,
     :client,
+    :codex_api_key,
+    :credentials,
     :default_client,
     :env,
+    :gh_token,
+    :github_token,
+    :linear_api_key,
     :native_auth_file,
+    :openai_api_key,
     :provider_payload,
     :raw_secret,
     :raw_token,
@@ -290,7 +299,19 @@ defmodule Mezzanine.IntegrationBridge.ProviderAuthorityAdmission do
   end
 
   defp forbidden_material_present(attrs) do
-    Enum.filter(@forbidden_material, &Map.has_key?(attrs, &1))
+    attrs
+    |> Map.keys()
+    |> Enum.map(&forbidden_material_key/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+  end
+
+  defp forbidden_material_key(key) do
+    key_name = key |> to_string() |> String.downcase()
+
+    Enum.find(@forbidden_material, fn forbidden ->
+      Atom.to_string(forbidden) == key_name
+    end)
   end
 
   defp redacted_handoff(attrs) do
