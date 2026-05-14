@@ -14,6 +14,7 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
 
   @capability_id "codex.session.turn"
   @session_start_capability_id "codex.session.start"
+  @session_stop_capability_id "codex.session.stop"
   @connector_id "codex_cli"
   @codex_workspace_root "/tmp/jido_codex_cli_workspace"
   @scopes ["session:execute", "session:control", "session:tools"]
@@ -160,8 +161,10 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
     with {:ok, before_run_receipts} <- run_workspace_hooks(workspace, :before_run, opts),
          invoke_opts <- codex_invoke_opts(attrs, connection_id, opts, workspace_root),
          {:ok, turn_attempts} <-
-           run_codex_turns(attrs, opts, invoke_fun, workspace_root, invoke_opts) do
-      {:ok, turn_attempts, invoke_opts, before_run_receipts}
+           run_codex_turns(attrs, opts, invoke_fun, workspace_root, invoke_opts),
+         {:ok, session_stop} <-
+           maybe_stop_codex_session(attrs, opts, invoke_fun, invoke_opts, turn_attempts) do
+      {:ok, turn_attempts, invoke_opts, before_run_receipts, session_stop}
     end
   end
 
@@ -169,8 +172,17 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
     after_run_receipts = run_after_run_hooks(workspace, opts)
 
     case {attempt_result, after_run_receipts} do
-      {{:ok, turn_attempts, invoke_opts, before_run_receipts}, receipts} ->
-        {:ok, projection(attrs, turn_attempts, invoke_opts, before_run_receipts, receipts, opts)}
+      {{:ok, turn_attempts, invoke_opts, before_run_receipts, session_stop}, receipts} ->
+        {:ok,
+         projection(
+           attrs,
+           turn_attempts,
+           invoke_opts,
+           before_run_receipts,
+           receipts,
+           session_stop,
+           opts
+         )}
 
       {{:error, reason}, []} ->
         {:error, reason}
@@ -362,6 +374,58 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
   defp codex_turn_input(attrs, opts, workspace_root, turn_index, previous_result),
     do: codex_input(attrs, opts, workspace_root, turn_index, previous_result)
 
+  defp maybe_stop_codex_session(attrs, opts, invoke_fun, invoke_opts, turn_attempts) do
+    first_turn_attempt = List.first(turn_attempts)
+    final_turn_attempt = List.last(turn_attempts)
+    output = turn_attempt_output(final_turn_attempt)
+    event_stream = codex_event_stream_evidence(attrs, turn_attempts, opts, output)
+    status = terminal_status(output, event_stream)
+    run_id = turn_run_id(first_turn_attempt, map_value(attrs, :run_ref))
+
+    session_start =
+      first_turn_attempt
+      |> turn_attempt_result()
+      |> lower_runtime_events(opts)
+      |> session_start_evidence(run_id)
+
+    cond do
+      is_nil(session_start) ->
+        {:ok, nil}
+
+      not stop_after_terminal_status?(status) ->
+        {:ok, nil}
+
+      true ->
+        stop_codex_session(session_start, invoke_fun, invoke_opts)
+    end
+  end
+
+  defp stop_codex_session(session_start, invoke_fun, invoke_opts) do
+    stop_input = %{session_id: session_start.runtime_control_session_id}
+    stop_opts = codex_session_stop_invoke_opts(invoke_opts)
+
+    case invoke_fun.(@session_stop_capability_id, stop_input, stop_opts) do
+      {:ok, result} ->
+        {:ok, session_stop_evidence(session_start, result)}
+
+      {:error, _reason} ->
+        {:ok, session_stop_failure_evidence(session_start)}
+    end
+  end
+
+  defp stop_after_terminal_status?(status) do
+    status in ["completed", "failed", "cancelled", "canceled", "timeout"]
+  end
+
+  defp codex_session_stop_invoke_opts(invoke_opts) do
+    invoke_opts
+    |> Keyword.put(:allowed_operations, [@session_stop_capability_id])
+    |> Keyword.update(:sandbox, %{allowed_tools: [@session_stop_capability_id]}, fn
+      %{} = sandbox -> Map.put(sandbox, :allowed_tools, [@session_stop_capability_id])
+      other -> other
+    end)
+  end
+
   defp next_codex_turn_step(turn_index, turn_limit, attempts, result) do
     if continue_after_turn?(turn_index, turn_limit, result) do
       {:cont, {:ok, attempts, result}}
@@ -466,6 +530,7 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
          invoke_opts,
          before_run_receipts,
          after_run_receipts,
+         session_stop,
          opts
        ) do
     first_turn_attempt = List.first(turn_attempts)
@@ -530,10 +595,12 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
     app_server_protocol_event_seq = session_start_event_count + first_prompt_event_count + 1
     continuation_event_seq = app_server_protocol_event_seq + app_server_protocol_event_count
     event_stream_event_seq = continuation_event_seq + continuation_event_count
+    session_stop_event_count = if session_stop, do: 1, else: 0
+    session_stop_event_seq = event_stream_event_seq + event_stream_event_count
 
     terminal_event_seq =
       session_start_event_count + first_prompt_event_count + app_server_protocol_event_count +
-        continuation_event_count + event_stream_event_count + 1
+        continuation_event_count + event_stream_event_count + session_stop_event_count + 1
 
     after_run_event_seq = terminal_event_seq + 1
 
@@ -563,10 +630,12 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
         |> Map.merge(app_server_protocol_extensions(app_server_protocol))
         |> Map.merge(continuation_extensions(continuation))
         |> Map.merge(codex_event_stream_extensions(event_stream))
-        |> Map.merge(codex_token_accounting_extensions(token_accounting)),
+        |> Map.merge(codex_token_accounting_extensions(token_accounting))
+        |> Map.merge(session_stop_extensions(session_stop)),
       action_receipts:
         session_start_action_receipts(session_start) ++
-          Enum.map(turn_attempts, &action_receipt(&1, event_stream)),
+          Enum.map(turn_attempts, &action_receipt(&1, event_stream)) ++
+          session_stop_action_receipts(session_stop),
       runtime_events:
         hook_events(
           attrs,
@@ -614,6 +683,14 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
             observed_at,
             event_stream_event_seq
           ) ++
+          session_stop_runtime_events(
+            session_stop,
+            attrs,
+            workflow_ref,
+            turn_ref(run_ref, actual_turn_count),
+            observed_at,
+            session_stop_event_seq
+          ) ++
           [
             %{
               event_ref: "event://codex-agent-runtime/#{ref_suffix(run_ref)}/terminal",
@@ -649,12 +726,14 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
         lower_request_refs:
           compact_list(
             [session_start_lower_request_ref(session_start)] ++
-              Enum.map(turn_attempts, &lower_request_ref(&1))
+              Enum.map(turn_attempts, &lower_request_ref(&1)) ++
+              [session_stop_lower_request_ref(session_stop)]
           ),
         lower_receipt_refs:
           compact_list(
             [session_start_lower_receipt_ref(session_start)] ++
-              Enum.map(turn_attempts, &lower_receipt_ref(&1))
+              Enum.map(turn_attempts, &lower_receipt_ref(&1)) ++
+              [session_stop_lower_receipt_ref(session_stop)]
           ),
         workspace_hook_refs: Enum.map(before_run_receipts ++ after_run_receipts, & &1.hook_ref)
       }
@@ -931,6 +1010,150 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
 
   defp session_start_lower_receipt_ref(nil), do: nil
   defp session_start_lower_receipt_ref(evidence), do: evidence.lower_receipt_ref
+
+  defp session_stop_evidence(session_start, result) do
+    output = map_value(result, :output) || %{}
+    status = session_stop_status(output)
+
+    session_id =
+      non_empty(map_value(output, :session_id)) ||
+        session_start.runtime_control_session_id
+
+    run_id = session_stop_run_id(result, session_id)
+    lower_request_ref = lower_request_ref(run_id, @session_stop_capability_id)
+
+    %{
+      confirmed?: status == "stopped",
+      operation: @session_stop_capability_id,
+      status: status,
+      runtime_control_session_id: session_id,
+      runtime_control_session_ref: runtime_control_session_ref(session_id),
+      lower_request_ref: lower_request_ref,
+      lower_receipt_ref: session_stop_receipt_ref(run_id, session_id, status)
+    }
+  end
+
+  defp session_stop_failure_evidence(session_start) do
+    session_id = session_start.runtime_control_session_id
+    run_id = "session-stop-#{ref_suffix(session_id)}"
+    lower_request_ref = lower_request_ref(run_id, @session_stop_capability_id)
+
+    %{
+      confirmed?: false,
+      operation: @session_stop_capability_id,
+      status: "failed",
+      runtime_control_session_id: session_id,
+      runtime_control_session_ref: runtime_control_session_ref(session_id),
+      lower_request_ref: lower_request_ref,
+      lower_receipt_ref: session_stop_receipt_ref(run_id, session_id, "failed")
+    }
+  end
+
+  defp session_stop_status(output) do
+    map_value(output, :status)
+    |> case do
+      nil -> map_value(output, :state)
+      status -> status
+    end
+    |> event_token()
+    |> case do
+      nil -> "stopped"
+      "" -> "stopped"
+      status -> status
+    end
+  end
+
+  defp session_stop_run_id(result, session_id) do
+    result
+    |> map_value(:run)
+    |> map_value(:run_id)
+    |> non_empty()
+    |> case do
+      nil -> "session-stop-#{ref_suffix(session_id)}"
+      run_id -> run_id
+    end
+  end
+
+  defp session_stop_receipt_ref(run_id, session_id, status),
+    do: "lower-receipt://#{run_id}/#{@session_stop_capability_id}/#{session_id}/#{status}"
+
+  defp session_stop_extensions(nil), do: %{}
+
+  defp session_stop_extensions(evidence) do
+    %{
+      "codex_app_server_session_stop" => %{
+        "confirmed?" => evidence.confirmed?,
+        "operation" => evidence.operation,
+        "status" => evidence.status,
+        "runtime_control_session_id" => evidence.runtime_control_session_id,
+        "runtime_control_session_ref" => evidence.runtime_control_session_ref,
+        "lower_request_ref" => evidence.lower_request_ref,
+        "lower_receipt_ref" => evidence.lower_receipt_ref
+      }
+    }
+  end
+
+  defp session_stop_action_receipts(nil), do: []
+
+  defp session_stop_action_receipts(evidence) do
+    [
+      %{
+        operation: evidence.operation,
+        status: action_receipt_status(evidence.status),
+        lower_request_ref: evidence.lower_request_ref,
+        lower_receipt_ref: evidence.lower_receipt_ref,
+        runtime_control_session_ref: evidence.runtime_control_session_ref
+      }
+    ]
+  end
+
+  defp session_stop_runtime_events(
+         nil,
+         _attrs,
+         _workflow_ref,
+         _turn_ref,
+         _observed_at,
+         _event_seq
+       ),
+       do: []
+
+  defp session_stop_runtime_events(
+         evidence,
+         attrs,
+         workflow_ref,
+         turn_ref,
+         observed_at,
+         event_seq
+       ) do
+    [
+      %{
+        event_ref:
+          "event://codex-agent-runtime/#{ref_suffix(map_value(attrs, :run_ref))}/session-stop",
+        event_seq: event_seq,
+        event_kind: "codex.session.stopped",
+        observed_at: observed_at,
+        tenant_ref: map_value(attrs, :tenant_id) || map_value(attrs, :tenant_ref),
+        subject_ref: map_value(attrs, :subject_ref),
+        run_ref: map_value(attrs, :run_ref),
+        workflow_ref: workflow_ref,
+        session_ref: evidence.runtime_control_session_ref,
+        turn_ref: turn_ref,
+        level: if(evidence.confirmed?, do: "info", else: "warning"),
+        message_summary: "codex session stop confirmed",
+        extensions: %{
+          lower_request_ref: evidence.lower_request_ref,
+          lower_receipt_ref: evidence.lower_receipt_ref,
+          status: evidence.status
+        }
+      }
+    ]
+  end
+
+  defp session_stop_lower_request_ref(nil), do: nil
+  defp session_stop_lower_request_ref(evidence), do: evidence.lower_request_ref
+
+  defp session_stop_lower_receipt_ref(nil), do: nil
+  defp session_stop_lower_receipt_ref(evidence), do: evidence.lower_receipt_ref
 
   defp first_prompt_evidence(attrs, input, lower_request_ref) do
     input
@@ -2540,6 +2763,7 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
     do: [:turn_completed, :turn_failed, :turn_cancelled, :turn_timeout]
 
   defp action_receipt_status("completed"), do: :succeeded
+  defp action_receipt_status("stopped"), do: :succeeded
   defp action_receipt_status("cancelled"), do: :cancelled
   defp action_receipt_status("canceled"), do: :cancelled
   defp action_receipt_status("timeout"), do: :timed_out

@@ -755,6 +755,214 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert "lower-receipt://jido-run-codex-session/codex.session.start/asm-session-42/started" in projection.receipt_ref_set.lower_receipt_refs
   end
 
+  test "Codex agent runtime stops lower app-server session after terminal turn" do
+    attrs =
+      codex_agent_attrs()
+      |> Map.merge(%{
+        subject_ref: "subject://neutral/codex-session-stop",
+        run_ref: "run://neutral/codex-session-stop",
+        trace_id: "trace://neutral/codex-session-stop",
+        idempotency_key: "idem-codex-session-stop",
+        authority_context_ref: "authority-context://neutral/codex-session-stop"
+      })
+
+    invoke_fun = fn
+      "codex.session.turn", input, opts ->
+        send(self(), {:codex_session_stop_turn_invoke, input, opts})
+
+        {:ok,
+         %{
+           run: %{run_id: "jido-run-codex-session-stop-turn"},
+           attempt: %{attempt_id: "jido-attempt-codex-session-stop-turn"},
+           output: %{
+             text: "terminal turn",
+             provider_session_id: "codex-provider-session-stop",
+             status: :completed
+           },
+           events: [
+             %{
+               event_id: "event-session-stop-started",
+               type: "session.started",
+               session_id: "asm-session-stop",
+               runtime_ref_id: "asm-session-stop",
+               payload: %{operation: :start, status: :ready}
+             }
+           ]
+         }}
+
+      "codex.session.stop", input, opts ->
+        send(self(), {:codex_session_stop_invoke, input, opts})
+
+        {:ok,
+         %{
+           run: %{run_id: "jido-run-codex-session-stop"},
+           attempt: %{attempt_id: "jido-attempt-codex-session-stop"},
+           output: %{
+             operation: :stop,
+             status: :stopped,
+             state: :stopped,
+             session_id: "asm-session-stop",
+             runtime_id: :asm,
+             provider: :codex,
+             message: "session stopped",
+             metadata: %{}
+           },
+           events: [
+             %{
+               type: "session_control.stopped",
+               stream: :control,
+               session_id: "asm-session-stop",
+               runtime_ref_id: "asm-session-stop",
+               payload: %{operation: :stop, status: :stopped, state: :stopped}
+             }
+           ]
+         }}
+    end
+
+    assert {:ok, projection} =
+             CodexAgentRuntime.run(attrs,
+               invoke_fun: invoke_fun,
+               connection_id: "conn-codex",
+               start_runtime_router?: false,
+               register_connector?: false
+             )
+
+    assert_received {:codex_session_stop_turn_invoke, _input, _turn_opts}
+    assert_received {:codex_session_stop_invoke, stop_input, stop_opts}
+    assert stop_input == %{session_id: "asm-session-stop"}
+    assert Keyword.fetch!(stop_opts, :allowed_operations) == ["codex.session.stop"]
+    assert Keyword.fetch!(stop_opts, :sandbox).allowed_tools == ["codex.session.stop"]
+
+    assert projection.extensions["codex_app_server_session_stop"] == %{
+             "confirmed?" => true,
+             "operation" => "codex.session.stop",
+             "status" => "stopped",
+             "runtime_control_session_id" => "asm-session-stop",
+             "runtime_control_session_ref" => "runtime-session://asm-session-stop",
+             "lower_request_ref" =>
+               "lower-request://jido-run-codex-session-stop/codex.session.stop",
+             "lower_receipt_ref" =>
+               "lower-receipt://jido-run-codex-session-stop/codex.session.stop/asm-session-stop/stopped"
+           }
+
+    assert Enum.any?(projection.action_receipts, fn receipt ->
+             Map.get(receipt, :operation) == "codex.session.stop" and
+               Map.get(receipt, :status) == :succeeded and
+               Map.get(receipt, :runtime_control_session_ref) ==
+                 "runtime-session://asm-session-stop"
+           end)
+
+    assert Enum.any?(projection.runtime_events, fn event ->
+             event.event_kind == "codex.session.stopped" and
+               event.session_ref == "runtime-session://asm-session-stop" and
+               event.extensions.lower_receipt_ref ==
+                 "lower-receipt://jido-run-codex-session-stop/codex.session.stop/asm-session-stop/stopped"
+           end)
+
+    assert "lower-request://jido-run-codex-session-stop/codex.session.stop" in projection.receipt_ref_set.lower_request_refs
+
+    assert "lower-receipt://jido-run-codex-session-stop/codex.session.stop/asm-session-stop/stopped" in projection.receipt_ref_set.lower_receipt_refs
+  end
+
+  test "Codex agent runtime stops lower app-server session for terminal failure states" do
+    for status <- [:failed, :cancelled, :timeout] do
+      attrs =
+        codex_agent_attrs()
+        |> Map.merge(%{
+          subject_ref: "subject://neutral/codex-session-stop-#{status}",
+          run_ref: "run://neutral/codex-session-stop-#{status}",
+          trace_id: "trace://neutral/codex-session-stop-#{status}",
+          idempotency_key: "idem-codex-session-stop-#{status}"
+        })
+
+      invoke_fun = fn
+        "codex.session.turn", _input, _opts ->
+          {:ok,
+           %{
+             run: %{run_id: "jido-run-codex-session-stop-#{status}"},
+             attempt: %{attempt_id: "jido-attempt-codex-session-stop-#{status}"},
+             output: %{
+               provider_session_id: "codex-provider-session-stop-#{status}",
+               status: status
+             },
+             events: [
+               %{
+                 type: "session.started",
+                 session_id: "asm-session-stop-#{status}",
+                 runtime_ref_id: "asm-session-stop-#{status}",
+                 payload: %{operation: :start, status: :ready}
+               }
+             ]
+           }}
+
+        "codex.session.stop", input, _opts ->
+          send(self(), {:codex_terminal_stop_invoked, status, input})
+
+          {:ok,
+           %{
+             run: %{run_id: "jido-run-codex-session-stop-control-#{status}"},
+             output: %{
+               operation: :stop,
+               status: :stopped,
+               state: :stopped,
+               session_id: "asm-session-stop-#{status}",
+               runtime_id: :asm,
+               provider: :codex
+             }
+           }}
+      end
+
+      assert {:ok, projection} =
+               CodexAgentRuntime.run(attrs,
+                 invoke_fun: invoke_fun,
+                 connection_id: "conn-codex",
+                 start_runtime_router?: false,
+                 register_connector?: false
+               )
+
+      expected_session_id = "asm-session-stop-#{status}"
+      assert_received {:codex_terminal_stop_invoked, ^status, %{session_id: ^expected_session_id}}
+
+      assert projection.status == Atom.to_string(status)
+      assert projection.extensions["codex_app_server_session_stop"]["status"] == "stopped"
+    end
+  end
+
+  test "Codex agent runtime does not stop session without lower session start evidence" do
+    attrs =
+      codex_agent_attrs()
+      |> Map.merge(%{
+        subject_ref: "subject://neutral/codex-no-session-stop",
+        run_ref: "run://neutral/codex-no-session-stop"
+      })
+
+    invoke_fun = fn
+      "codex.session.turn", _input, _opts ->
+        {:ok,
+         %{
+           run: %{run_id: "jido-run-codex-no-session-stop"},
+           attempt: %{attempt_id: "jido-attempt-codex-no-session-stop"},
+           output: %{provider_session_id: "codex-provider-no-session-stop", status: :completed},
+           events: []
+         }}
+
+      "codex.session.stop", _input, _opts ->
+        send(self(), :unexpected_codex_session_stop)
+        {:ok, %{}}
+    end
+
+    assert {:ok, projection} =
+             CodexAgentRuntime.run(attrs,
+               invoke_fun: invoke_fun,
+               connection_id: "conn-codex",
+               start_runtime_router?: false,
+               register_connector?: false
+             )
+
+    refute_received :unexpected_codex_session_stop
+    refute Map.has_key?(projection.extensions, "codex_app_server_session_stop")
+  end
+
   test "Codex agent runtime projects app-server protocol initialization evidence" do
     attrs = %{
       tenant_ref: "tenant://sample-app",
