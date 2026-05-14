@@ -3,8 +3,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/nshkrdotcom/mezzanine/actions/workflows/ci.yml">
-    <img alt="GitHub Actions Workflow Status" src="https://github.com/nshkrdotcom/mezzanine/actions/workflows/ci.yml/badge.svg" />
+  <a href="https://github.com/nshkrdotcom/mezzanine">
+    <img alt="GitHub: mezzanine" src="https://img.shields.io/badge/GitHub-mezzanine-0b0f14?logo=github" />
   </a>
   <a href="https://github.com/nshkrdotcom/mezzanine/blob/main/LICENSE">
     <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-0b0f14.svg" />
@@ -131,6 +131,31 @@ Mezzanine treats runtime state as owned, typed, and replayable:
 This owner model is why the product can show usable queue, runtime, source,
 review, evidence, retry, and cleanup readback without importing lower repo
 internals.
+
+## Runtime Diagrams
+
+```mermaid
+flowchart TD
+  AppKit["AppKit bridge"] --> Admission["Lifecycle admission"]
+  Admission --> Ledger["Execution and subject rows"]
+  Admission --> Outbox["Workflow-start outbox"]
+  Outbox --> Temporal["WorkflowRuntime and Temporal"]
+  Temporal --> Lower["Jido Integration lower gateway"]
+  Lower --> Receipts["Terminal receipts"]
+  Receipts --> Reducer["ReceiptReducer"]
+  Reducer --> Projections["Operator, review, evidence, audit projections"]
+  Projections --> AppKit
+```
+
+```mermaid
+flowchart LR
+  Source["SourceEngine"] --> Scheduler["WorkScheduler"]
+  Scheduler --> Workspace["WorkspaceEngine"]
+  Workspace --> Runtime["WorkflowRuntime"]
+  Runtime --> Reconcile["SourceReconciliation"]
+  Reconcile --> ReviewGate["ReviewGate"]
+  ReviewGate --> Audit["Audit and archival engines"]
+```
 
 ## Status
 
