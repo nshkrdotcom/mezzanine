@@ -32,6 +32,11 @@ defmodule Mezzanine.IntegrationBridge.GitHubPrDispatcher do
   def update_pr(invocation, attrs, opts \\ []),
     do: dispatch(invocation, "github.pr.update", attrs, opts)
 
+  @spec create_comment(AuthorizedInvocation.t(), map() | keyword(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  def create_comment(invocation, attrs, opts \\ []),
+    do: dispatch(invocation, "github.comment.create", attrs, opts)
+
   @spec list_reviews(AuthorizedInvocation.t(), map() | keyword(), keyword()) ::
           {:ok, map()} | {:error, term()}
   def list_reviews(invocation, attrs, opts \\ []),

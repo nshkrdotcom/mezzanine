@@ -10,6 +10,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
   alias Mezzanine.IntegrationBridge
   alias Mezzanine.IntegrationBridge.AuthorizedInvocation
   alias Mezzanine.IntegrationBridge.CodexAgentRuntime
+  alias Mezzanine.IntegrationBridge.GitHubPrBranchCleanupRuntime
   alias Mezzanine.IntegrationBridge.GitHubPrEvidenceRuntime
   alias Mezzanine.IntegrationBridge.ProviderAuthorityAdmission
   alias Mezzanine.Intent.{EffectIntent, ReadIntent, RunIntent}
@@ -2849,6 +2850,136 @@ defmodule Mezzanine.IntegrationBridgeTest do
                  trace_id: "trace-1",
                  repo: "nshkrdotcom/sample-app",
                  setup_fixture?: true
+               },
+               connection_id: "github-conn-1",
+               start_runtime?: false,
+               register_connector?: false
+             )
+  end
+
+  test "GitHub PR branch cleanup runtime closes matching open PRs through governed dispatches" do
+    invoke_fun = fn
+      "github.pr.list", input, opts ->
+        send(self(), {:invoke, "github.pr.list", input, opts})
+
+        {:ok,
+         %{
+           output: %{
+             repo: input.repo,
+             state: "open",
+             page: 1,
+             per_page: 100,
+             total_count: 1,
+             pull_requests: [
+               %{
+                 pull_number: 17,
+                 head: %{ref: "cleanup-branch", sha: "head-sha"},
+                 html_url: "https://github.com/nshkrdotcom/sample-app/pull/17"
+               },
+               %{
+                 pull_number: 22,
+                 head: %{ref: "other-branch", sha: "other-sha"},
+                 html_url: "https://github.com/nshkrdotcom/sample-app/pull/22"
+               }
+             ]
+           },
+           artifact_refs: ["artifact://github/pr-list"]
+         }}
+
+      "github.comment.create", input, opts ->
+        send(self(), {:invoke, "github.comment.create", input, opts})
+        {:ok, %{output: %{comment_id: 901, html_url: "#{input.repo}/issues/17#issuecomment-901"}}}
+
+      "github.pr.update", input, opts ->
+        send(self(), {:invoke, "github.pr.update", input, opts})
+        {:ok, %{output: Map.merge(github_pr(), %{state: input.state})}}
+    end
+
+    assert {:ok, receipt} =
+             GitHubPrBranchCleanupRuntime.cleanup(
+               %{
+                 tenant_id: "tenant-1",
+                 installation_id: "inst-1",
+                 subject_id: "subject-1",
+                 execution_id: "exec-1",
+                 actor_id: "actor-1",
+                 trace_id: "trace-1",
+                 repo: "nshkrdotcom/sample-app",
+                 branch: "cleanup-branch",
+                 confirm_close?: true
+               },
+               connection_id: "github-conn-1",
+               invoke_fun: invoke_fun,
+               start_runtime?: false,
+               register_connector?: false
+             )
+
+    assert_received {:invoke, "github.pr.list", list_input, list_opts}
+    assert_received {:invoke, "github.comment.create", comment_input, comment_opts}
+    assert_received {:invoke, "github.pr.update", update_input, update_opts}
+    refute_received {:invoke, "github.pr.update", %{pull_number: 22}, _opts}
+
+    assert Map.take(list_input, [:repo, :state, :head, :per_page, :page]) == %{
+             repo: "nshkrdotcom/sample-app",
+             state: "open",
+             head: "cleanup-branch",
+             per_page: 100,
+             page: 1
+           }
+
+    assert list_input.capability_id == "github.pr.list"
+    assert list_input.governed_lower_envelope["capability_id"] == "github.pr.list"
+
+    assert comment_input.repo == "nshkrdotcom/sample-app"
+    assert comment_input.issue_number == 17
+    assert comment_input.body =~ "cleanup-branch"
+
+    assert Map.take(update_input, [:repo, :pull_number, :state]) == %{
+             repo: "nshkrdotcom/sample-app",
+             pull_number: 17,
+             state: "closed"
+           }
+
+    assert update_input.capability_id == "github.pr.update"
+    assert update_input.governed_lower_envelope["side_effect_class"] == "write"
+
+    for opts <- [list_opts, comment_opts, update_opts] do
+      assert Keyword.fetch!(opts, :connection_id) == "github-conn-1"
+      assert "github.pr.update" in Keyword.fetch!(opts, :allowed_operations)
+      assert "github.api.pr.update" in Keyword.fetch!(opts, :sandbox).allowed_tools
+    end
+
+    assert receipt.status == :receipt_recorded
+    assert receipt.provider == "github"
+    assert receipt.effect == "github_pr_branch_cleanup"
+    assert receipt.repo == "nshkrdotcom/sample-app"
+    assert receipt.branch == "cleanup-branch"
+    assert receipt.pull_numbers == [17]
+    assert receipt.closed_pull_numbers == [17]
+    assert receipt.write_operations == ["github.comment.create", "github.pr.update"]
+    assert receipt.provider_ids.pull_requests == ["17"]
+    assert receipt.counts.matched_count == 1
+    assert receipt.counts.closed_count == 1
+
+    assert Enum.map(receipt.operation_receipts, & &1.capability_id) == [
+             "github.pr.list",
+             "github.comment.create",
+             "github.pr.update"
+           ]
+  end
+
+  test "GitHub PR branch cleanup runtime refuses unconfirmed close requests" do
+    assert {:error, :github_pr_branch_cleanup_requires_confirmation} =
+             GitHubPrBranchCleanupRuntime.cleanup(
+               %{
+                 tenant_id: "tenant-1",
+                 installation_id: "inst-1",
+                 subject_id: "subject-1",
+                 execution_id: "exec-1",
+                 actor_id: "actor-1",
+                 trace_id: "trace-1",
+                 repo: "nshkrdotcom/sample-app",
+                 branch: "cleanup-branch"
                },
                connection_id: "github-conn-1",
                start_runtime?: false,

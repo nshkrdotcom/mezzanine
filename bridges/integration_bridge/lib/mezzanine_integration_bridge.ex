@@ -112,6 +112,12 @@ defmodule Mezzanine.IntegrationBridge do
     to: GitHubPrDispatcher,
     as: :update_pr
 
+  @spec create_github_comment(AuthorizedInvocation.t(), map() | keyword(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  defdelegate create_github_comment(invocation, attrs, opts \\ []),
+    to: GitHubPrDispatcher,
+    as: :create_comment
+
   @spec list_github_pr_reviews(AuthorizedInvocation.t(), map() | keyword(), keyword()) ::
           {:ok, map()} | {:error, term()}
   defdelegate list_github_pr_reviews(invocation, attrs, opts \\ []),
