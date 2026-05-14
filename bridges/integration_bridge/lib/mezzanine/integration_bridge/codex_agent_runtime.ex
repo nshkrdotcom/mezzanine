@@ -18,6 +18,7 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
   @codex_workspace_root "/tmp/jido_codex_cli_workspace"
   @scopes ["session:execute", "session:control", "session:tools"]
   @app_server_protocol_methods ["initialize", "initialized", "thread/start", "turn/start"]
+  @token_accounting_source "runtime:event:codex-token-accounting"
   @codex_event_name_categories %{
     "approval_auto_approved" => :approval_auto_approved,
     "approval_required" => :approval_required,
@@ -36,6 +37,7 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
     "attempt.completed" => :turn_completed,
     "malformed" => :malformed,
     "protocol.malformed" => :malformed,
+    "result" => :turn_completed,
     "timeout" => :turn_timeout,
     "tool_input.auto_answered" => :user_input_auto_answered,
     "turn.cancelled" => :turn_cancelled,
@@ -504,6 +506,7 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
       )
 
     event_stream = codex_event_stream_evidence(attrs, turn_attempts, opts, output)
+    token_accounting = codex_token_accounting_evidence(event_stream)
     status = terminal_status(output, event_stream)
     observed_at = DateTime.utc_now()
     session_start_event_count = if session_start, do: 1, else: 0
@@ -528,6 +531,7 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
       workflow_ref: workflow_ref,
       status: status,
       terminal_state: status,
+      token_totals: codex_token_totals(token_accounting),
       turn_states:
         Enum.map(
           turn_attempts,
@@ -546,7 +550,8 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
         |> Map.merge(first_prompt_extensions(first_prompt))
         |> Map.merge(app_server_protocol_extensions(app_server_protocol))
         |> Map.merge(continuation_extensions(continuation))
-        |> Map.merge(codex_event_stream_extensions(event_stream)),
+        |> Map.merge(codex_event_stream_extensions(event_stream))
+        |> Map.merge(codex_token_accounting_extensions(token_accounting)),
       action_receipts:
         session_start_action_receipts(session_start) ++
           Enum.map(turn_attempts, &action_receipt(&1, event_stream)),
@@ -1224,7 +1229,7 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
         [
           event
           |> codex_event_base(turn_attempt, category)
-          |> Map.merge(codex_event_category_fields(category, payload))
+          |> Map.merge(codex_event_category_fields(category, payload, event))
           |> compact_map()
         ]
     end
@@ -1242,16 +1247,38 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
     }
   end
 
-  defp codex_event_category_fields(:token_usage, payload) do
+  defp codex_event_category_fields(:token_usage, payload, _event) do
     case token_usage_evidence(payload) do
-      nil -> %{}
-      token_usage -> %{token_usage: token_usage}
+      nil ->
+        %{}
+
+      token_usage ->
+        %{
+          token_usage: token_usage,
+          token_scope_ref: codex_token_scope_ref(payload)
+        }
+        |> compact_map()
     end
   end
 
-  defp codex_event_category_fields(:rate_limits, payload), do: rate_limit_evidence(payload) || %{}
+  defp codex_event_category_fields(:turn_completed, payload, event) do
+    case turn_completed_token_usage_evidence(payload) do
+      nil ->
+        %{}
 
-  defp codex_event_category_fields(:agent_message, _payload) do
+      token_usage ->
+        %{
+          token_usage: token_usage,
+          token_scope_ref: codex_token_scope_ref(payload, event)
+        }
+        |> compact_map()
+    end
+  end
+
+  defp codex_event_category_fields(:rate_limits, payload, _event),
+    do: rate_limit_evidence(payload) || %{}
+
+  defp codex_event_category_fields(:agent_message, _payload, _event) do
     %{
       last_message?: true,
       body_redacted?: true,
@@ -1259,7 +1286,7 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
     }
   end
 
-  defp codex_event_category_fields(_category, _payload), do: %{}
+  defp codex_event_category_fields(_category, _payload, _event), do: %{}
 
   defp codex_event_category(event, payload) do
     event_name = event_token(map_value(event, :event))
@@ -1494,6 +1521,186 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
     }
   end
 
+  defp codex_token_accounting_evidence(nil), do: nil
+
+  defp codex_token_accounting_evidence(evidence) do
+    evidence
+    |> map_value(:events)
+    |> List.wrap()
+    |> token_accounting_events()
+    |> Enum.reduce(token_accounting_initial_state(), &token_accounting_accept_event/2)
+    |> token_accounting_summary()
+  end
+
+  defp token_accounting_events(events) when is_list(events) do
+    events
+    |> Enum.group_by(&map_value(&1, :turn_index))
+    |> Enum.flat_map(fn {_turn_index, turn_events} ->
+      token_accounting_turn_events(turn_events)
+    end)
+  end
+
+  defp token_accounting_turn_events(turn_events) do
+    if Enum.any?(turn_events, &explicit_token_usage_event?/1) do
+      Enum.reject(turn_events, &turn_completed_token_usage_event?/1)
+    else
+      turn_events
+    end
+  end
+
+  defp explicit_token_usage_event?(event) do
+    token_usage_event?(event) and map_value(event, :category) != :turn_completed
+  end
+
+  defp turn_completed_token_usage_event?(event) do
+    token_usage_event?(event) and map_value(event, :category) == :turn_completed
+  end
+
+  defp token_usage_event?(event), do: not is_nil(map_value(event, :token_usage))
+
+  defp token_accounting_initial_state do
+    %{
+      accepted_snapshot_count: 0,
+      ignored_snapshot_count: 0,
+      scopes: %{},
+      last_snapshot: nil
+    }
+  end
+
+  defp token_accounting_accept_event(event, state) do
+    case token_accounting_snapshot(event) do
+      nil ->
+        state
+
+      snapshot ->
+        scope_key = token_accounting_scope_key(snapshot)
+        existing = Map.get(state.scopes, scope_key)
+
+        if token_accounting_accept_snapshot?(snapshot, existing) do
+          %{
+            state
+            | accepted_snapshot_count: state.accepted_snapshot_count + 1,
+              scopes: Map.put(state.scopes, scope_key, snapshot),
+              last_snapshot: snapshot
+          }
+        else
+          %{state | ignored_snapshot_count: state.ignored_snapshot_count + 1}
+        end
+    end
+  end
+
+  defp token_accounting_accept_snapshot?(_snapshot, nil), do: true
+
+  defp token_accounting_accept_snapshot?(snapshot, existing) do
+    map_value(snapshot, :total_tokens) >= map_value(existing, :total_tokens)
+  end
+
+  defp token_accounting_snapshot(event) do
+    usage = map_value(event, :token_usage)
+
+    if is_map(usage) do
+      input = map_value(usage, :input_tokens) || 0
+      output = map_value(usage, :output_tokens) || 0
+      total = map_value(usage, :total_tokens) || input + output
+
+      if is_integer(total) and total >= 0 do
+        %{
+          total_input_tokens: max(input, 0),
+          total_output_tokens: max(output, 0),
+          total_tokens: total,
+          cached_input_tokens: max(map_value(usage, :cached_input_tokens) || 0, 0),
+          source: @token_accounting_source,
+          snapshot_source: map_value(usage, :source),
+          scope_ref: map_value(event, :token_scope_ref)
+        }
+        |> compact_map()
+      end
+    end
+  end
+
+  defp token_accounting_scope_key(snapshot) do
+    map_value(snapshot, :scope_ref) || "__run__"
+  end
+
+  defp token_accounting_summary(%{accepted_snapshot_count: 0}), do: nil
+
+  defp token_accounting_summary(state) do
+    totals =
+      state.scopes
+      |> Map.values()
+      |> Enum.reduce(token_accounting_zero_totals(), &token_accounting_add_totals/2)
+
+    last_snapshot = state.last_snapshot || %{}
+
+    %{
+      confirmed?: true,
+      source: @token_accounting_source,
+      accepted_snapshot_count: state.accepted_snapshot_count,
+      ignored_snapshot_count: state.ignored_snapshot_count,
+      scope_count: map_size(state.scopes),
+      last_scope_ref: map_value(last_snapshot, :scope_ref),
+      last_snapshot_source: map_value(last_snapshot, :snapshot_source),
+      total_input_tokens: totals.total_input_tokens,
+      total_output_tokens: totals.total_output_tokens,
+      total_tokens: totals.total_tokens,
+      cached_input_tokens: totals.cached_input_tokens
+    }
+    |> compact_map()
+  end
+
+  defp token_accounting_zero_totals do
+    %{
+      total_input_tokens: 0,
+      total_output_tokens: 0,
+      total_tokens: 0,
+      cached_input_tokens: 0
+    }
+  end
+
+  defp token_accounting_add_totals(snapshot, totals) do
+    %{
+      total_input_tokens: totals.total_input_tokens + map_value(snapshot, :total_input_tokens),
+      total_output_tokens: totals.total_output_tokens + map_value(snapshot, :total_output_tokens),
+      total_tokens: totals.total_tokens + map_value(snapshot, :total_tokens),
+      cached_input_tokens: totals.cached_input_tokens + map_value(snapshot, :cached_input_tokens)
+    }
+  end
+
+  defp codex_token_totals(nil), do: nil
+
+  defp codex_token_totals(evidence) do
+    %{
+      total_input_tokens: map_value(evidence, :total_input_tokens),
+      total_output_tokens: map_value(evidence, :total_output_tokens),
+      total_tokens: map_value(evidence, :total_tokens),
+      cached_input_tokens: map_value(evidence, :cached_input_tokens) || 0,
+      source: @token_accounting_source
+    }
+    |> compact_map()
+  end
+
+  defp codex_token_accounting_extensions(nil), do: %{}
+
+  defp codex_token_accounting_extensions(evidence) do
+    %{
+      "codex_token_accounting" =>
+        %{
+          "confirmed?" => map_value(evidence, :confirmed?),
+          "source" => map_value(evidence, :source),
+          "accepted_snapshot_count" => map_value(evidence, :accepted_snapshot_count),
+          "ignored_snapshot_count" => map_value(evidence, :ignored_snapshot_count),
+          "scope_count" => map_value(evidence, :scope_count),
+          "last_scope_ref" => map_value(evidence, :last_scope_ref),
+          "last_snapshot_source" => map_value(evidence, :last_snapshot_source),
+          "total_input_tokens" => map_value(evidence, :total_input_tokens),
+          "total_output_tokens" => map_value(evidence, :total_output_tokens),
+          "total_tokens" => map_value(evidence, :total_tokens),
+          "cached_input_tokens" => map_value(evidence, :cached_input_tokens)
+        }
+        |> compact_map()
+    }
+  end
+
   defp codex_event_stream_event_extension(event) do
     %{
       "event_kind" => map_value(event, :event_kind),
@@ -1563,7 +1770,32 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
   end
 
   defp token_usage_evidence(payload) do
-    token_usage_sources()
+    token_usage_from_declared_sources(payload) || codex_usage_raw_token_usage(payload)
+  end
+
+  defp turn_completed_token_usage_evidence(payload) do
+    turn_completed_token_usage_sources()
+    |> Enum.find_value(fn path ->
+      usage = map_at_path(payload, path)
+
+      if token_usage_map?(usage) do
+        usage
+        |> token_usage_counts()
+        |> Map.put(:source, "turn_completed_usage")
+      end
+    end)
+  end
+
+  defp turn_completed_token_usage_sources do
+    [
+      [:output, :usage],
+      [:usage],
+      [:params, :usage]
+    ]
+  end
+
+  defp token_usage_from_declared_sources(payload) do
+    declared_token_usage_sources()
     |> Enum.find_value(fn {path, source} ->
       usage = map_at_path(payload, path)
 
@@ -1575,13 +1807,78 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
     end)
   end
 
-  defp token_usage_sources do
+  defp declared_token_usage_sources do
     [
       {[:params, :tokenUsage, :total], "thread_token_usage_total"},
       {[:tokenUsage, :total], "thread_token_usage_total"},
       {[:params, :msg, :payload, :info, :total_token_usage], "token_count_total_token_usage"},
       {[:params, :msg, :info, :total_token_usage], "token_count_total_token_usage"}
     ]
+  end
+
+  defp codex_usage_raw_token_usage(payload) do
+    content = map_value(payload, :content) || %{}
+    metadata = map_value(payload, :metadata) || %{}
+    usage = map_value(content, :usage) || map_value(content, :token_usage)
+
+    if codex_usage_raw_token_usage?(payload, content, metadata) and token_usage_map?(usage) do
+      usage
+      |> token_usage_counts()
+      |> Map.put(:source, "codex_usage_absolute")
+    end
+  end
+
+  defp codex_usage_raw_token_usage?(payload, content, metadata) do
+    event_token(map_value(payload, :stream)) == "codex_usage" and
+      event_token(map_value(content, :type)) in [
+        "thread/tokenUsage/updated",
+        "thread.tokenUsage.updated"
+      ] and
+      absolute_usage_scope?(content, metadata)
+  end
+
+  defp absolute_usage_scope?(content, metadata) do
+    scope =
+      map_value(metadata, :usage_scope) ||
+        map_value(content, :usage_scope) ||
+        content |> map_value(:usage) |> map_value(:usage_scope)
+
+    event_token(scope) not in ["delta", "delta_only", "incremental"]
+  end
+
+  defp codex_token_scope_ref(payload, event \\ %{}) do
+    payload
+    |> token_scope_id(event)
+    |> case do
+      nil -> nil
+      scope_id -> "codex-thread://#{scope_id}"
+    end
+  end
+
+  defp token_scope_id(payload, event) do
+    [
+      [:params, :thread_id],
+      [:params, :threadId],
+      [:params, :thread, :id],
+      [:params, :msg, :thread_id],
+      [:params, :msg, :threadId],
+      [:params, :msg, :payload, :thread_id],
+      [:params, :msg, :payload, :threadId],
+      [:content, :thread_id],
+      [:content, :threadId],
+      [:thread_id],
+      [:threadId],
+      [:session_id],
+      [:sessionId]
+    ]
+    |> Enum.find_value(fn path ->
+      payload
+      |> map_at_path(path)
+      |> non_empty()
+    end) ||
+      event
+      |> map_value(:session_id)
+      |> non_empty()
   end
 
   defp token_usage_map?(%{} = payload) do
@@ -1602,20 +1899,46 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
   defp token_usage_map?(_payload), do: false
 
   defp token_usage_counts(usage) do
+    input = token_integer(usage, [:input_tokens, :prompt_tokens, :inputTokens, :promptTokens])
+
+    output =
+      token_integer(usage, [
+        :output_tokens,
+        :completion_tokens,
+        :outputTokens,
+        :completionTokens
+      ])
+
+    total = normalized_total_tokens(usage, input, output)
+
     %{
-      input_tokens:
-        token_integer(usage, [:input_tokens, :prompt_tokens, :inputTokens, :promptTokens]),
-      output_tokens:
-        token_integer(usage, [
-          :output_tokens,
-          :completion_tokens,
-          :outputTokens,
-          :completionTokens
-        ]),
-      total_tokens: token_integer(usage, [:total_tokens, :total, :totalTokens])
+      input_tokens: input,
+      output_tokens: output,
+      total_tokens: total
     }
     |> compact_map()
   end
+
+  defp normalized_total_tokens(usage, input, output) do
+    total = token_integer(usage, [:total_tokens, :total, :totalTokens])
+    derived_total = derived_total_tokens(input, output)
+
+    normalize_total_token_count(total, derived_total)
+  end
+
+  defp derived_total_tokens(input, output), do: (input || 0) + (output || 0)
+
+  defp normalize_total_token_count(total, _derived_total) when is_integer(total) and total > 0,
+    do: total
+
+  defp normalize_total_token_count(0, derived_total) when derived_total > 0, do: derived_total
+
+  defp normalize_total_token_count(total, _derived_total) when is_integer(total), do: total
+
+  defp normalize_total_token_count(_total, derived_total) when derived_total > 0,
+    do: derived_total
+
+  defp normalize_total_token_count(_total, _derived_total), do: nil
 
   defp rate_limit_evidence(payload) do
     payload

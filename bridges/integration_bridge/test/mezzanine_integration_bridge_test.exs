@@ -960,6 +960,335 @@ defmodule Mezzanine.IntegrationBridgeTest do
     refute inspect(projection) =~ "STREAM_BODY_DO_NOT_EXPOSE"
   end
 
+  test "Codex agent runtime derives run token totals from accepted absolute snapshots" do
+    attrs = %{
+      tenant_ref: "tenant://sample-app",
+      installation_ref: "installation://sample-app/codex",
+      subject_ref: "subject://sample-app/codex-token-accounting",
+      run_ref: "run://sample-app/codex-token-accounting",
+      trace_id: "trace://sample-app/codex-token-accounting",
+      idempotency_key: "idem-codex-token-accounting",
+      authority_context_ref: "authority-context://sample-app/codex-token-accounting",
+      max_turns: 2,
+      continuation_policy: %{mode: "until_max_turns", active_state?: true}
+    }
+
+    invoke_fun = fn capability_id, input, opts ->
+      turn_index = Process.get(:codex_token_accounting_turn_index, 0) + 1
+      Process.put(:codex_token_accounting_turn_index, turn_index)
+      send(self(), {:codex_token_accounting_invoke, turn_index, capability_id, input, opts})
+
+      {:ok,
+       %{
+         run: %{run_id: "jido-run-codex-token-accounting-#{turn_index}"},
+         attempt: %{attempt_id: "jido-attempt-codex-token-accounting-#{turn_index}"},
+         output: %{
+           provider_session_id: "codex-provider-token-accounting",
+           provider_turn_id: "codex-provider-token-accounting-#{turn_index}",
+           status: :completed
+         },
+         events: codex_token_accounting_fixture(turn_index)
+       }}
+    end
+
+    on_exit(fn -> Process.delete(:codex_token_accounting_turn_index) end)
+
+    assert {:ok, projection} =
+             CodexAgentRuntime.run(attrs,
+               invoke_fun: invoke_fun,
+               connection_id: "conn-codex",
+               start_runtime_router?: false,
+               register_connector?: false
+             )
+
+    assert_received {:codex_token_accounting_invoke, 1, "codex.session.turn", _first_input, _opts}
+
+    assert_received {:codex_token_accounting_invoke, 2, "codex.session.turn", _second_input,
+                     _opts}
+
+    assert projection.status == "completed"
+
+    assert projection.token_totals == %{
+             total_input_tokens: 12,
+             total_output_tokens: 5,
+             total_tokens: 17,
+             cached_input_tokens: 0,
+             source: "runtime:event:codex-token-accounting"
+           }
+
+    assert projection.extensions["codex_token_accounting"] == %{
+             "confirmed?" => true,
+             "source" => "runtime:event:codex-token-accounting",
+             "accepted_snapshot_count" => 2,
+             "ignored_snapshot_count" => 1,
+             "scope_count" => 1,
+             "last_scope_ref" => "codex-thread://thread-token-accounting",
+             "last_snapshot_source" => "token_count_total_token_usage",
+             "total_input_tokens" => 12,
+             "total_output_tokens" => 5,
+             "total_tokens" => 17,
+             "cached_input_tokens" => 0
+           }
+
+    refute inspect(projection.token_totals) =~ "9999"
+    refute inspect(projection.extensions["codex_token_accounting"]) =~ "9999"
+  end
+
+  test "Codex agent runtime accepts absolute token totals from preserved app server usage events" do
+    attrs = %{
+      tenant_ref: "tenant://sample-app",
+      installation_ref: "installation://sample-app/codex",
+      subject_ref: "subject://sample-app/codex-app-server-usage",
+      run_ref: "run://sample-app/codex-app-server-usage",
+      trace_id: "trace://sample-app/codex-app-server-usage",
+      idempotency_key: "idem-codex-app-server-usage",
+      authority_context_ref: "authority-context://sample-app/codex-app-server-usage",
+      max_turns: 1,
+      continuation_policy: %{mode: "single_turn", active_state?: false}
+    }
+
+    invoke_fun = fn capability_id, input, opts ->
+      send(self(), {:codex_app_server_usage_invoke, capability_id, input, opts})
+
+      {:ok,
+       %{
+         run: %{run_id: "jido-run-codex-app-server-usage"},
+         attempt: %{attempt_id: "jido-attempt-codex-app-server-usage"},
+         output: %{
+           provider_session_id: "codex-provider-app-server-usage",
+           provider_turn_id: "codex-provider-app-server-usage-1",
+           status: :completed
+         },
+         events: [
+           %{
+             type: "raw",
+             payload: %{
+               "stream" => "codex_usage",
+               "content" => %{
+                 "type" => "thread/tokenUsage/updated",
+                 "thread_id" => "thread-app-server-usage",
+                 "usage" => %{
+                   "input_tokens" => 7,
+                   "output_tokens" => 3,
+                   "total_tokens" => 10
+                 },
+                 "delta" => %{
+                   "input_tokens" => 9999,
+                   "output_tokens" => 9999,
+                   "total_tokens" => 9999
+                 }
+               },
+               "metadata" => %{"usage_scope" => "absolute"}
+             }
+           },
+           %{
+             type: "raw",
+             payload: %{
+               "stream" => "telemetry",
+               "content" => %{
+                 "usage" => %{
+                   "input_tokens" => 9999,
+                   "output_tokens" => 9999,
+                   "total_tokens" => 9999
+                 }
+               }
+             }
+           }
+         ]
+       }}
+    end
+
+    assert {:ok, projection} =
+             CodexAgentRuntime.run(attrs,
+               invoke_fun: invoke_fun,
+               connection_id: "conn-codex",
+               start_runtime_router?: false,
+               register_connector?: false
+             )
+
+    assert_received {:codex_app_server_usage_invoke, "codex.session.turn", _input, _opts}
+
+    assert projection.token_totals == %{
+             total_input_tokens: 7,
+             total_output_tokens: 3,
+             total_tokens: 10,
+             cached_input_tokens: 0,
+             source: "runtime:event:codex-token-accounting"
+           }
+
+    assert projection.extensions["codex_token_accounting"]["last_scope_ref"] ==
+             "codex-thread://thread-app-server-usage"
+
+    assert projection.extensions["codex_token_accounting"]["last_snapshot_source"] ==
+             "codex_usage_absolute"
+
+    refute inspect(projection.token_totals) =~ "9999"
+  end
+
+  test "Codex agent runtime fetches lower result usage as turn-completed token fallback" do
+    attrs = %{
+      tenant_ref: "tenant://sample-app",
+      installation_ref: "installation://sample-app/codex",
+      subject_ref: "subject://sample-app/codex-result-usage",
+      run_ref: "run://sample-app/codex-result-usage",
+      trace_id: "trace://sample-app/codex-result-usage",
+      idempotency_key: "idem-codex-result-usage",
+      authority_context_ref: "authority-context://sample-app/codex-result-usage",
+      max_turns: 1,
+      continuation_policy: %{mode: "single_turn", active_state?: false}
+    }
+
+    invoke_fun = fn capability_id, input, opts ->
+      send(self(), {:codex_result_usage_invoke, capability_id, input, opts})
+
+      {:ok,
+       %{
+         run: %{run_id: "jido-run-codex-result-usage"},
+         attempt: %{attempt_id: "jido-attempt-codex-result-usage"},
+         output: %{
+           provider_session_id: "codex-provider-result-usage",
+           provider_turn_id: "codex-provider-result-usage-1",
+           status: :completed
+         }
+       }}
+    end
+
+    events_fun = fn "jido-run-codex-result-usage" ->
+      [
+        %{
+          type: "result",
+          stream: :control,
+          session_id: "runtime-session-codex-result-usage",
+          runtime_ref_id: "runtime-session-codex-result-usage",
+          payload: %{
+            "status" => "completed",
+            "stop_reason" => "end_turn",
+            "output" => %{
+              "usage" => %{
+                "input_tokens" => 43,
+                "output_tokens" => 7,
+                "total_tokens" => 0
+              }
+            }
+          }
+        }
+      ]
+    end
+
+    assert {:ok, projection} =
+             CodexAgentRuntime.run(attrs,
+               invoke_fun: invoke_fun,
+               events_fun: events_fun,
+               connection_id: "conn-codex",
+               start_runtime_router?: false,
+               register_connector?: false
+             )
+
+    assert_received {:codex_result_usage_invoke, "codex.session.turn", _input, _opts}
+
+    assert projection.token_totals == %{
+             total_input_tokens: 43,
+             total_output_tokens: 7,
+             total_tokens: 50,
+             cached_input_tokens: 0,
+             source: "runtime:event:codex-token-accounting"
+           }
+
+    assert projection.extensions["codex_event_stream"]["completed_event_count"] == 1
+
+    assert projection.extensions["codex_event_stream"]["token_usage"]["source"] ==
+             "turn_completed_usage"
+
+    assert projection.extensions["codex_token_accounting"]["last_snapshot_source"] ==
+             "turn_completed_usage"
+  end
+
+  test "Codex agent runtime does not double count turn result usage when explicit usage events exist" do
+    attrs = %{
+      tenant_ref: "tenant://sample-app",
+      installation_ref: "installation://sample-app/codex",
+      subject_ref: "subject://sample-app/codex-result-dedupe",
+      run_ref: "run://sample-app/codex-result-dedupe",
+      trace_id: "trace://sample-app/codex-result-dedupe",
+      idempotency_key: "idem-codex-result-dedupe",
+      authority_context_ref: "authority-context://sample-app/codex-result-dedupe",
+      max_turns: 1,
+      continuation_policy: %{mode: "single_turn", active_state?: false}
+    }
+
+    invoke_fun = fn _capability_id, _input, _opts ->
+      {:ok,
+       %{
+         run: %{run_id: "jido-run-codex-result-dedupe"},
+         attempt: %{attempt_id: "jido-attempt-codex-result-dedupe"},
+         output: %{
+           provider_session_id: "codex-provider-result-dedupe",
+           provider_turn_id: "codex-provider-result-dedupe-1",
+           status: :completed
+         }
+       }}
+    end
+
+    events_fun = fn "jido-run-codex-result-dedupe" ->
+      [
+        %{
+          type: "raw",
+          payload: %{
+            "stream" => "codex_usage",
+            "content" => %{
+              "type" => "thread/tokenUsage/updated",
+              "thread_id" => "thread-result-dedupe",
+              "usage" => %{
+                "input_tokens" => 12,
+                "output_tokens" => 5,
+                "total_tokens" => 17
+              }
+            },
+            "metadata" => %{"usage_scope" => "absolute"}
+          }
+        },
+        %{
+          type: "result",
+          stream: :control,
+          session_id: "runtime-session-codex-result-dedupe",
+          runtime_ref_id: "runtime-session-codex-result-dedupe",
+          payload: %{
+            "status" => "completed",
+            "output" => %{
+              "usage" => %{
+                "input_tokens" => 12,
+                "output_tokens" => 5,
+                "total_tokens" => 0
+              }
+            }
+          }
+        }
+      ]
+    end
+
+    assert {:ok, projection} =
+             CodexAgentRuntime.run(attrs,
+               invoke_fun: invoke_fun,
+               events_fun: events_fun,
+               connection_id: "conn-codex",
+               start_runtime_router?: false,
+               register_connector?: false
+             )
+
+    assert projection.token_totals == %{
+             total_input_tokens: 12,
+             total_output_tokens: 5,
+             total_tokens: 17,
+             cached_input_tokens: 0,
+             source: "runtime:event:codex-token-accounting"
+           }
+
+    assert projection.extensions["codex_token_accounting"]["accepted_snapshot_count"] == 1
+
+    assert projection.extensions["codex_token_accounting"]["last_snapshot_source"] ==
+             "codex_usage_absolute"
+  end
+
   test "Codex agent runtime gates lower invocation behind before-run workspace hooks" do
     parent = self()
     workspace_root = tmp_dir("codex-before-run")
@@ -2924,6 +3253,90 @@ defmodule Mezzanine.IntegrationBridgeTest do
         event_id: "event-codex-timeout",
         type: "turn.timeout",
         payload: %{timeout_ms: 1_000}
+      }
+    ]
+  end
+
+  defp codex_token_accounting_fixture(1) do
+    [
+      %{
+        event_id: "event-codex-token-thread-total",
+        type: "codex.app_server.message",
+        payload: %{
+          "method" => "thread/tokenUsage/updated",
+          "params" => %{
+            "thread_id" => "thread-token-accounting",
+            "tokenUsage" => %{
+              "total" => %{"inputTokens" => 10, "outputTokens" => 4, "totalTokens" => 14},
+              "last" => %{"inputTokens" => 9999, "outputTokens" => 9999, "totalTokens" => 9999}
+            }
+          }
+        }
+      },
+      %{
+        event_id: "event-codex-generic-usage",
+        type: "codex.app_server.message",
+        payload: %{
+          "method" => "telemetry/usage",
+          "params" => %{
+            "thread_id" => "thread-token-accounting",
+            "usage" => %{"inputTokens" => 9999, "outputTokens" => 9999, "totalTokens" => 9999}
+          }
+        }
+      },
+      %{
+        event_id: "event-codex-turn-completed-usage",
+        type: "codex.app_server.message",
+        payload: %{
+          "method" => "turn/completed",
+          "params" => %{
+            "thread_id" => "thread-token-accounting",
+            "usage" => %{"inputTokens" => 9999, "outputTokens" => 9999, "totalTokens" => 9999}
+          }
+        }
+      }
+    ]
+  end
+
+  defp codex_token_accounting_fixture(2) do
+    [
+      %{
+        event_id: "event-codex-lower-thread-total",
+        type: "codex.app_server.message",
+        payload: %{
+          "method" => "thread/tokenUsage/updated",
+          "params" => %{
+            "thread_id" => "thread-token-accounting",
+            "tokenUsage" => %{
+              "total" => %{"inputTokens" => 9, "outputTokens" => 3, "totalTokens" => 12},
+              "last" => %{"inputTokens" => 9999, "outputTokens" => 9999, "totalTokens" => 9999}
+            }
+          }
+        }
+      },
+      %{
+        event_id: "event-codex-token-count-total",
+        type: "codex.app_server.message",
+        payload: %{
+          "method" => "codex/event/token_count",
+          "params" => %{
+            "msg" => %{
+              "thread_id" => "thread-token-accounting",
+              "info" => %{
+                "total_token_usage" => %{
+                  "input_tokens" => 12,
+                  "output_tokens" => 5,
+                  "total_tokens" => 17
+                },
+                "last_token_usage" => %{
+                  "input_tokens" => 9999,
+                  "output_tokens" => 9999,
+                  "total_tokens" => 9999
+                }
+              }
+            }
+          }
+        }
       }
     ]
   end
