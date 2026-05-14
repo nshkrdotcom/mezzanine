@@ -860,6 +860,106 @@ defmodule Mezzanine.IntegrationBridgeTest do
            end)
   end
 
+  test "Codex agent runtime projects app-server event stream evidence" do
+    attrs = %{
+      tenant_ref: "tenant://sample-app",
+      installation_ref: "installation://sample-app/codex",
+      subject_ref: "subject://sample-app/codex-events",
+      run_ref: "run://sample-app/codex-events",
+      trace_id: "trace://sample-app/codex-events",
+      idempotency_key: "idem-codex-events",
+      authority_context_ref: "authority-context://sample-app/codex-events",
+      max_turns: 2,
+      continuation_policy: %{mode: "until_max_turns", active_state?: true}
+    }
+
+    invoke_fun = fn capability_id, input, opts ->
+      turn_index = Process.get(:codex_event_stream_turn_index, 0) + 1
+      Process.put(:codex_event_stream_turn_index, turn_index)
+      send(self(), {:codex_event_stream_invoke, turn_index, capability_id, input, opts})
+
+      {:ok,
+       %{
+         run: %{run_id: "jido-run-codex-events-#{turn_index}"},
+         attempt: %{attempt_id: "jido-attempt-codex-events-#{turn_index}"},
+         output: %{
+           provider_session_id: "codex-provider-events",
+           provider_turn_id: "codex-provider-events-#{turn_index}",
+           status: if(turn_index == 1, do: :completed, else: :failed)
+         },
+         events: codex_event_stream_fixture(turn_index)
+       }}
+    end
+
+    on_exit(fn -> Process.delete(:codex_event_stream_turn_index) end)
+
+    assert {:ok, projection} =
+             CodexAgentRuntime.run(attrs,
+               invoke_fun: invoke_fun,
+               connection_id: "conn-codex",
+               start_runtime_router?: false,
+               register_connector?: false
+             )
+
+    assert_received {:codex_event_stream_invoke, 1, "codex.session.turn", _first_input, _opts}
+    assert_received {:codex_event_stream_invoke, 2, "codex.session.turn", _second_input, _opts}
+
+    assert projection.status == "failed"
+
+    event_stream = projection.extensions["codex_event_stream"]
+    assert event_stream["confirmed?"] == true
+    assert event_stream["event_count"] == 12
+    assert event_stream["terminal_status"] == "failed"
+    assert event_stream["completed_event_count"] == 1
+    assert event_stream["failed_event_count"] == 1
+    assert event_stream["cancelled_event_count"] == 1
+    assert event_stream["malformed_event_count"] == 1
+    assert event_stream["timeout_event_count"] == 1
+    assert event_stream["approval_event_count"] == 2
+    assert event_stream["approval_required_count"] == 1
+    assert event_stream["approval_auto_approved_count"] == 1
+    assert event_stream["user_input_event_count"] == 2
+    assert event_stream["user_input_required_count"] == 1
+    assert event_stream["user_input_auto_answered_count"] == 1
+
+    assert event_stream["token_usage"] == %{
+             "input_tokens" => 10,
+             "output_tokens" => 4,
+             "total_tokens" => 14,
+             "source" => "thread_token_usage_total"
+           }
+
+    assert event_stream["rate_limits_present?"] == true
+    assert event_stream["rate_limit_id"] == "codex"
+    assert event_stream["rate_limit_primary_remaining"] == 90
+    assert event_stream["rate_limit_primary_limit"] == 100
+
+    assert event_stream["last_message"] == %{
+             "event_kind" => "codex.agent_message.updated",
+             "summary" => "codex agent message updated",
+             "body_redacted?" => true,
+             "body_included?" => false
+           }
+
+    event_kinds = Enum.map(projection.runtime_events, & &1.event_kind)
+
+    assert "codex.turn.completed" in event_kinds
+    assert "codex.turn.failed" in event_kinds
+    assert "codex.turn.cancelled" in event_kinds
+    assert "codex.protocol.malformed" in event_kinds
+    assert "codex.turn.timeout" in event_kinds
+    assert "codex.approval.required" in event_kinds
+    assert "codex.approval.auto_approved" in event_kinds
+    assert "codex.user_input.required" in event_kinds
+    assert "codex.user_input.auto_answered" in event_kinds
+    assert "codex.token_usage.updated" in event_kinds
+    assert "codex.rate_limits.updated" in event_kinds
+    assert "codex.agent_message.updated" in event_kinds
+
+    assert List.last(projection.runtime_events).message_summary == "codex session turn failed"
+    refute inspect(projection) =~ "STREAM_BODY_DO_NOT_EXPOSE"
+  end
+
   test "Codex agent runtime gates lower invocation behind before-run workspace hooks" do
     parent = self()
     workspace_root = tmp_dir("codex-before-run")
@@ -2728,6 +2828,104 @@ defmodule Mezzanine.IntegrationBridgeTest do
   defp sha256(value) when is_binary(value) do
     digest = :crypto.hash(:sha256, value)
     "sha256:" <> Base.encode16(digest, case: :lower)
+  end
+
+  defp codex_event_stream_fixture(1) do
+    [
+      %{
+        event_id: "event-codex-completed",
+        type: "codex.app_server.message",
+        payload: %{"method" => "turn/completed", "params" => %{"status" => "completed"}}
+      },
+      %{
+        event_id: "event-codex-malformed",
+        type: "protocol.malformed",
+        payload: %{raw: "{not json"}
+      },
+      %{
+        event_id: "event-codex-approval-required",
+        type: "codex.app_server.message",
+        payload: %{
+          "method" => "item/commandExecution/requestApproval",
+          "params" => %{"command" => "mix test"}
+        }
+      },
+      %{
+        event_id: "event-codex-approval-auto",
+        type: "approval.auto_approved",
+        payload: %{decision: "acceptForSession"}
+      },
+      %{
+        event_id: "event-codex-user-input-required",
+        type: "codex.app_server.message",
+        payload: %{
+          "method" => "item/tool/requestUserInput",
+          "params" => %{"questions" => [%{"id" => "q-1"}]}
+        }
+      },
+      %{
+        event_id: "event-codex-user-input-auto",
+        type: "tool_input.auto_answered",
+        payload: %{answer: "This is a non-interactive session. Operator input is unavailable."}
+      },
+      %{
+        event_id: "event-codex-token-usage",
+        type: "codex.app_server.message",
+        payload: %{
+          "method" => "thread/tokenUsage/updated",
+          "params" => %{
+            "tokenUsage" => %{
+              "total" => %{"inputTokens" => 10, "outputTokens" => 4, "totalTokens" => 14},
+              "last" => %{"inputTokens" => 2, "outputTokens" => 1, "totalTokens" => 3}
+            }
+          }
+        }
+      },
+      %{
+        event_id: "event-codex-rate-limits",
+        type: "codex.app_server.message",
+        payload: %{
+          "method" => "account/rateLimits/updated",
+          "params" => %{
+            "rateLimits" => %{
+              "limit_id" => "codex",
+              "primary" => %{"remaining" => 90, "limit" => 100}
+            }
+          }
+        }
+      },
+      %{
+        event_id: "event-codex-agent-message",
+        type: "codex.app_server.message",
+        payload: %{
+          "method" => "codex/event/agent_message_delta",
+          "params" => %{"msg" => %{"delta" => "STREAM_BODY_DO_NOT_EXPOSE"}}
+        }
+      }
+    ]
+  end
+
+  defp codex_event_stream_fixture(2) do
+    [
+      %{
+        event_id: "event-codex-failed",
+        type: "codex.app_server.message",
+        payload: %{
+          "method" => "turn/failed",
+          "params" => %{"error" => %{"message" => "provider failed"}}
+        }
+      },
+      %{
+        event_id: "event-codex-cancelled",
+        type: "codex.app_server.message",
+        payload: %{"method" => "turn/cancelled", "params" => %{"reason" => "operator"}}
+      },
+      %{
+        event_id: "event-codex-timeout",
+        type: "turn.timeout",
+        payload: %{timeout_ms: 1_000}
+      }
+    ]
   end
 
   defp codex_agent_attrs do

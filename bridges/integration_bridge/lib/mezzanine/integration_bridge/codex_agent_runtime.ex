@@ -18,6 +18,39 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
   @codex_workspace_root "/tmp/jido_codex_cli_workspace"
   @scopes ["session:execute", "session:control", "session:tools"]
   @app_server_protocol_methods ["initialize", "initialized", "thread/start", "turn/start"]
+  @codex_event_name_categories %{
+    "approval_auto_approved" => :approval_auto_approved,
+    "approval_required" => :approval_required,
+    "malformed" => :malformed,
+    "timeout" => :turn_timeout,
+    "tool_input_auto_answered" => :user_input_auto_answered,
+    "turn_cancelled" => :turn_cancelled,
+    "turn_canceled" => :turn_cancelled,
+    "turn_completed" => :turn_completed,
+    "turn_failed" => :turn_failed,
+    "turn_input_required" => :user_input_required,
+    "turn_timeout" => :turn_timeout
+  }
+  @codex_event_type_categories %{
+    "approval.auto_approved" => :approval_auto_approved,
+    "attempt.completed" => :turn_completed,
+    "malformed" => :malformed,
+    "protocol.malformed" => :malformed,
+    "timeout" => :turn_timeout,
+    "tool_input.auto_answered" => :user_input_auto_answered,
+    "turn.cancelled" => :turn_cancelled,
+    "turn.canceled" => :turn_cancelled,
+    "turn.completed" => :turn_completed,
+    "turn.failed" => :turn_failed,
+    "turn.timeout" => :turn_timeout
+  }
+  @codex_terminal_method_categories %{
+    "turn/cancelled" => :turn_cancelled,
+    "turn/canceled" => :turn_cancelled,
+    "turn/completed" => :turn_completed,
+    "turn/failed" => :turn_failed,
+    "turn/input_required" => :user_input_required
+  }
 
   @spec run(map() | keyword()) :: {:ok, map()} | {:error, term()}
   def run(attrs), do: run(attrs, [])
@@ -470,19 +503,22 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
         turn_lower_receipt_ref(first_turn_attempt, first_lower_request_ref)
       )
 
-    status = output_status(output)
+    event_stream = codex_event_stream_evidence(attrs, turn_attempts, opts, output)
+    status = terminal_status(output, event_stream)
     observed_at = DateTime.utc_now()
     session_start_event_count = if session_start, do: 1, else: 0
     first_prompt_event_count = if first_prompt, do: 1, else: 0
     app_server_protocol_event_count = if app_server_protocol, do: 1, else: 0
     continuation_event_count = continuation_event_count(continuation)
+    event_stream_event_count = codex_event_stream_event_count(event_stream)
     first_prompt_event_seq = session_start_event_count + 1
     app_server_protocol_event_seq = session_start_event_count + first_prompt_event_count + 1
     continuation_event_seq = app_server_protocol_event_seq + app_server_protocol_event_count
+    event_stream_event_seq = continuation_event_seq + continuation_event_count
 
     terminal_event_seq =
       session_start_event_count + first_prompt_event_count + app_server_protocol_event_count +
-        continuation_event_count + 1
+        continuation_event_count + event_stream_event_count + 1
 
     after_run_event_seq = terminal_event_seq + 1
 
@@ -498,21 +534,22 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
           &turn_state(
             attrs,
             &1,
-            status,
             session_start,
             first_prompt,
             app_server_protocol,
-            continuation
+            continuation,
+            event_stream
           )
         ),
       extensions:
         session_start_extensions(session_start)
         |> Map.merge(first_prompt_extensions(first_prompt))
         |> Map.merge(app_server_protocol_extensions(app_server_protocol))
-        |> Map.merge(continuation_extensions(continuation)),
+        |> Map.merge(continuation_extensions(continuation))
+        |> Map.merge(codex_event_stream_extensions(event_stream)),
       action_receipts:
         session_start_action_receipts(session_start) ++
-          Enum.map(turn_attempts, &action_receipt/1),
+          Enum.map(turn_attempts, &action_receipt(&1, event_stream)),
       runtime_events:
         hook_events(
           attrs,
@@ -553,6 +590,13 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
             observed_at,
             continuation_event_seq
           ) ++
+          codex_event_stream_runtime_events(
+            event_stream,
+            attrs,
+            workflow_ref,
+            observed_at,
+            event_stream_event_seq
+          ) ++
           [
             %{
               event_ref: "event://codex-agent-runtime/#{ref_suffix(run_ref)}/terminal",
@@ -564,8 +608,8 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
               run_ref: run_ref,
               workflow_ref: workflow_ref,
               turn_ref: turn_ref(run_ref, actual_turn_count),
-              level: "info",
-              message_summary: "codex session turn completed"
+              level: terminal_level(status),
+              message_summary: terminal_message_summary(status)
             }
           ] ++
           hook_events(
@@ -603,11 +647,11 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
   defp turn_state(
          attrs,
          turn_attempt,
-         status,
          session_start,
          first_prompt,
          app_server_protocol,
-         continuation
+         continuation,
+         event_stream
        ) do
     turn_index = map_value(turn_attempt, :turn_index)
     run_ref = map_value(attrs, :run_ref)
@@ -615,12 +659,13 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
     output = map_value(result, :output) || %{}
     lower_request_ref = lower_request_ref(turn_attempt)
     lower_receipt_ref = lower_receipt_ref(turn_attempt)
+    status = turn_status(output, event_stream, turn_index)
 
     %{
       turn_ref: turn_ref(run_ref, turn_index),
       turn_index: turn_index,
       state: status,
-      status: output_status(output),
+      status: status,
       session_ref: session_ref(output, run_ref),
       operation: @capability_id,
       credential_redeemed?: true,
@@ -635,11 +680,16 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
       if(turn_index == 1, do: app_server_protocol_turn_fields(app_server_protocol), else: %{})
     )
     |> Map.merge(continuation_turn_fields(continuation, turn_index))
+    |> Map.merge(codex_event_stream_turn_fields(event_stream, turn_index))
   end
 
-  defp action_receipt(turn_attempt) do
+  defp action_receipt(turn_attempt, event_stream) do
+    output = turn_attempt_output(turn_attempt)
+    turn_index = map_value(turn_attempt, :turn_index)
+    status = turn_status(output, event_stream, turn_index)
+
     %{
-      status: :succeeded,
+      status: action_receipt_status(status),
       lower_receipt_ref: lower_receipt_ref(turn_attempt),
       output_artifact_refs: output_artifact_refs(turn_attempt_result(turn_attempt))
     }
@@ -1140,6 +1190,506 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
     end)
   end
 
+  defp codex_event_stream_evidence(_attrs, turn_attempts, opts, output) do
+    events =
+      turn_attempts
+      |> Enum.flat_map(fn turn_attempt ->
+        turn_attempt
+        |> lower_events_for_turn(opts)
+        |> Enum.flat_map(&normalize_codex_lower_event(&1, turn_attempt))
+      end)
+      |> Enum.with_index(1)
+      |> Enum.map(fn {event, event_index} -> Map.put(event, :event_index, event_index) end)
+
+    case events do
+      [] -> nil
+      _events -> codex_event_stream_summary(events, output)
+    end
+  end
+
+  defp lower_events_for_turn(turn_attempt, opts) do
+    turn_attempt
+    |> turn_attempt_result()
+    |> lower_runtime_events(opts)
+  end
+
+  defp normalize_codex_lower_event(event, turn_attempt) do
+    payload = map_value(event, :payload) || %{}
+
+    case codex_event_category(event, payload) do
+      nil ->
+        []
+
+      category ->
+        [
+          event
+          |> codex_event_base(turn_attempt, category)
+          |> Map.merge(codex_event_category_fields(category, payload))
+          |> compact_map()
+        ]
+    end
+  end
+
+  defp codex_event_base(event, turn_attempt, category) do
+    %{
+      category: category,
+      lower_event_ref: codex_lower_event_ref(event, turn_attempt, category),
+      turn_index: map_value(turn_attempt, :turn_index),
+      event_kind: codex_event_kind(category),
+      status: codex_event_status(category),
+      level: codex_event_level(category),
+      message_summary: codex_event_message_summary(category)
+    }
+  end
+
+  defp codex_event_category_fields(:token_usage, payload) do
+    case token_usage_evidence(payload) do
+      nil -> %{}
+      token_usage -> %{token_usage: token_usage}
+    end
+  end
+
+  defp codex_event_category_fields(:rate_limits, payload), do: rate_limit_evidence(payload) || %{}
+
+  defp codex_event_category_fields(:agent_message, _payload) do
+    %{
+      last_message?: true,
+      body_redacted?: true,
+      body_included?: false
+    }
+  end
+
+  defp codex_event_category_fields(_category, _payload), do: %{}
+
+  defp codex_event_category(event, payload) do
+    event_name = event_token(map_value(event, :event))
+    event_type = event_token(map_value(event, :type) || map_value(event, :event_kind))
+    method = codex_event_method(event, payload)
+
+    codex_event_name_category(event_name) ||
+      codex_event_type_category(event_type) ||
+      codex_terminal_method_category(method) ||
+      codex_interaction_method_category(method) ||
+      codex_payload_category(method, payload)
+  end
+
+  defp codex_event_name_category(event_name),
+    do: Map.get(@codex_event_name_categories, event_name)
+
+  defp codex_event_type_category(event_type),
+    do: Map.get(@codex_event_type_categories, event_type)
+
+  defp codex_terminal_method_category(method),
+    do: Map.get(@codex_terminal_method_categories, method)
+
+  defp codex_interaction_method_category(method) do
+    cond do
+      method in approval_request_methods() -> :approval_required
+      method in user_input_request_methods() -> :user_input_required
+      true -> nil
+    end
+  end
+
+  defp codex_payload_category(method, payload) do
+    cond do
+      not is_nil(token_usage_evidence(payload)) -> :token_usage
+      method == "account/rateLimits/updated" -> :rate_limits
+      not is_nil(rate_limit_evidence(payload)) -> :rate_limits
+      agent_message_method?(method) -> :agent_message
+      true -> nil
+    end
+  end
+
+  defp codex_event_method(event, payload) do
+    map_value(payload, :method)
+    |> case do
+      nil -> map_value(event, :method)
+      method -> method
+    end
+    |> event_token()
+  end
+
+  defp approval_request_methods do
+    [
+      "item/commandExecution/requestApproval",
+      "execCommandApproval",
+      "applyPatchApproval",
+      "item/fileChange/requestApproval"
+    ]
+  end
+
+  defp user_input_request_methods, do: ["item/tool/requestUserInput", "tool/requestUserInput"]
+
+  defp agent_message_method?(method) when is_binary(method) do
+    method in [
+      "item/agentMessage/delta",
+      "codex/event/agent_message_delta",
+      "codex/event/agent_message_content_delta"
+    ]
+  end
+
+  defp agent_message_method?(_method), do: false
+
+  defp codex_event_kind(:turn_completed), do: "codex.turn.completed"
+  defp codex_event_kind(:turn_failed), do: "codex.turn.failed"
+  defp codex_event_kind(:turn_cancelled), do: "codex.turn.cancelled"
+  defp codex_event_kind(:malformed), do: "codex.protocol.malformed"
+  defp codex_event_kind(:turn_timeout), do: "codex.turn.timeout"
+  defp codex_event_kind(:approval_required), do: "codex.approval.required"
+  defp codex_event_kind(:approval_auto_approved), do: "codex.approval.auto_approved"
+  defp codex_event_kind(:user_input_required), do: "codex.user_input.required"
+  defp codex_event_kind(:user_input_auto_answered), do: "codex.user_input.auto_answered"
+  defp codex_event_kind(:token_usage), do: "codex.token_usage.updated"
+  defp codex_event_kind(:rate_limits), do: "codex.rate_limits.updated"
+  defp codex_event_kind(:agent_message), do: "codex.agent_message.updated"
+
+  defp codex_event_status(:turn_completed), do: "completed"
+  defp codex_event_status(:turn_failed), do: "failed"
+  defp codex_event_status(:turn_cancelled), do: "cancelled"
+  defp codex_event_status(:turn_timeout), do: "timeout"
+  defp codex_event_status(_category), do: nil
+
+  defp codex_event_level(category)
+       when category in [
+              :turn_failed,
+              :malformed,
+              :turn_timeout,
+              :approval_required,
+              :user_input_required
+            ],
+       do: "warning"
+
+  defp codex_event_level(_category), do: "info"
+
+  defp codex_event_message_summary(:turn_completed), do: "codex turn completed"
+  defp codex_event_message_summary(:turn_failed), do: "codex turn failed"
+  defp codex_event_message_summary(:turn_cancelled), do: "codex turn cancelled"
+  defp codex_event_message_summary(:malformed), do: "codex malformed protocol line"
+  defp codex_event_message_summary(:turn_timeout), do: "codex turn timed out"
+  defp codex_event_message_summary(:approval_required), do: "codex approval required"
+  defp codex_event_message_summary(:approval_auto_approved), do: "codex approval auto-approved"
+  defp codex_event_message_summary(:user_input_required), do: "codex user input required"
+
+  defp codex_event_message_summary(:user_input_auto_answered),
+    do: "codex user input auto-answered"
+
+  defp codex_event_message_summary(:token_usage), do: "codex token usage updated"
+  defp codex_event_message_summary(:rate_limits), do: "codex rate limits updated"
+  defp codex_event_message_summary(:agent_message), do: "codex agent message updated"
+
+  defp codex_lower_event_ref(event, turn_attempt, category) do
+    map_value(event, :event_id) ||
+      map_value(event, :event_ref) ||
+      "lower-event://#{turn_run_id(turn_attempt, nil)}/#{codex_event_kind(category)}"
+  end
+
+  defp codex_event_stream_summary(events, output) do
+    terminal_status = terminal_status(output, %{terminal_status: event_terminal_status(events)})
+    token_usage = latest_map(events, :token_usage)
+    rate_limits = latest_rate_limit_evidence(events)
+    last_message = latest_last_message(events)
+
+    %{
+      confirmed?: true,
+      event_count: length(events),
+      terminal_status: terminal_status,
+      completed_event_count: count_codex_events(events, :turn_completed),
+      failed_event_count: count_codex_events(events, :turn_failed),
+      cancelled_event_count: count_codex_events(events, :turn_cancelled),
+      malformed_event_count: count_codex_events(events, :malformed),
+      timeout_event_count: count_codex_events(events, :turn_timeout),
+      approval_event_count:
+        count_codex_events(events, [:approval_required, :approval_auto_approved]),
+      approval_required_count: count_codex_events(events, :approval_required),
+      approval_auto_approved_count: count_codex_events(events, :approval_auto_approved),
+      user_input_event_count:
+        count_codex_events(events, [:user_input_required, :user_input_auto_answered]),
+      user_input_required_count: count_codex_events(events, :user_input_required),
+      user_input_auto_answered_count: count_codex_events(events, :user_input_auto_answered),
+      token_usage: token_usage,
+      rate_limits_present?: not is_nil(rate_limits),
+      rate_limit_id: map_value(rate_limits, :rate_limit_id),
+      rate_limit_primary_remaining: map_value(rate_limits, :rate_limit_primary_remaining),
+      rate_limit_primary_limit: map_value(rate_limits, :rate_limit_primary_limit),
+      last_message: last_message,
+      events: events
+    }
+    |> compact_map()
+  end
+
+  defp latest_rate_limit_evidence(events) do
+    events
+    |> Enum.reverse()
+    |> Enum.find(&truthy?(map_value(&1, :rate_limits_present?)))
+  end
+
+  defp latest_last_message(events) do
+    events
+    |> Enum.reverse()
+    |> Enum.find(&truthy?(map_value(&1, :last_message?)))
+    |> case do
+      nil ->
+        nil
+
+      event ->
+        %{
+          event_kind: map_value(event, :event_kind),
+          summary: map_value(event, :message_summary),
+          body_redacted?: true,
+          body_included?: false
+        }
+    end
+  end
+
+  defp latest_map(events, key) do
+    events
+    |> Enum.reverse()
+    |> Enum.find_value(fn event ->
+      case map_value(event, key) do
+        %{} = value -> value
+        _other -> nil
+      end
+    end)
+  end
+
+  defp count_codex_events(events, categories) when is_list(categories) do
+    Enum.count(events, &(map_value(&1, :category) in categories))
+  end
+
+  defp count_codex_events(events, category), do: count_codex_events(events, [category])
+
+  defp codex_event_stream_extensions(nil), do: %{}
+
+  defp codex_event_stream_extensions(evidence) do
+    events = map_value(evidence, :events) || []
+
+    %{
+      "codex_event_stream" =>
+        %{
+          "confirmed?" => map_value(evidence, :confirmed?),
+          "event_count" => map_value(evidence, :event_count),
+          "terminal_status" => map_value(evidence, :terminal_status),
+          "completed_event_count" => map_value(evidence, :completed_event_count),
+          "failed_event_count" => map_value(evidence, :failed_event_count),
+          "cancelled_event_count" => map_value(evidence, :cancelled_event_count),
+          "malformed_event_count" => map_value(evidence, :malformed_event_count),
+          "timeout_event_count" => map_value(evidence, :timeout_event_count),
+          "approval_event_count" => map_value(evidence, :approval_event_count),
+          "approval_required_count" => map_value(evidence, :approval_required_count),
+          "approval_auto_approved_count" => map_value(evidence, :approval_auto_approved_count),
+          "user_input_event_count" => map_value(evidence, :user_input_event_count),
+          "user_input_required_count" => map_value(evidence, :user_input_required_count),
+          "user_input_auto_answered_count" =>
+            map_value(evidence, :user_input_auto_answered_count),
+          "token_usage" => evidence |> map_value(:token_usage) |> string_key_map(),
+          "rate_limits_present?" => map_value(evidence, :rate_limits_present?),
+          "rate_limit_id" => map_value(evidence, :rate_limit_id),
+          "rate_limit_primary_remaining" => map_value(evidence, :rate_limit_primary_remaining),
+          "rate_limit_primary_limit" => map_value(evidence, :rate_limit_primary_limit),
+          "last_message" => evidence |> map_value(:last_message) |> string_key_map(),
+          "event_kinds" => Enum.map(events, &map_value(&1, :event_kind)),
+          "events" => Enum.map(events, &codex_event_stream_event_extension/1)
+        }
+        |> compact_map()
+    }
+  end
+
+  defp codex_event_stream_event_extension(event) do
+    %{
+      "event_kind" => map_value(event, :event_kind),
+      "category" => event |> map_value(:category) |> event_token(),
+      "turn_index" => map_value(event, :turn_index),
+      "lower_event_ref" => map_value(event, :lower_event_ref),
+      "status" => map_value(event, :status),
+      "message_summary" => map_value(event, :message_summary),
+      "token_usage" => event |> map_value(:token_usage) |> string_key_map(),
+      "rate_limits_present?" => map_value(event, :rate_limits_present?),
+      "rate_limit_id" => map_value(event, :rate_limit_id),
+      "rate_limit_primary_remaining" => map_value(event, :rate_limit_primary_remaining),
+      "rate_limit_primary_limit" => map_value(event, :rate_limit_primary_limit),
+      "body_redacted?" => map_value(event, :body_redacted?),
+      "body_included?" => map_value(event, :body_included?)
+    }
+    |> compact_map()
+  end
+
+  defp codex_event_stream_turn_fields(nil, _turn_index), do: %{}
+
+  defp codex_event_stream_turn_fields(evidence, turn_index) do
+    turn_events =
+      evidence
+      |> map_value(:events)
+      |> List.wrap()
+      |> Enum.filter(&(map_value(&1, :turn_index) == turn_index))
+
+    %{
+      event_stream_confirmed?: turn_events != [],
+      event_count: length(turn_events),
+      terminal_event_status: turn_event_terminal_status(evidence, turn_index)
+    }
+    |> compact_map()
+  end
+
+  defp codex_event_stream_event_count(nil), do: 0
+  defp codex_event_stream_event_count(evidence), do: length(map_value(evidence, :events) || [])
+
+  defp codex_event_stream_runtime_events(nil, _attrs, _workflow_ref, _observed_at, _event_seq),
+    do: []
+
+  defp codex_event_stream_runtime_events(evidence, attrs, workflow_ref, observed_at, event_seq) do
+    run_ref = map_value(attrs, :run_ref)
+
+    evidence
+    |> map_value(:events)
+    |> List.wrap()
+    |> Enum.map(fn event ->
+      index = map_value(event, :event_index)
+
+      %{
+        event_ref: "event://codex-agent-runtime/#{ref_suffix(run_ref)}/codex-event-#{index}",
+        event_seq: event_seq + index - 1,
+        event_kind: map_value(event, :event_kind),
+        observed_at: observed_at,
+        tenant_ref: map_value(attrs, :tenant_id) || map_value(attrs, :tenant_ref),
+        subject_ref: map_value(attrs, :subject_ref),
+        run_ref: run_ref,
+        workflow_ref: workflow_ref,
+        turn_ref: turn_ref(run_ref, map_value(event, :turn_index)),
+        level: map_value(event, :level),
+        message_summary: map_value(event, :message_summary),
+        extensions: codex_event_stream_event_extension(event)
+      }
+    end)
+  end
+
+  defp token_usage_evidence(payload) do
+    token_usage_sources()
+    |> Enum.find_value(fn {path, source} ->
+      usage = map_at_path(payload, path)
+
+      if token_usage_map?(usage) do
+        usage
+        |> token_usage_counts()
+        |> Map.put(:source, source)
+      end
+    end)
+  end
+
+  defp token_usage_sources do
+    [
+      {[:params, :tokenUsage, :total], "thread_token_usage_total"},
+      {[:tokenUsage, :total], "thread_token_usage_total"},
+      {[:params, :msg, :payload, :info, :total_token_usage], "token_count_total_token_usage"},
+      {[:params, :msg, :info, :total_token_usage], "token_count_total_token_usage"}
+    ]
+  end
+
+  defp token_usage_map?(%{} = payload) do
+    not is_nil(
+      token_integer(payload, [:input_tokens, :prompt_tokens, :inputTokens, :promptTokens])
+    ) or
+      not is_nil(
+        token_integer(payload, [
+          :output_tokens,
+          :completion_tokens,
+          :outputTokens,
+          :completionTokens
+        ])
+      ) or
+      not is_nil(token_integer(payload, [:total_tokens, :total, :totalTokens]))
+  end
+
+  defp token_usage_map?(_payload), do: false
+
+  defp token_usage_counts(usage) do
+    %{
+      input_tokens:
+        token_integer(usage, [:input_tokens, :prompt_tokens, :inputTokens, :promptTokens]),
+      output_tokens:
+        token_integer(usage, [
+          :output_tokens,
+          :completion_tokens,
+          :outputTokens,
+          :completionTokens
+        ]),
+      total_tokens: token_integer(usage, [:total_tokens, :total, :totalTokens])
+    }
+    |> compact_map()
+  end
+
+  defp rate_limit_evidence(payload) do
+    payload
+    |> rate_limits_payload()
+    |> case do
+      %{} = rate_limits ->
+        primary = map_value(rate_limits, :primary) || %{}
+
+        %{
+          rate_limits_present?: true,
+          rate_limit_id: map_value(rate_limits, :limit_id) || map_value(rate_limits, :limit_name),
+          rate_limit_primary_remaining: parse_integer(map_value(primary, :remaining)),
+          rate_limit_primary_limit: parse_integer(map_value(primary, :limit))
+        }
+        |> compact_map()
+
+      _missing ->
+        nil
+    end
+  end
+
+  defp rate_limits_payload(payload) when is_map(payload) do
+    map_at_path(payload, [:params, :rateLimits]) ||
+      map_at_path(payload, [:params, :rate_limits]) ||
+      map_value(payload, :rateLimits) ||
+      map_value(payload, :rate_limits)
+  end
+
+  defp rate_limits_payload(_payload), do: nil
+
+  defp map_at_path(payload, path) when is_map(payload) and is_list(path) do
+    Enum.reduce_while(path, payload, fn key, acc ->
+      case map_value(acc, key) do
+        nil -> {:halt, nil}
+        value -> {:cont, value}
+      end
+    end)
+  end
+
+  defp map_at_path(_payload, _path), do: nil
+
+  defp token_integer(payload, keys) do
+    Enum.find_value(keys, fn key -> parse_integer(map_value(payload, key)) end)
+  end
+
+  defp parse_integer(value) when is_integer(value), do: value
+
+  defp parse_integer(value) when is_binary(value) do
+    case Integer.parse(String.trim(value)) do
+      {parsed, ""} -> parsed
+      _other -> nil
+    end
+  end
+
+  defp parse_integer(_value), do: nil
+
+  defp string_key_map(nil), do: nil
+
+  defp string_key_map(%{} = map) do
+    map
+    |> Enum.map(fn {key, value} -> {string_key(key), value} end)
+    |> Map.new()
+  end
+
+  defp string_key_map(value), do: value
+
+  defp string_key(key) when is_atom(key), do: Atom.to_string(key)
+  defp string_key(key), do: key
+
+  defp event_token(nil), do: nil
+  defp event_token(value) when is_atom(value), do: Atom.to_string(value)
+  defp event_token(value) when is_binary(value), do: value
+  defp event_token(value), do: to_string(value)
+
   defp app_server_protocol_evidence(
          input,
          output,
@@ -1331,6 +1881,61 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
         "completed"
     end
   end
+
+  defp terminal_status(output, event_stream) do
+    case output_status(output) do
+      "completed" -> map_value(event_stream, :terminal_status) || "completed"
+      status -> status
+    end
+  end
+
+  defp turn_status(output, event_stream, turn_index) do
+    case output_status(output) do
+      "completed" -> turn_event_terminal_status(event_stream, turn_index) || "completed"
+      status -> status
+    end
+  end
+
+  defp turn_event_terminal_status(nil, _turn_index), do: nil
+
+  defp turn_event_terminal_status(event_stream, turn_index) do
+    event_stream
+    |> map_value(:events)
+    |> List.wrap()
+    |> Enum.filter(&(map_value(&1, :turn_index) == turn_index))
+    |> event_terminal_status()
+  end
+
+  defp event_terminal_status(events) when is_list(events) do
+    events
+    |> Enum.filter(&(map_value(&1, :category) in terminal_event_categories()))
+    |> List.last()
+    |> case do
+      nil -> nil
+      event -> map_value(event, :status)
+    end
+  end
+
+  defp terminal_event_categories,
+    do: [:turn_completed, :turn_failed, :turn_cancelled, :turn_timeout]
+
+  defp action_receipt_status("completed"), do: :succeeded
+  defp action_receipt_status("cancelled"), do: :cancelled
+  defp action_receipt_status("canceled"), do: :cancelled
+  defp action_receipt_status("timeout"), do: :timed_out
+  defp action_receipt_status(_status), do: :failed
+
+  defp terminal_level("completed"), do: "info"
+  defp terminal_level("cancelled"), do: "warning"
+  defp terminal_level("canceled"), do: "warning"
+  defp terminal_level("timeout"), do: "warning"
+  defp terminal_level(_status), do: "error"
+
+  defp terminal_message_summary("completed"), do: "codex session turn completed"
+  defp terminal_message_summary("cancelled"), do: "codex session turn cancelled"
+  defp terminal_message_summary("canceled"), do: "codex session turn cancelled"
+  defp terminal_message_summary("timeout"), do: "codex session turn timed out"
+  defp terminal_message_summary(_status), do: "codex session turn failed"
 
   defp session_ref(output, run_ref) do
     provider_session_id =
