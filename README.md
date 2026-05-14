@@ -139,7 +139,7 @@ flowchart TD
   AppKit["AppKit<br/>bridge"] --> Admission["Lifecycle<br/>admission"]
   Admission --> Ledger["Execution<br/>subject rows"]
   Admission --> Outbox["Workflow<br/>outbox"]
-  Outbox --> Temporal["WorkflowRuntime<br/>Temporal"]
+  Outbox --> Temporal["Workflow<br/>Temporal"]
   Temporal --> Lower["Lower<br/>gateway"]
   Lower --> Receipts["Terminal<br/>receipts"]
   Receipts --> Reducer["Receipt<br/>reducer"]
@@ -155,6 +155,31 @@ flowchart LR
   Runtime --> Reconcile["Source<br/>reconcile"]
   Reconcile --> ReviewGate["Review<br/>Gate"]
   ReviewGate --> Audit["Audit<br/>archival"]
+```
+
+## Developer Flow Diagrams
+
+```mermaid
+flowchart TD
+  Bridge["AppKit<br/>bridge"] --> Admit["Lifecycle<br/>admission"]
+  Admit --> Tx["DB<br/>transaction"]
+  Tx --> Execution["Execution<br/>row"]
+  Tx --> Outbox["Start<br/>outbox"]
+  Outbox --> Worker["Outbox<br/>worker"]
+  Worker --> Temporal["Temporal<br/>start"]
+  Temporal --> Query["Runtime<br/>query"]
+```
+
+```mermaid
+flowchart LR
+  Candidate["Queue<br/>candidate"] --> Eligibility["Eligibility<br/>check"]
+  Eligibility --> Lease["Workspace<br/>lease"]
+  Lease --> Create["Create<br/>hooks"]
+  Create --> Run["Codex<br/>runtime"]
+  Run --> Cleanup["Cleanup<br/>hooks"]
+  Run --> Retry["Retry<br/>posture"]
+  Cleanup --> Reconcile["Source<br/>reconcile"]
+  Retry --> Reconcile
 ```
 
 ## Status
