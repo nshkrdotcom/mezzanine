@@ -10,6 +10,7 @@ defmodule Mezzanine.IntegrationBridge.LinearGraphQLToolExecutor do
   alias Jido.Integration.V2.GovernedLowerDenial
   alias Mezzanine.IntegrationBridge.AuthorizedInvocation
   alias Mezzanine.IntegrationBridge.DirectRunDispatcher
+  alias Mezzanine.IntegrationBridge.ProviderAuthorityAdmission
 
   @tool_name "linear_graphql"
   @operation "linear.graphql.execute"
@@ -124,6 +125,7 @@ defmodule Mezzanine.IntegrationBridge.LinearGraphQLToolExecutor do
        provider_request_sent?: true,
        provider_response_received?: true
      })
+     |> authority_refs(dispatch)
      |> lower_refs(dispatch)
      |> maybe_put(:credential_redeemed?, credential_redeemed?(opts))}
   end
@@ -153,6 +155,7 @@ defmodule Mezzanine.IntegrationBridge.LinearGraphQLToolExecutor do
        provider_request_sent?: provider_request_sent?(reason),
        provider_response_received?: provider_response_received?(reason)
      })
+     |> authority_refs(reason)
      |> lower_refs(reason)
      |> maybe_put(:credential_redeemed?, credential_redeemed?(opts))}
   end
@@ -272,6 +275,10 @@ defmodule Mezzanine.IntegrationBridge.LinearGraphQLToolExecutor do
     result
     |> maybe_put(:lower_request_ref, lower_request_ref(source))
     |> maybe_put(:lower_receipt_ref, lower_receipt_ref(source))
+  end
+
+  defp authority_refs(result, source) do
+    Map.merge(result, ProviderAuthorityAdmission.result_fields(value(source, :authority_handoff)))
   end
 
   defp lower_request_ref(source) do

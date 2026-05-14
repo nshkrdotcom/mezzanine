@@ -5,6 +5,7 @@ defmodule Mezzanine.IntegrationBridge.DirectRunDispatcher do
 
   alias Jido.Integration.V2.GovernedLowerEnvelope
   alias Mezzanine.IntegrationBridge.AuthorizedInvocation
+  alias Mezzanine.IntegrationBridge.ProviderAuthorityAdmission
 
   @invoke_fun &Jido.Integration.V2.invoke/3
 
@@ -19,7 +20,9 @@ defmodule Mezzanine.IntegrationBridge.DirectRunDispatcher do
     with {:ok, envelope} <-
            AuthorizedInvocation.governed_lower_envelope(invocation, capability_id, opts),
          :ok <- require_dispatchable(envelope, invoke_opts),
-         :ok <- maybe_dry_run_denial(envelope, opts) do
+         :ok <- maybe_dry_run_denial(envelope, opts),
+         {:ok, authority_handoff} <-
+           ProviderAuthorityAdmission.authorize_direct_run(invocation, envelope, opts) do
       input =
         invocation
         |> AuthorizedInvocation.invoke_input(capability_id)
@@ -32,7 +35,7 @@ defmodule Mezzanine.IntegrationBridge.DirectRunDispatcher do
         |> Keyword.put(:governed_lower_envelope, envelope)
 
       invoke_fun.(capability_id, input, invoke_opts)
-      |> attach_governed_receipt(envelope)
+      |> attach_governed_receipt(envelope, authority_handoff)
     end
   end
 
@@ -126,25 +129,34 @@ defmodule Mezzanine.IntegrationBridge.DirectRunDispatcher do
 
   defp tre_adapter_enabled?(%GovernedLowerEnvelope{}, _invoke_opts), do: false
 
-  defp attach_governed_receipt({:ok, result}, envelope) when is_map(result) do
+  defp attach_governed_receipt({:ok, result}, envelope, authority_handoff) when is_map(result) do
     receipt = AuthorizedInvocation.governed_lower_receipt!(envelope, :succeeded, result)
 
     {:ok,
      result
+     |> attach_authority_handoff(authority_handoff)
      |> Map.put(:governed_lower_envelope, envelope)
      |> Map.put(:governed_lower_receipt, receipt)}
   end
 
-  defp attach_governed_receipt({:error, result}, envelope) when is_map(result) do
+  defp attach_governed_receipt({:error, result}, envelope, authority_handoff)
+       when is_map(result) do
     receipt = AuthorizedInvocation.governed_lower_receipt!(envelope, :failed, result)
 
     {:error,
      result
+     |> attach_authority_handoff(authority_handoff)
      |> Map.put(:governed_lower_envelope, envelope)
      |> Map.put(:governed_lower_receipt, receipt)}
   end
 
-  defp attach_governed_receipt(other, _envelope), do: other
+  defp attach_governed_receipt(other, _envelope, _authority_handoff), do: other
+
+  defp attach_authority_handoff(result, authority_handoff) do
+    result
+    |> Map.merge(ProviderAuthorityAdmission.result_fields(authority_handoff))
+    |> Map.put(:authority_handoff, authority_handoff)
+  end
 
   defp merge_dispatch_input(input, extra_input) when is_map(extra_input) do
     Map.merge(input, extra_input)

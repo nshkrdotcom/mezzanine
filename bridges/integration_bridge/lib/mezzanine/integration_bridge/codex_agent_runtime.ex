@@ -10,6 +10,7 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
   alias Jido.Integration.V2
   alias Jido.Integration.V2.Connectors.CodexCli
   alias Jido.Integration.V2.RuntimeRouter
+  alias Mezzanine.IntegrationBridge.ProviderAuthorityAdmission
   alias Mezzanine.WorkspaceEngine.{Hooks, LocalCommandRunner, WorkspaceRecord}
 
   @capability_id "codex.session.turn"
@@ -363,8 +364,21 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
        ) do
     input = codex_turn_input(attrs, opts, workspace_root, turn_index, previous_result)
 
-    with {:ok, result} <- invoke_fun.(@capability_id, input, invoke_opts) do
-      {:ok, %{turn_index: turn_index, input: input, result: result}, result}
+    with {:ok, authority_handoff} <-
+           ProviderAuthorityAdmission.authorize_codex_dispatch(
+             attrs,
+             @capability_id,
+             invoke_opts,
+             opts
+           ),
+         {:ok, result} <- invoke_fun.(@capability_id, input, invoke_opts) do
+      {:ok,
+       %{
+         turn_index: turn_index,
+         input: input,
+         result: result,
+         authority_handoff: authority_handoff
+       }, result}
     end
   end
 
@@ -396,20 +410,28 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
         {:ok, nil}
 
       true ->
-        stop_codex_session(session_start, invoke_fun, invoke_opts)
+        stop_codex_session(session_start, attrs, opts, invoke_fun, invoke_opts)
     end
   end
 
-  defp stop_codex_session(session_start, invoke_fun, invoke_opts) do
+  defp stop_codex_session(session_start, attrs, opts, invoke_fun, invoke_opts) do
     stop_input = %{session_id: session_start.runtime_control_session_id}
     stop_opts = codex_session_stop_invoke_opts(invoke_opts)
 
-    case invoke_fun.(@session_stop_capability_id, stop_input, stop_opts) do
-      {:ok, result} ->
-        {:ok, session_stop_evidence(session_start, result)}
+    with {:ok, authority_handoff} <-
+           ProviderAuthorityAdmission.authorize_codex_dispatch(
+             attrs,
+             @session_stop_capability_id,
+             stop_opts,
+             opts
+           ) do
+      case invoke_fun.(@session_stop_capability_id, stop_input, stop_opts) do
+        {:ok, result} ->
+          {:ok, session_stop_evidence(session_start, result, authority_handoff)}
 
-      {:error, _reason} ->
-        {:ok, session_stop_failure_evidence(session_start)}
+        {:error, _reason} ->
+          {:ok, session_stop_failure_evidence(session_start, authority_handoff)}
+      end
     end
   end
 
@@ -771,6 +793,9 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
       lower_request_ref: lower_request_ref,
       lower_receipt_ref: lower_receipt_ref
     }
+    |> Map.merge(
+      ProviderAuthorityAdmission.result_fields(map_value(turn_attempt, :authority_handoff))
+    )
     |> Map.merge(if(turn_index == 1, do: session_start_turn_fields(session_start), else: %{}))
     |> Map.merge(if(turn_index == 1, do: first_prompt_turn_fields(first_prompt), else: %{}))
     |> Map.merge(
@@ -1011,7 +1036,7 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
   defp session_start_lower_receipt_ref(nil), do: nil
   defp session_start_lower_receipt_ref(evidence), do: evidence.lower_receipt_ref
 
-  defp session_stop_evidence(session_start, result) do
+  defp session_stop_evidence(session_start, result, authority_handoff) do
     output = map_value(result, :output) || %{}
     status = session_stop_status(output)
 
@@ -1031,9 +1056,10 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
       lower_request_ref: lower_request_ref,
       lower_receipt_ref: session_stop_receipt_ref(run_id, session_id, status)
     }
+    |> Map.merge(ProviderAuthorityAdmission.result_fields(authority_handoff))
   end
 
-  defp session_stop_failure_evidence(session_start) do
+  defp session_stop_failure_evidence(session_start, authority_handoff) do
     session_id = session_start.runtime_control_session_id
     run_id = "session-stop-#{ref_suffix(session_id)}"
     lower_request_ref = lower_request_ref(run_id, @session_stop_capability_id)
@@ -1047,6 +1073,7 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
       lower_request_ref: lower_request_ref,
       lower_receipt_ref: session_stop_receipt_ref(run_id, session_id, "failed")
     }
+    |> Map.merge(ProviderAuthorityAdmission.result_fields(authority_handoff))
   end
 
   defp session_stop_status(output) do

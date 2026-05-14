@@ -133,6 +133,79 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert input.authority.policy_version == "mock-v1"
   end
 
+  test "invoke_run_intent authorizes provider handoff before lower invoke" do
+    invocation = authorized_invocation()
+
+    authority_admission_fun = fn attrs ->
+      send(self(), {:authority_admission, attrs})
+      Process.put(:authority_admitted?, true)
+
+      {:ok,
+       attrs
+       |> Map.take([
+         :authority_packet_ref,
+         :connector_binding_ref,
+         :credential_lease_ref,
+         :provider_family
+       ])
+       |> Map.put(:handoff_ref, "workflow-authority-handoff://#{attrs.idempotency_key}")
+       |> Map.put(:raw_material_present?, false)}
+    end
+
+    invoke_fun = fn capability, input, opts ->
+      assert Process.get(:authority_admitted?) == true
+      send(self(), {:invoke_after_authority, capability, input, opts})
+      {:ok, %{capability: capability, input: input}}
+    end
+
+    assert {:ok, result} =
+             IntegrationBridge.invoke_run_intent(
+               invocation,
+               invoke_fun: invoke_fun,
+               invoke_opts: [connection_id: "conn-1"],
+               authority_admission_fun: authority_admission_fun
+             )
+
+    assert_received {:authority_admission, attrs}
+    assert attrs.provider_family == "linear"
+    assert attrs.authority_packet_ref == "authority-decision://mock-decision-123"
+    assert attrs.connector_binding_ref == "connector-binding://linear/conn-1"
+    assert attrs.credential_lease_ref =~ "credential-lease://linear/conn-1/"
+    assert attrs.operation_scope_ref == "operation-scope://linear/linear.issues.retrieve"
+    refute Map.has_key?(attrs, :raw_token)
+    refute Map.has_key?(attrs, :provider_payload)
+
+    assert_received {:invoke_after_authority, "linear.issues.retrieve", _input, _opts}
+    assert result.authority_authorized? == true
+    assert result.authority_handoff_ref == "workflow-authority-handoff://idem-1"
+    assert result.authority_packet_ref == "authority-decision://mock-decision-123"
+    assert result.connector_binding_ref == "connector-binding://linear/conn-1"
+    assert result.credential_lease_ref =~ "credential-lease://linear/conn-1/"
+    assert result.authority_raw_material_present? == false
+  after
+    Process.delete(:authority_admitted?)
+  end
+
+  test "invoke_run_intent rejects provider dispatch when authority admission fails" do
+    invocation = authorized_invocation()
+
+    invoke_fun = fn _capability, _input, _opts ->
+      send(self(), :unexpected_provider_dispatch)
+      {:ok, %{}}
+    end
+
+    assert {:error, {:missing_required_authority_refs, [:connector_binding_ref]}} =
+             IntegrationBridge.invoke_run_intent(
+               invocation,
+               invoke_fun: invoke_fun,
+               authority_admission_fun: fn _attrs ->
+                 {:error, {:missing_required_authority_refs, [:connector_binding_ref]}}
+               end
+             )
+
+    refute_received :unexpected_provider_dispatch
+  end
+
   test "invoke_run_intent returns a governed lower denial for dry-run writes before provider dispatch" do
     invocation = authorized_invocation_allowing(["linear.comments.create"])
 
@@ -193,6 +266,9 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert result.provider_request_sent? == true
     assert result.provider_response_received? == true
     assert result.credential_redeemed? == true
+    assert result.authority_authorized? == true
+    assert result.authority_handoff_ref =~ "workflow-authority-handoff://"
+    assert result.connector_binding_ref =~ "connector-binding://linear/"
 
     assert result.dynamic_tool_response["success"] == true
 
@@ -440,6 +516,9 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert result.provider_response_received? == true
     assert is_binary(result.lower_request_ref)
     assert is_binary(result.lower_receipt_ref)
+    assert result.authority_authorized? == true
+    assert result.authority_handoff_ref =~ "workflow-authority-handoff://"
+    assert result.connector_binding_ref =~ "connector-binding://linear/"
     assert result.source_intake.operation == "linear.issues.list"
   end
 
@@ -535,6 +614,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
     }
 
     invoke_fun = fn capability_id, input, opts ->
+      assert Process.get(:codex_authority_admitted?) == true
       send(self(), {:codex_invoke, capability_id, input, opts})
 
       {:ok,
@@ -549,13 +629,36 @@ defmodule Mezzanine.IntegrationBridgeTest do
        }}
     end
 
+    authority_admission_fun = fn authority_attrs ->
+      send(self(), {:codex_authority_admission, authority_attrs})
+      Process.put(:codex_authority_admitted?, true)
+
+      {:ok,
+       authority_attrs
+       |> Map.take([
+         :authority_packet_ref,
+         :connector_binding_ref,
+         :credential_lease_ref,
+         :provider_family
+       ])
+       |> Map.put(:handoff_ref, "workflow-authority-handoff://#{authority_attrs.idempotency_key}")
+       |> Map.put(:raw_material_present?, false)}
+    end
+
     assert {:ok, projection} =
              CodexAgentRuntime.run(attrs,
                invoke_fun: invoke_fun,
                connection_id: "conn-codex",
+               authority_admission_fun: authority_admission_fun,
                start_runtime_router?: false,
                register_connector?: false
              )
+
+    assert_received {:codex_authority_admission, authority_attrs}
+    assert authority_attrs.provider_family == "codex"
+    assert authority_attrs.connector_binding_ref == "connector-binding://codex/conn-codex"
+    assert authority_attrs.credential_lease_ref =~ "credential-lease://codex/conn-codex/"
+    refute Map.has_key?(authority_attrs, :raw_token)
 
     assert_received {:codex_invoke, "codex.session.turn", input, opts}
     assert input.prompt =~ "governed Codex runtime path"
@@ -573,11 +676,18 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert turn.credential_redeemed? == true
     assert turn.provider_request_sent? == true
     assert turn.provider_response_received? == true
+    assert turn.authority_authorized? == true
+    assert turn.authority_handoff_ref == "workflow-authority-handoff://idem-codex"
+    assert turn.connector_binding_ref == "connector-binding://codex/conn-codex"
+    assert turn.credential_lease_ref =~ "credential-lease://codex/conn-codex/"
+    assert turn.authority_raw_material_present? == false
     assert turn.session_ref == "session://codex/codex-provider-session-1"
     assert turn.lower_request_ref == "lower-request://jido-run-codex/codex.session.turn"
 
     assert turn.lower_receipt_ref ==
              "lower-receipt://jido-attempt-codex/codex.session.turn/succeeded"
+  after
+    Process.delete(:codex_authority_admitted?)
   end
 
   test "Codex agent runtime uses caller supplied first prompt and redacts prompt readback" do
@@ -2638,6 +2748,11 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert receipt.provider_refs.pull_request =~ "/pull/17"
     assert receipt.receipt_refs.lower_request_refs |> length() == 5
     assert Enum.map(receipt.operation_receipts, & &1.capability_id) == receipt.capability_ids
+    assert receipt.metadata["authority_handoff"]["authorized?"] == true
+    assert receipt.metadata["authority_handoff"]["handoff_ref"] =~ "workflow-authority-handoff://"
+
+    assert receipt.metadata["authority_handoff"]["connector_binding_ref"] ==
+             "connector-binding://github/github-conn-1"
   end
 
   test "GitHub PR evidence runtime refuses hidden write fixture setup" do

@@ -374,7 +374,13 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
       :provider_request_sent?,
       :provider_response_received?,
       :lower_request_ref,
-      :lower_receipt_ref
+      :lower_receipt_ref,
+      :authority_authorized?,
+      :authority_handoff_ref,
+      :authority_packet_ref,
+      :connector_binding_ref,
+      :credential_lease_ref,
+      :authority_raw_material_present?
     ])
     |> Map.merge(result)
   end

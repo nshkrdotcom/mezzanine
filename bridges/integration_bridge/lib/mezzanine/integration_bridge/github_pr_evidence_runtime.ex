@@ -13,6 +13,7 @@ defmodule Mezzanine.IntegrationBridge.GitHubPrEvidenceRuntime do
   alias Mezzanine.EvidenceLedger.GitHubPrEvidence
   alias Mezzanine.IntegrationBridge
   alias Mezzanine.IntegrationBridge.AuthorizedInvocation
+  alias Mezzanine.IntegrationBridge.ProviderAuthorityAdmission
 
   @connector_id "github"
   @capability_ids [
@@ -230,6 +231,7 @@ defmodule Mezzanine.IntegrationBridge.GitHubPrEvidenceRuntime do
     receipt_refs = receipt_refs(metadata, operations)
     lower_request_ref = first_present(receipt_refs.lower_request_refs)
     lower_receipt_ref = first_present(receipt_refs.lower_receipt_refs)
+    authority_handoff = authority_handoff_metadata(dispatches)
 
     {:ok,
      %{
@@ -255,14 +257,30 @@ defmodule Mezzanine.IntegrationBridge.GitHubPrEvidenceRuntime do
        counts: counts(metadata),
        receipt_refs: receipt_refs,
        operation_receipts: operations,
-       metadata: %{
-         "evidence_kind" => map_value(evidence, :evidence_kind),
-         "collector_ref" => map_value(evidence, :collector_ref),
-         "cleanup_policy" => map_value(metadata, :cleanup_policy),
-         "lower_request_ref" => lower_request_ref,
-         "lower_receipt_ref" => lower_receipt_ref
-       }
+       metadata:
+         %{
+           "evidence_kind" => map_value(evidence, :evidence_kind),
+           "collector_ref" => map_value(evidence, :collector_ref),
+           "cleanup_policy" => map_value(metadata, :cleanup_policy),
+           "lower_request_ref" => lower_request_ref,
+           "lower_receipt_ref" => lower_receipt_ref,
+           "authority_handoff" => authority_handoff
+         }
+         |> compact()
      }}
+  end
+
+  defp authority_handoff_metadata(dispatches) do
+    dispatches
+    |> Enum.find_value(fn dispatch ->
+      dispatch
+      |> map_value(:authority_handoff)
+      |> ProviderAuthorityAdmission.metadata()
+      |> case do
+        metadata when map_size(metadata) > 0 -> metadata
+        _empty -> nil
+      end
+    end)
   end
 
   defp provider_ids(dispatches, head_sha) do
