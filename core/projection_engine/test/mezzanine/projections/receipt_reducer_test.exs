@@ -332,6 +332,15 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
     refute Map.has_key?(projection_fields, :codex_session)
     refute Map.has_key?(summary_fields, :github_pr_evidence)
     refute Map.has_key?(operation_fields, :linear_comment_id)
+
+    for fields <- [projection_fields, summary_fields, operation_fields] do
+      refute Map.has_key?(fields, :provider_id)
+      refute Map.has_key?(fields, :provider_ids)
+      refute Map.has_key?(fields, :provider_ref)
+      refute Map.has_key?(fields, :provider_refs)
+      assert Map.has_key?(fields, :provider_object_refs)
+    end
+
     refute String.contains?(inspect(reduced.lineage_events), "provider_object_refs")
   end
 
