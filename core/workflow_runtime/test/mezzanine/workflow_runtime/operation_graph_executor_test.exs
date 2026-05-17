@@ -163,6 +163,160 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphExecutorTest do
              )
   end
 
+  test "recorded activity success facts advance dependent joins deterministically" do
+    graph =
+      graph!(
+        nodes: [
+          node!("node://source", "role://source", :source_read, 1),
+          node!("node://publication", "role://publication", :source_write, 2)
+        ],
+        dependencies: [
+          dependency!("node://source", "node://publication", :blocks_on_success)
+        ]
+      )
+
+    intent =
+      activity_intent!(
+        node_ref: "node://source",
+        operation_plan_ref: "operation-plan://tenant/run-a/source"
+      )
+
+    assert {:ok, {fact, updated_facts}} =
+             OperationGraphExecutor.record_activity_result(
+               graph,
+               %{active_node_refs: ["node://source"]},
+               intent,
+               %{
+                 event_ref: "event://source/succeeded",
+                 status: :succeeded,
+                 result_ref: "result://source/1"
+               }
+             )
+
+    assert fact.event_ref == "event://source/succeeded"
+    assert fact.node_ref == "node://source"
+    assert fact.status == :succeeded
+    assert fact.terminal?
+    assert fact.result_ref == "result://source/1"
+
+    assert updated_facts.succeeded_node_refs == ["node://source"]
+    assert updated_facts.active_node_refs == []
+
+    assert updated_facts.terminal_event_refs_by_node_ref == %{
+             "node://source" => "event://source/succeeded"
+           }
+
+    assert OperationGraphExecutor.ready_node_refs(graph, updated_facts) == [
+             "node://publication"
+           ]
+  end
+
+  test "retryable activity failure records retry facts without advancing joins" do
+    graph =
+      graph!(
+        nodes: [
+          node!("node://source", "role://source", :source_read, 1),
+          node!("node://publication", "role://publication", :source_write, 2)
+        ],
+        dependencies: [
+          dependency!("node://source", "node://publication", :blocks_on_success)
+        ]
+      )
+
+    intent =
+      activity_intent!(
+        node_ref: "node://source",
+        operation_plan_ref: "operation-plan://tenant/run-a/source"
+      )
+
+    assert {:ok, {fact, updated_facts}} =
+             OperationGraphExecutor.record_activity_result(
+               graph,
+               %{active_node_refs: ["node://source"]},
+               intent,
+               %{
+                 event_ref: "event://source/retryable-failure",
+                 status: :failed,
+                 retryable?: true,
+                 error_class: :rate_limited
+               }
+             )
+
+    refute fact.terminal?
+    assert fact.retryable?
+    assert fact.error_class == :rate_limited
+    assert updated_facts.retry_node_refs == ["node://source"]
+    assert updated_facts.active_node_refs == []
+    refute Map.has_key?(updated_facts, :terminal_event_refs_by_node_ref)
+    assert OperationGraphExecutor.ready_node_refs(graph, updated_facts) == []
+  end
+
+  test "terminal optional failure facts allow optional dependent joins" do
+    graph =
+      graph!(
+        nodes: [
+          node!("node://evidence", "role://evidence", :evidence_collection, 1),
+          node!("node://publication", "role://publication", :source_write, 2)
+        ],
+        dependencies: [
+          %{
+            dependency_ref: "dependency://evidence/publication/optional",
+            from_node_ref: "node://evidence",
+            to_node_ref: "node://publication",
+            relation: :blocks_on_success,
+            completion_policy: :optional
+          }
+        ]
+      )
+
+    intent =
+      activity_intent!(
+        node_ref: "node://evidence",
+        operation_plan_ref: "operation-plan://tenant/run-a/evidence"
+      )
+
+    assert {:ok, {fact, updated_facts}} =
+             OperationGraphExecutor.record_activity_result(graph, %{}, intent, %{
+               event_ref: "event://evidence/terminal-failure",
+               status: :failed,
+               retryable?: false,
+               error_class: :not_found
+             })
+
+    assert fact.terminal?
+    assert fact.status == :failed
+    assert updated_facts.failed_node_refs == ["node://evidence"]
+
+    assert updated_facts.terminal_event_refs_by_node_ref == %{
+             "node://evidence" => "event://evidence/terminal-failure"
+           }
+
+    assert OperationGraphExecutor.ready_node_refs(graph, updated_facts) == [
+             "node://publication"
+           ]
+  end
+
+  test "recorded activity results fail closed without event refs" do
+    graph =
+      graph!(
+        nodes: [
+          node!("node://source", "role://source", :source_read, 1)
+        ],
+        dependencies: []
+      )
+
+    intent =
+      activity_intent!(
+        node_ref: "node://source",
+        operation_plan_ref: "operation-plan://tenant/run-a/source"
+      )
+
+    assert {:error, {:missing_required_activity_result_field, :event_ref}} =
+             OperationGraphExecutor.record_activity_result(graph, %{}, intent, %{
+               status: :succeeded
+             })
+  end
+
   defp graph!(opts) do
     %{
       graph_ref: "operation-graph://tenant/run-a",
@@ -187,6 +341,20 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphExecutorTest do
       to_node_ref: to,
       relation: relation,
       completion_policy: :required
+    }
+  end
+
+  defp activity_intent!(opts) do
+    %OperationGraphExecutor.ActivityIntent{
+      activity_intent_ref: "activity-intent://tenant/run-a/#{Keyword.fetch!(opts, :node_ref)}",
+      node_ref: Keyword.fetch!(opts, :node_ref),
+      operation_context_ref: "operation-context://tenant/request-a",
+      operation_plan_ref: Keyword.fetch!(opts, :operation_plan_ref),
+      predecessor_event_refs: [],
+      retry_policy: %{},
+      timeout_policy: %{},
+      cancellation_policy: %{},
+      metadata: %{}
     }
   end
 end

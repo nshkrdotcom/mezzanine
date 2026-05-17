@@ -36,7 +36,46 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphExecutor do
           }
   end
 
+  defmodule ActivityResultFact do
+    @moduledoc "Recorded workflow fact derived from one activity result."
+
+    @enforce_keys [
+      :event_ref,
+      :node_ref,
+      :activity_intent_ref,
+      :operation_context_ref,
+      :operation_plan_ref,
+      :status,
+      :terminal?
+    ]
+
+    defstruct @enforce_keys ++
+                [
+                  result_ref: nil,
+                  retryable?: false,
+                  error_class: nil,
+                  metadata: %{}
+                ]
+
+    @type status :: :succeeded | :failed | :degraded | :canceled
+
+    @type t :: %__MODULE__{
+            event_ref: String.t(),
+            node_ref: String.t(),
+            activity_intent_ref: String.t(),
+            operation_context_ref: String.t(),
+            operation_plan_ref: String.t(),
+            status: status(),
+            terminal?: boolean(),
+            result_ref: String.t() | nil,
+            retryable?: boolean(),
+            error_class: atom() | String.t() | nil,
+            metadata: map()
+          }
+  end
+
   @type activity_intent :: ActivityIntent.t()
+  @type activity_result_fact :: ActivityResultFact.t()
 
   @spec ready_node_refs(map(), map()) :: [String.t()]
   def ready_node_refs(graph, facts) when is_map(graph) and is_map(facts) do
@@ -60,6 +99,20 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphExecutor do
       node_lookup = Map.new(graph.nodes, &{&1.node_ref, &1})
 
       build_ready_activity_intents(graph, facts, attrs, context_ref, plans_by_node, node_lookup)
+    end
+  end
+
+  @spec record_activity_result(map(), map(), activity_intent(), map() | keyword()) ::
+          {:ok, {activity_result_fact(), map()}} | {:error, term()}
+  def record_activity_result(graph, facts, %ActivityIntent{} = intent, result_attrs)
+      when is_map(graph) and is_map(facts) and (is_map(result_attrs) or is_list(result_attrs)) do
+    with :ok <- known_node_ref(graph, intent.node_ref),
+         {:ok, event_ref} <- required_result_string(result_attrs, :event_ref),
+         {:ok, status} <- required_status(result_attrs) do
+      fact =
+        activity_result_fact(intent, event_ref, status, result_attrs)
+
+      {:ok, {fact, apply_activity_result_fact(facts, fact)}}
     end
   end
 
@@ -124,6 +177,85 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphExecutor do
          }
        }}
     end
+  end
+
+  defp known_node_ref(graph, node_ref) do
+    if Enum.any?(graph.nodes, &(&1.node_ref == node_ref)) do
+      :ok
+    else
+      {:error, {:unknown_operation_graph_node, %{node_ref: node_ref}}}
+    end
+  end
+
+  defp required_status(attrs) do
+    case get_attr(attrs, :status) do
+      status when status in [:succeeded, :failed, :degraded, :canceled] -> {:ok, status}
+      _missing_or_unknown -> {:error, {:missing_required_activity_result_field, :status}}
+    end
+  end
+
+  defp required_result_string(attrs, key) do
+    case get_attr(attrs, key) do
+      value when is_binary(value) and value != "" -> {:ok, value}
+      _missing -> {:error, {:missing_required_activity_result_field, key}}
+    end
+  end
+
+  defp activity_result_fact(intent, event_ref, status, attrs) do
+    %ActivityResultFact{
+      event_ref: event_ref,
+      node_ref: intent.node_ref,
+      activity_intent_ref: intent.activity_intent_ref,
+      operation_context_ref: intent.operation_context_ref,
+      operation_plan_ref: intent.operation_plan_ref,
+      status: status,
+      terminal?: terminal_status?(status, attrs),
+      result_ref: get_attr(attrs, :result_ref),
+      retryable?: get_attr(attrs, :retryable?, false),
+      error_class: get_attr(attrs, :error_class),
+      metadata: get_attr(attrs, :metadata, %{})
+    }
+  end
+
+  defp terminal_status?(:failed, attrs), do: get_attr(attrs, :retryable?, false) == false
+  defp terminal_status?(_status, _attrs), do: true
+
+  defp apply_activity_result_fact(facts, %ActivityResultFact{terminal?: false} = fact) do
+    facts
+    |> delete_fact_ref(:active_node_refs, fact.node_ref)
+    |> put_fact_ref(:retry_node_refs, fact.node_ref)
+  end
+
+  defp apply_activity_result_fact(facts, %ActivityResultFact{} = fact) do
+    facts
+    |> delete_fact_ref(:active_node_refs, fact.node_ref)
+    |> delete_fact_ref(:retry_node_refs, fact.node_ref)
+    |> put_fact_ref(fact_status_key(fact.status), fact.node_ref)
+    |> put_terminal_event_ref(fact.node_ref, fact.event_ref)
+  end
+
+  defp fact_status_key(:succeeded), do: :succeeded_node_refs
+  defp fact_status_key(:failed), do: :failed_node_refs
+  defp fact_status_key(:degraded), do: :degraded_node_refs
+  defp fact_status_key(:canceled), do: :canceled_node_refs
+
+  defp put_fact_ref(facts, key, node_ref) do
+    Map.update(facts, key, [node_ref], fn refs ->
+      refs
+      |> List.wrap()
+      |> then(&[node_ref | &1])
+      |> Enum.uniq()
+    end)
+  end
+
+  defp delete_fact_ref(facts, key, node_ref) do
+    Map.update(facts, key, [], fn refs -> refs |> List.wrap() |> List.delete(node_ref) end)
+  end
+
+  defp put_terminal_event_ref(facts, node_ref, event_ref) do
+    Map.update(facts, :terminal_event_refs_by_node_ref, %{node_ref => event_ref}, fn refs ->
+      Map.put(refs, node_ref, event_ref)
+    end)
   end
 
   defp stable_node_key(graph, node) do
