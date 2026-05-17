@@ -100,6 +100,85 @@ defmodule Mezzanine.Lifecycle.SubjectSnapshot do
   end
 end
 
+defmodule Mezzanine.Pack.CompiledOperationRole do
+  @moduledoc """
+  Runtime operation role resolved from product role refs to binding and operation refs.
+  """
+
+  @type t :: %__MODULE__{
+          role_ref: String.t(),
+          binding_ref: String.t(),
+          binding_kind: atom(),
+          operation_role: String.t(),
+          operation_ref: String.t(),
+          operation_class: atom(),
+          projection_order_key: pos_integer(),
+          completion_policy: atom(),
+          failure_policy: atom(),
+          metadata: map()
+        }
+
+  @enforce_keys [
+    :role_ref,
+    :binding_ref,
+    :binding_kind,
+    :operation_role,
+    :operation_ref,
+    :operation_class,
+    :projection_order_key
+  ]
+  defstruct @enforce_keys ++
+              [completion_policy: :required, failure_policy: :fail_closed, metadata: %{}]
+end
+
+defmodule Mezzanine.Pack.CompiledOperationDependency do
+  @moduledoc """
+  Runtime operation dependency resolved to compiled product role refs.
+  """
+
+  @type t :: %__MODULE__{
+          from_role: String.t(),
+          to_role: String.t(),
+          relation: atom(),
+          completion_policy: atom(),
+          failure_policy: atom(),
+          review_policy_ref: String.t() | nil,
+          confirmation_policy_ref: String.t() | nil,
+          metadata: map()
+        }
+
+  @enforce_keys [:from_role, :to_role, :relation]
+  defstruct @enforce_keys ++
+              [
+                completion_policy: :required,
+                failure_policy: :fail_closed,
+                review_policy_ref: nil,
+                confirmation_policy_ref: nil,
+                metadata: %{}
+              ]
+end
+
+defmodule Mezzanine.Pack.CompiledOperationGraph do
+  @moduledoc """
+  Runtime operation graph resolved from pack workflow data.
+  """
+
+  alias Mezzanine.Pack.{CompiledOperationDependency, CompiledOperationRole}
+
+  @type t :: %__MODULE__{
+          graph_ref: String.t(),
+          workflow_ref: String.t(),
+          roles: [CompiledOperationRole.t()],
+          roles_by_ref: %{String.t() => CompiledOperationRole.t()},
+          dependencies: [CompiledOperationDependency.t()],
+          joins: [map()],
+          metadata: map()
+        }
+
+  @enforce_keys [:graph_ref, :workflow_ref, :roles, :dependencies]
+  defstruct @enforce_keys ++ [roles_by_ref: %{}, joins: [], metadata: %{}]
+end
+
 defmodule Mezzanine.Pack.CompiledPack do
   @moduledoc """
   Normalized pack plus O(1) runtime lookup indices.
@@ -107,6 +186,7 @@ defmodule Mezzanine.Pack.CompiledPack do
 
   alias Mezzanine.Pack.{
     BindingSpec,
+    CompiledOperationGraph,
     ContextSourceSpec,
     DecisionSpec,
     EvidenceBinding,
@@ -114,6 +194,7 @@ defmodule Mezzanine.Pack.CompiledPack do
     ExecutionRecipeSpec,
     LifecycleSpec,
     Manifest,
+    OperationGraph,
     OperatorActionSpec,
     ProjectionSpec,
     ResourceEffectBinding,
@@ -124,7 +205,8 @@ defmodule Mezzanine.Pack.CompiledPack do
     SourcePublicationBinding,
     SourcePublishSpec,
     SubjectKindSpec,
-    ToolBinding
+    ToolBinding,
+    WorkflowSpec
   }
 
   @type trigger_key ::
@@ -164,6 +246,9 @@ defmodule Mezzanine.Pack.CompiledPack do
           terminal_states_by_kind: %{String.t() => MapSet.t(String.t())},
           recipes_by_ref: %{String.t() => ExecutionRecipeSpec.t()},
           recipes_by_subject_kind: %{String.t() => [ExecutionRecipeSpec.t()]},
+          operation_graphs_by_ref: %{String.t() => OperationGraph.t()},
+          compiled_operation_graphs_by_ref: %{String.t() => CompiledOperationGraph.t()},
+          workflows_by_ref: %{String.t() => WorkflowSpec.t()},
           decision_specs_by_kind: %{String.t() => DecisionSpec.t()},
           evidence_specs_by_kind: %{String.t() => EvidenceSpec.t()},
           operator_actions_by_kind: %{String.t() => OperatorActionSpec.t()},
@@ -188,6 +273,9 @@ defmodule Mezzanine.Pack.CompiledPack do
     terminal_states_by_kind: %{},
     recipes_by_ref: %{},
     recipes_by_subject_kind: %{},
+    operation_graphs_by_ref: %{},
+    compiled_operation_graphs_by_ref: %{},
+    workflows_by_ref: %{},
     decision_specs_by_kind: %{},
     evidence_specs_by_kind: %{},
     operator_actions_by_kind: %{},

@@ -9,13 +9,17 @@ defmodule Mezzanine.Pack.CompilerTest do
     EvidenceBinding,
     LifecycleSpec,
     Manifest,
+    OperationDependency,
+    OperationGraph,
+    OperationRole,
     ResourceEffectBinding,
     RuntimeBinding,
     SourceBinding,
     SourceBindingSpec,
     SourcePublicationBinding,
     SubjectKindSpec,
-    ToolBinding
+    ToolBinding,
+    WorkflowSpec
   }
 
   alias Mezzanine.Pack.Compiler
@@ -363,6 +367,59 @@ defmodule Mezzanine.Pack.CompilerTest do
              "document_review_publication"
   end
 
+  test "compiles workflow operation graphs from product role refs to binding operations" do
+    assert {:ok, compiled} = Compiler.compile(generic_binding_manifest_with_workflow_graph())
+
+    assert compiled.workflows_by_ref |> Map.keys() == ["document_review_workflow"]
+    assert compiled.operation_graphs_by_ref |> Map.keys() == ["document_review_graph"]
+
+    graph = compiled.compiled_operation_graphs_by_ref["document_review_graph"]
+
+    assert graph.workflow_ref == "document_review_workflow"
+
+    assert graph.roles |> Enum.map(& &1.role_ref) == [
+             "document_intake",
+             "deterministic_review",
+             "review_evidence",
+             "review_publication",
+             "review_state_effect"
+           ]
+
+    assert graph.roles_by_ref["document_intake"].binding_ref == "document_source"
+    assert graph.roles_by_ref["document_intake"].binding_kind == :source
+    assert graph.roles_by_ref["document_intake"].operation_role == "read"
+    assert graph.roles_by_ref["document_intake"].operation_ref == "document_read"
+    assert graph.roles_by_ref["deterministic_review"].binding_kind == :runtime
+    assert graph.roles_by_ref["deterministic_review"].operation_ref == "review_run"
+    assert graph.roles_by_ref["review_state_effect"].binding_kind == :resource_effect
+    assert graph.roles_by_ref["review_state_effect"].operation_ref == "review_state_update"
+
+    assert graph.dependencies |> Enum.map(&{&1.from_role, &1.to_role, &1.relation}) == [
+             {"document_intake", "deterministic_review", :blocks_on_success},
+             {"deterministic_review", "review_evidence", :parallel_allowed},
+             {"deterministic_review", "review_publication", :blocks_on_success},
+             {"review_evidence", "review_publication", :blocks_on_review},
+             {"review_publication", "review_state_effect", :blocks_on_confirmation}
+           ]
+  end
+
+  test "rejects workflow graphs that bypass binding operation roles" do
+    manifest = generic_binding_manifest_with_workflow_graph()
+
+    [graph] = manifest.operation_graph_specs
+    [role | rest] = graph.roles
+
+    broken_graph = %{graph | roles: [%{role | operation_role: :missing_read} | rest]}
+    manifest = %{manifest | operation_graph_specs: [broken_graph]}
+
+    assert {:error, issues} = Compiler.compile(manifest)
+
+    assert Enum.any?(issues, fn issue ->
+             String.contains?(issue.message, "binding operation role") and
+               String.contains?(issue.message, "missing_read")
+           end)
+  end
+
   test "validates generic binding operations through a credential-free manifest resolver" do
     resolver = fn request ->
       send(self(), {:manifest_lookup_request, request})
@@ -685,6 +742,100 @@ defmodule Mezzanine.Pack.CompilerTest do
           confirmation_policy_ref: :operator_confirm_review_write
         }
       ]
+    }
+  end
+
+  defp generic_binding_manifest_with_workflow_graph do
+    %Manifest{
+      generic_binding_manifest()
+      | operation_graph_specs: [
+          %OperationGraph{
+            graph_ref: :document_review_graph,
+            workflow_ref: :document_review_workflow,
+            roles: [
+              %OperationRole{
+                role_ref: :document_intake,
+                binding_ref: :document_source,
+                operation_role: :read,
+                operation_class: :source_read,
+                projection_order_key: 1
+              },
+              %OperationRole{
+                role_ref: :deterministic_review,
+                binding_ref: :deterministic_review_runtime,
+                operation_role: :run,
+                operation_class: :runtime_operation,
+                projection_order_key: 2
+              },
+              %OperationRole{
+                role_ref: :review_evidence,
+                binding_ref: :review_evidence,
+                operation_role: :collect,
+                operation_class: :evidence_collection,
+                projection_order_key: 3,
+                completion_policy: :optional,
+                failure_policy: :degrade
+              },
+              %OperationRole{
+                role_ref: :review_publication,
+                binding_ref: :document_publication,
+                operation_role: :publish,
+                operation_class: :source_write,
+                projection_order_key: 4
+              },
+              %OperationRole{
+                role_ref: :review_state_effect,
+                binding_ref: :review_state_update,
+                operation_role: :update,
+                operation_class: :resource_effect,
+                projection_order_key: 5
+              }
+            ],
+            dependencies: [
+              %OperationDependency{
+                from_role: :document_intake,
+                to_role: :deterministic_review,
+                relation: :blocks_on_success
+              },
+              %OperationDependency{
+                from_role: :deterministic_review,
+                to_role: :review_evidence,
+                relation: :parallel_allowed,
+                completion_policy: :optional,
+                failure_policy: :degrade
+              },
+              %OperationDependency{
+                from_role: :deterministic_review,
+                to_role: :review_publication,
+                relation: :blocks_on_success
+              },
+              %OperationDependency{
+                from_role: :review_evidence,
+                to_role: :review_publication,
+                relation: :blocks_on_review,
+                completion_policy: :optional,
+                review_policy_ref: :document_review_gate
+              },
+              %OperationDependency{
+                from_role: :review_publication,
+                to_role: :review_state_effect,
+                relation: :blocks_on_confirmation,
+                confirmation_policy_ref: :operator_confirm_review_write
+              }
+            ]
+          }
+        ],
+        workflow_specs: [
+          %WorkflowSpec{
+            workflow_ref: :document_review_workflow,
+            source_role_ref: :document_intake,
+            runtime_role_ref: :deterministic_review,
+            publication_role_ref: :review_publication,
+            evidence_role_refs: [:review_evidence],
+            resource_effect_role_refs: [:review_state_effect],
+            operation_graph_ref: :document_review_graph
+          }
+        ]
     }
   end
 

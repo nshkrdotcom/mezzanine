@@ -320,6 +320,9 @@ defmodule Mezzanine.Pack.Validator do
     ExecutionRecipeSpec,
     LifecycleSpec,
     Manifest,
+    OperationDependency,
+    OperationGraph,
+    OperationRole,
     OperatorActionSpec,
     ProjectionSpec,
     ResourceEffectBinding,
@@ -331,7 +334,8 @@ defmodule Mezzanine.Pack.Validator do
     SourcePublishSpec,
     SubjectKindSpec,
     ToolBinding,
-    ValidationError
+    ValidationError,
+    WorkflowSpec
   }
 
   alias Mezzanine.Pack.Compiler.Helpers, as: H
@@ -349,6 +353,8 @@ defmodule Mezzanine.Pack.Validator do
       validate_context_source_specs(manifest.context_source_specs) ++
       validate_lifecycle_specs(manifest.lifecycle_specs) ++
       validate_recipe_specs(manifest.execution_recipe_specs) ++
+      validate_operation_graph_specs(manifest.operation_graph_specs) ++
+      validate_workflow_specs(manifest.workflow_specs) ++
       validate_decision_specs(manifest.decision_specs) ++
       validate_evidence_specs(manifest.evidence_specs) ++
       validate_operator_action_specs(manifest.operator_action_specs) ++
@@ -1017,6 +1023,199 @@ defmodule Mezzanine.Pack.Validator do
        end))
   end
 
+  defp validate_operation_graph_specs(specs) do
+    duplicate_identifier_issues(specs, :graph_ref, [:operation_graph_specs], "operation graph") ++
+      (specs
+       |> Enum.with_index()
+       |> Enum.flat_map(fn
+         {%OperationGraph{} = spec, index} ->
+           validate_operation_graph_spec(spec, [:operation_graph_specs, index])
+
+         {spec, index} ->
+           [
+             ValidationError.error(
+               [:operation_graph_specs, index],
+               "operation_graph_specs must contain explicit Mezzanine.Pack.OperationGraph structs, got: #{inspect(spec)}"
+             )
+           ]
+       end))
+  end
+
+  defp validate_operation_graph_spec(%OperationGraph{} = spec, path) do
+    role_refs = identifier_set(Enum.map(spec.roles, &field_value(&1, :role_ref)))
+
+    []
+    |> append(identifier_issue(spec.graph_ref, path ++ [:graph_ref], "operation graph ref"))
+    |> append(identifier_issue(spec.workflow_ref, path ++ [:workflow_ref], "workflow ref"))
+    |> append(non_empty_list_issue(spec.roles, path ++ [:roles], "operation graph roles"))
+    |> append(
+      duplicate_identifier_issues(
+        spec.roles,
+        :role_ref,
+        path ++ [:roles],
+        "operation graph role"
+      )
+    )
+    |> append(
+      spec.roles
+      |> Enum.with_index()
+      |> Enum.flat_map(fn
+        {%OperationRole{} = role, role_index} ->
+          validate_operation_role(role, path ++ [:roles, role_index])
+
+        {role, role_index} ->
+          [
+            ValidationError.error(
+              path ++ [:roles, role_index],
+              "operation graph roles must contain explicit Mezzanine.Pack.OperationRole structs, got: #{inspect(role)}"
+            )
+          ]
+      end)
+    )
+    |> append(list_issue(spec.dependencies, path ++ [:dependencies], "operation dependencies"))
+    |> append(
+      spec.dependencies
+      |> Enum.with_index()
+      |> Enum.flat_map(fn
+        {%OperationDependency{} = dependency, dependency_index} ->
+          validate_operation_dependency(
+            dependency,
+            role_refs,
+            path ++ [:dependencies, dependency_index]
+          )
+
+        {dependency, dependency_index} ->
+          [
+            ValidationError.error(
+              path ++ [:dependencies, dependency_index],
+              "operation dependencies must contain explicit Mezzanine.Pack.OperationDependency structs, got: #{inspect(dependency)}"
+            )
+          ]
+      end)
+    )
+    |> append(list_issue(spec.joins, path ++ [:joins], "operation graph joins"))
+    |> append(map_issue(spec.metadata, path ++ [:metadata]))
+  end
+
+  defp validate_operation_role(%OperationRole{} = role, path) do
+    []
+    |> append(identifier_issue(role.role_ref, path ++ [:role_ref], "operation role ref"))
+    |> append(identifier_issue(role.binding_ref, path ++ [:binding_ref], "binding ref"))
+    |> append(identifier_issue(role.operation_role, path ++ [:operation_role], "operation role"))
+    |> append(operation_class_issue(role.operation_class, path ++ [:operation_class]))
+    |> append(
+      positive_integer_issue(
+        role.projection_order_key,
+        path ++ [:projection_order_key],
+        "projection_order_key"
+      )
+    )
+    |> append(completion_policy_issue(role.completion_policy, path ++ [:completion_policy]))
+    |> append(failure_policy_issue(role.failure_policy, path ++ [:failure_policy]))
+    |> append(map_issue(role.metadata, path ++ [:metadata]))
+  end
+
+  defp validate_operation_dependency(%OperationDependency{} = dependency, role_refs, path) do
+    []
+    |> append(
+      reference_issue(
+        dependency.from_role,
+        role_refs,
+        path ++ [:from_role],
+        "dependency from role"
+      )
+    )
+    |> append(
+      reference_issue(dependency.to_role, role_refs, path ++ [:to_role], "dependency to role")
+    )
+    |> append(operation_relation_issue(dependency.relation, path ++ [:relation]))
+    |> append(completion_policy_issue(dependency.completion_policy, path ++ [:completion_policy]))
+    |> append(failure_policy_issue(dependency.failure_policy, path ++ [:failure_policy]))
+    |> append(
+      optional_identifier_issue(
+        dependency.review_policy_ref,
+        path ++ [:review_policy_ref],
+        "review_policy_ref"
+      )
+    )
+    |> append(
+      optional_identifier_issue(
+        dependency.confirmation_policy_ref,
+        path ++ [:confirmation_policy_ref],
+        "confirmation_policy_ref"
+      )
+    )
+    |> append(map_issue(dependency.metadata, path ++ [:metadata]))
+  end
+
+  defp validate_workflow_specs(specs) do
+    duplicate_identifier_issues(specs, :workflow_ref, [:workflow_specs], "workflow") ++
+      (specs
+       |> Enum.with_index()
+       |> Enum.flat_map(fn
+         {%WorkflowSpec{} = spec, index} ->
+           []
+           |> append(
+             identifier_issue(
+               spec.workflow_ref,
+               [:workflow_specs, index, :workflow_ref],
+               "workflow ref"
+             )
+           )
+           |> append(
+             identifier_issue(
+               spec.operation_graph_ref,
+               [:workflow_specs, index, :operation_graph_ref],
+               "operation graph ref"
+             )
+           )
+           |> append(
+             optional_identifier_issue(
+               spec.source_role_ref,
+               [:workflow_specs, index, :source_role_ref],
+               "source_role_ref"
+             )
+           )
+           |> append(
+             optional_identifier_issue(
+               spec.runtime_role_ref,
+               [:workflow_specs, index, :runtime_role_ref],
+               "runtime_role_ref"
+             )
+           )
+           |> append(
+             optional_identifier_issue(
+               spec.publication_role_ref,
+               [:workflow_specs, index, :publication_role_ref],
+               "publication_role_ref"
+             )
+           )
+           |> append(
+             identifier_list_issues(
+               spec.evidence_role_refs,
+               [:workflow_specs, index, :evidence_role_refs],
+               "evidence role ref"
+             )
+           )
+           |> append(
+             identifier_list_issues(
+               spec.resource_effect_role_refs,
+               [:workflow_specs, index, :resource_effect_role_refs],
+               "resource effect role ref"
+             )
+           )
+           |> append(map_issue(spec.metadata, [:workflow_specs, index, :metadata]))
+
+         {spec, index} ->
+           [
+             ValidationError.error(
+               [:workflow_specs, index],
+               "workflow_specs must contain explicit Mezzanine.Pack.WorkflowSpec structs, got: #{inspect(spec)}"
+             )
+           ]
+       end))
+  end
+
   defp validate_decision_specs(specs) do
     duplicate_identifier_issues(specs, :decision_kind, [:decision_specs], "decision kind") ++
       (Enum.with_index(specs)
@@ -1163,6 +1362,31 @@ defmodule Mezzanine.Pack.Validator do
         _binding -> []
       end)
       |> identifier_set()
+
+    generic_binding_refs =
+      identifier_set(Enum.map(manifest.binding_specs, &field_value(&1, :binding_ref)))
+
+    generic_binding_operation_roles =
+      Map.new(manifest.binding_specs, fn binding ->
+        operation_refs = field_value(binding, :operation_refs)
+
+        operation_roles =
+          if is_map(operation_refs), do: Map.keys(operation_refs), else: []
+
+        {canonical_identifier_or_nil(field_value(binding, :binding_ref)),
+         identifier_set(operation_roles)}
+      end)
+
+    operation_graph_refs =
+      identifier_set(Enum.map(manifest.operation_graph_specs, &field_value(&1, :graph_ref)))
+
+    operation_graph_roles_by_ref =
+      Map.new(manifest.operation_graph_specs, fn graph ->
+        roles = field_value(graph, :roles) || []
+
+        {canonical_identifier_or_nil(field_value(graph, :graph_ref)),
+         roles |> Enum.map(&field_value(&1, :role_ref)) |> identifier_set()}
+      end)
 
     recipe_refs = identifier_set(Enum.map(manifest.execution_recipe_specs, & &1.recipe_ref))
     decision_kinds = identifier_set(Enum.map(manifest.decision_specs, & &1.decision_kind))
@@ -1342,6 +1566,127 @@ defmodule Mezzanine.Pack.Validator do
         end)
       end)
 
+    operation_graph_issues =
+      manifest.operation_graph_specs
+      |> Enum.with_index()
+      |> Enum.flat_map(fn {%OperationGraph{} = spec, index} ->
+        role_refs =
+          Map.get(
+            operation_graph_roles_by_ref,
+            canonical_identifier_or_nil(spec.graph_ref),
+            MapSet.new()
+          )
+
+        role_issues =
+          spec.roles
+          |> Enum.with_index()
+          |> Enum.flat_map(fn
+            {%OperationRole{} = role, role_index} ->
+              binding_ref = canonical_identifier_or_nil(role.binding_ref)
+
+              []
+              |> append(
+                reference_issue(
+                  role.binding_ref,
+                  generic_binding_refs,
+                  [:operation_graph_specs, index, :roles, role_index, :binding_ref],
+                  "operation role binding"
+                )
+              )
+              |> append(
+                reference_issue(
+                  role.operation_role,
+                  Map.get(generic_binding_operation_roles, binding_ref, MapSet.new()),
+                  [:operation_graph_specs, index, :roles, role_index, :operation_role],
+                  "binding operation role"
+                )
+              )
+
+            {_role, _role_index} ->
+              []
+          end)
+
+        dependency_issues =
+          spec.dependencies
+          |> Enum.with_index()
+          |> Enum.flat_map(fn
+            {%OperationDependency{} = dependency, dependency_index} ->
+              []
+              |> append(
+                reference_issue(
+                  dependency.from_role,
+                  role_refs,
+                  [:operation_graph_specs, index, :dependencies, dependency_index, :from_role],
+                  "dependency from role"
+                )
+              )
+              |> append(
+                reference_issue(
+                  dependency.to_role,
+                  role_refs,
+                  [:operation_graph_specs, index, :dependencies, dependency_index, :to_role],
+                  "dependency to role"
+                )
+              )
+
+            {_dependency, _dependency_index} ->
+              []
+          end)
+
+        role_issues ++ dependency_issues
+      end)
+
+    workflow_issues =
+      manifest.workflow_specs
+      |> Enum.with_index()
+      |> Enum.flat_map(fn
+        {%WorkflowSpec{} = spec, index} ->
+          role_refs =
+            Map.get(
+              operation_graph_roles_by_ref,
+              canonical_identifier_or_nil(spec.operation_graph_ref),
+              MapSet.new()
+            )
+
+          workflow_role_refs =
+            [
+              {:source_role_ref, spec.source_role_ref},
+              {:runtime_role_ref, spec.runtime_role_ref},
+              {:publication_role_ref, spec.publication_role_ref}
+            ] ++
+              Enum.map(Enum.with_index(spec.evidence_role_refs), fn {role_ref, role_index} ->
+                {{:evidence_role_refs, role_index}, role_ref}
+              end) ++
+              Enum.map(Enum.with_index(spec.resource_effect_role_refs), fn {role_ref, role_index} ->
+                {{:resource_effect_role_refs, role_index}, role_ref}
+              end)
+
+          []
+          |> append(
+            reference_issue(
+              spec.operation_graph_ref,
+              operation_graph_refs,
+              [:workflow_specs, index, :operation_graph_ref],
+              "workflow operation graph"
+            )
+          )
+          |> append(
+            workflow_role_refs
+            |> Enum.reject(fn {_path_key, role_ref} -> is_nil(role_ref) end)
+            |> Enum.flat_map(fn {path_key, role_ref} ->
+              reference_issue(
+                role_ref,
+                role_refs,
+                workflow_role_path(index, path_key),
+                "workflow operation role"
+              )
+            end)
+          )
+
+        {_spec, _index} ->
+          []
+      end)
+
     decision_issues =
       manifest.decision_specs
       |> Enum.with_index()
@@ -1433,8 +1778,15 @@ defmodule Mezzanine.Pack.Validator do
       generic_binding_issues ++
       lifecycle_issues ++
       recipe_issues ++
+      operation_graph_issues ++
+      workflow_issues ++
       decision_issues ++ evidence_issues ++ operator_action_issues ++ projection_issues
   end
+
+  defp workflow_role_path(index, {list_field, role_index}),
+    do: [:workflow_specs, index, list_field, role_index]
+
+  defp workflow_role_path(index, field), do: [:workflow_specs, index, field]
 
   defp transition_trigger_reference_issue(
          trigger,
@@ -1710,6 +2062,22 @@ defmodule Mezzanine.Pack.Validator do
   defp optional_positive_integer_issue(_value, path, label),
     do: [ValidationError.error(path, "#{label} must be a positive integer when present")]
 
+  defp non_empty_list_issue(value, path, label) when is_list(value) do
+    if value == [] do
+      [ValidationError.error(path, "#{label} must not be empty")]
+    else
+      []
+    end
+  end
+
+  defp non_empty_list_issue(_value, path, label),
+    do: [ValidationError.error(path, "#{label} must be a list")]
+
+  defp list_issue(value, _path, _label) when is_list(value), do: []
+
+  defp list_issue(_value, path, label),
+    do: [ValidationError.error(path, "#{label} must be a list")]
+
   defp map_issue(value, _path) when is_map(value), do: []
   defp map_issue(_value, path), do: [ValidationError.error(path, "must be a map")]
 
@@ -1801,6 +2169,67 @@ defmodule Mezzanine.Pack.Validator do
     else
       [
         ValidationError.error(path, "runtime_class must be one of the supported runtime classes")
+      ]
+    end
+  end
+
+  defp operation_class_issue(value, path) do
+    if value in [
+         :source_read,
+         :source_write,
+         :runtime_operation,
+         :runtime_tool_invocation,
+         :evidence_collection,
+         :resource_effect
+       ] do
+      []
+    else
+      [
+        ValidationError.error(
+          path,
+          "operation_class must be a supported generic operation class"
+        )
+      ]
+    end
+  end
+
+  defp operation_relation_issue(value, path) do
+    if value in [
+         :before,
+         :after,
+         :parallel_allowed,
+         :blocks_on_success,
+         :blocks_on_review,
+         :blocks_on_confirmation
+       ] do
+      []
+    else
+      [
+        ValidationError.error(
+          path,
+          "operation dependency relation is outside the supported relation set"
+        )
+      ]
+    end
+  end
+
+  defp completion_policy_issue(value, path) do
+    if value in [:required, :optional] do
+      []
+    else
+      [ValidationError.error(path, "completion_policy must be :required or :optional")]
+    end
+  end
+
+  defp failure_policy_issue(value, path) do
+    if value in [:fail_closed, :degrade, :retry, :cancel] do
+      []
+    else
+      [
+        ValidationError.error(
+          path,
+          "failure_policy must be :fail_closed, :degrade, :retry, or :cancel"
+        )
       ]
     end
   end
@@ -2149,6 +2578,9 @@ defmodule Mezzanine.Pack.Validator do
     end
   end
 
+  defp field_value(value, field) when is_map(value), do: Map.get(value, field)
+  defp field_value(_value, _field), do: nil
+
   defp initial_state_issue(nil, _from_states, _terminal_states, _path), do: []
 
   defp initial_state_issue(initial_state, from_states, terminal_states, path) do
@@ -2374,6 +2806,9 @@ defmodule Mezzanine.Pack.Normalizer do
     ExecutionRecipeSpec,
     LifecycleSpec,
     Manifest,
+    OperationDependency,
+    OperationGraph,
+    OperationRole,
     OperatorActionSpec,
     ProjectionSpec,
     ResourceEffectBinding,
@@ -2384,7 +2819,8 @@ defmodule Mezzanine.Pack.Normalizer do
     SourcePublicationBinding,
     SourcePublishSpec,
     SubjectKindSpec,
-    ToolBinding
+    ToolBinding,
+    WorkflowSpec
   }
 
   alias Mezzanine.Pack.Compiler.Helpers, as: H
@@ -2430,6 +2866,14 @@ defmodule Mezzanine.Pack.Normalizer do
         manifest.execution_recipe_specs
         |> Enum.map(&normalize_recipe/1)
         |> Enum.sort_by(& &1.recipe_ref),
+      operation_graph_specs:
+        manifest.operation_graph_specs
+        |> Enum.map(&normalize_operation_graph/1)
+        |> Enum.sort_by(& &1.graph_ref),
+      workflow_specs:
+        manifest.workflow_specs
+        |> Enum.map(&normalize_workflow/1)
+        |> Enum.sort_by(& &1.workflow_ref),
       decision_specs:
         manifest.decision_specs
         |> Enum.map(&normalize_decision/1)
@@ -2680,6 +3124,66 @@ defmodule Mezzanine.Pack.Normalizer do
     }
   end
 
+  @spec normalize_operation_graph(OperationGraph.t()) :: OperationGraph.t()
+  defp normalize_operation_graph(%OperationGraph{} = spec) do
+    %OperationGraph{
+      spec
+      | graph_ref: H.canonicalize_identifier!(spec.graph_ref),
+        workflow_ref: H.canonicalize_identifier!(spec.workflow_ref),
+        roles:
+          spec.roles
+          |> Enum.map(&normalize_operation_role/1)
+          |> Enum.sort_by(&{&1.projection_order_key, &1.role_ref}),
+        dependencies:
+          spec.dependencies
+          |> Enum.map(&normalize_operation_dependency/1)
+          |> Enum.sort_by(&{&1.to_role, &1.from_role, &1.relation})
+    }
+  end
+
+  @spec normalize_operation_role(OperationRole.t()) :: OperationRole.t()
+  defp normalize_operation_role(%OperationRole{} = role) do
+    %OperationRole{
+      role
+      | role_ref: H.canonicalize_identifier!(role.role_ref),
+        binding_ref: H.canonicalize_identifier!(role.binding_ref),
+        operation_role: H.canonicalize_identifier!(role.operation_role)
+    }
+  end
+
+  @spec normalize_operation_dependency(OperationDependency.t()) :: OperationDependency.t()
+  defp normalize_operation_dependency(%OperationDependency{} = dependency) do
+    %OperationDependency{
+      dependency
+      | from_role: H.canonicalize_identifier!(dependency.from_role),
+        to_role: H.canonicalize_identifier!(dependency.to_role),
+        review_policy_ref: normalize_optional_identifier(dependency.review_policy_ref),
+        confirmation_policy_ref: normalize_optional_identifier(dependency.confirmation_policy_ref)
+    }
+  end
+
+  @spec normalize_workflow(WorkflowSpec.t()) :: WorkflowSpec.t()
+  defp normalize_workflow(%WorkflowSpec{} = spec) do
+    %WorkflowSpec{
+      spec
+      | workflow_ref: H.canonicalize_identifier!(spec.workflow_ref),
+        source_role_ref: normalize_optional_identifier(spec.source_role_ref),
+        runtime_role_ref: normalize_optional_identifier(spec.runtime_role_ref),
+        publication_role_ref: normalize_optional_identifier(spec.publication_role_ref),
+        evidence_role_refs:
+          spec.evidence_role_refs
+          |> Enum.map(&H.canonicalize_identifier!/1)
+          |> Enum.uniq()
+          |> Enum.sort(),
+        resource_effect_role_refs:
+          spec.resource_effect_role_refs
+          |> Enum.map(&H.canonicalize_identifier!/1)
+          |> Enum.uniq()
+          |> Enum.sort(),
+        operation_graph_ref: H.canonicalize_identifier!(spec.operation_graph_ref)
+    }
+  end
+
   @spec normalize_decision(DecisionSpec.t()) :: DecisionSpec.t()
   defp normalize_decision(%DecisionSpec{} = spec) do
     %DecisionSpec{
@@ -2786,13 +3290,19 @@ defmodule Mezzanine.Pack.Builder do
 
   alias Mezzanine.Pack.{
     BindingSpec,
+    CompiledOperationDependency,
+    CompiledOperationGraph,
+    CompiledOperationRole,
     CompiledPack,
     ContextSourceSpec,
     DecisionSpec,
     EvidenceSpec,
     ExecutionRecipeSpec,
     LifecycleSpec,
-    Manifest
+    Manifest,
+    OperationDependency,
+    OperationGraph,
+    OperationRole
   }
 
   alias Mezzanine.Pack.Compiler.Helpers, as: H
@@ -2824,6 +3334,13 @@ defmodule Mezzanine.Pack.Builder do
       recipes_by_ref: Map.new(manifest.execution_recipe_specs, &{&1.recipe_ref, &1}),
       recipes_by_subject_kind:
         build_recipe_subject_index(manifest.execution_recipe_specs, Map.keys(subject_kinds)),
+      operation_graphs_by_ref: Map.new(manifest.operation_graph_specs, &{&1.graph_ref, &1}),
+      compiled_operation_graphs_by_ref:
+        build_compiled_operation_graph_index(
+          manifest.operation_graph_specs,
+          manifest.binding_specs
+        ),
+      workflows_by_ref: Map.new(manifest.workflow_specs, &{&1.workflow_ref, &1}),
       decision_specs_by_kind: Map.new(manifest.decision_specs, &{&1.decision_kind, &1}),
       evidence_specs_by_kind: Map.new(manifest.evidence_specs, &{&1.evidence_kind, &1}),
       operator_actions_by_kind: Map.new(manifest.operator_action_specs, &{&1.action_kind, &1}),
@@ -2870,6 +3387,61 @@ defmodule Mezzanine.Pack.Builder do
     |> Map.new(fn {subject_kind, subject_recipes} ->
       {subject_kind, Enum.sort_by(subject_recipes, & &1.recipe_ref)}
     end)
+  end
+
+  @spec build_compiled_operation_graph_index([OperationGraph.t()], [BindingSpec.binding_record()]) ::
+          %{String.t() => CompiledOperationGraph.t()}
+  defp build_compiled_operation_graph_index(graphs, bindings) do
+    bindings_by_ref = Map.new(bindings, &{&1.binding_ref, &1})
+
+    Map.new(graphs, fn %OperationGraph{} = graph ->
+      roles = Enum.map(graph.roles, &compile_operation_role(&1, bindings_by_ref))
+
+      compiled = %CompiledOperationGraph{
+        graph_ref: graph.graph_ref,
+        workflow_ref: graph.workflow_ref,
+        roles: roles,
+        roles_by_ref: Map.new(roles, &{&1.role_ref, &1}),
+        dependencies: Enum.map(graph.dependencies, &compile_operation_dependency/1),
+        joins: graph.joins,
+        metadata: graph.metadata
+      }
+
+      {compiled.graph_ref, compiled}
+    end)
+  end
+
+  @spec compile_operation_role(OperationRole.t(), %{String.t() => BindingSpec.binding_record()}) ::
+          CompiledOperationRole.t()
+  defp compile_operation_role(%OperationRole{} = role, bindings_by_ref) do
+    binding = Map.fetch!(bindings_by_ref, role.binding_ref)
+
+    %CompiledOperationRole{
+      role_ref: role.role_ref,
+      binding_ref: role.binding_ref,
+      binding_kind: BindingSpec.kind(binding),
+      operation_role: role.operation_role,
+      operation_ref: Map.fetch!(binding.operation_refs, role.operation_role),
+      operation_class: role.operation_class,
+      projection_order_key: role.projection_order_key,
+      completion_policy: role.completion_policy,
+      failure_policy: role.failure_policy,
+      metadata: role.metadata
+    }
+  end
+
+  @spec compile_operation_dependency(OperationDependency.t()) :: CompiledOperationDependency.t()
+  defp compile_operation_dependency(%OperationDependency{} = dependency) do
+    %CompiledOperationDependency{
+      from_role: dependency.from_role,
+      to_role: dependency.to_role,
+      relation: dependency.relation,
+      completion_policy: dependency.completion_policy,
+      failure_policy: dependency.failure_policy,
+      review_policy_ref: dependency.review_policy_ref,
+      confirmation_policy_ref: dependency.confirmation_policy_ref,
+      metadata: dependency.metadata
+    }
   end
 
   @spec build_decision_event_index([DecisionSpec.t()]) ::

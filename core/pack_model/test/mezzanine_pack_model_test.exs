@@ -6,13 +6,19 @@ defmodule MezzaninePackModelTest do
   alias Mezzanine.Pack.{
     BindingSpec,
     CompiledPack,
+    CompiledOperationGraph,
+    CompiledOperationRole,
     ContextSourceSpec,
     EvidenceBinding,
+    OperationDependency,
+    OperationGraph,
+    OperationRole,
     ResourceEffectBinding,
     RuntimeBinding,
     SourceBinding,
     SourcePublicationBinding,
-    ToolBinding
+    ToolBinding,
+    WorkflowSpec
   }
 
   alias Mezzanine.Pack.SubjectContext
@@ -142,5 +148,57 @@ defmodule MezzaninePackModelTest do
     assert BindingSpec.kind(tool) == :runtime_tool
     assert BindingSpec.kind(evidence) == :evidence
     assert BindingSpec.kind(effect) == :resource_effect
+  end
+
+  test "workflow operation graphs are explicit runtime configuration data" do
+    role = %OperationRole{
+      role_ref: :deterministic_review,
+      binding_ref: :deterministic_review_runtime,
+      operation_role: :run,
+      operation_class: :runtime_operation,
+      projection_order_key: 1
+    }
+
+    dependency = %OperationDependency{
+      from_role: :deterministic_review,
+      to_role: :review_publication,
+      relation: :blocks_on_success
+    }
+
+    graph = %OperationGraph{
+      graph_ref: :document_review_graph,
+      workflow_ref: :document_review_workflow,
+      roles: [role],
+      dependencies: [dependency]
+    }
+
+    workflow = %WorkflowSpec{
+      workflow_ref: :document_review_workflow,
+      runtime_role_ref: :deterministic_review,
+      operation_graph_ref: :document_review_graph
+    }
+
+    compiled_role = %CompiledOperationRole{
+      role_ref: "deterministic_review",
+      binding_ref: "deterministic_review_runtime",
+      binding_kind: :runtime,
+      operation_role: "run",
+      operation_ref: "review_run",
+      operation_class: :runtime_operation,
+      projection_order_key: 1
+    }
+
+    compiled_graph = %CompiledOperationGraph{
+      graph_ref: "document_review_graph",
+      workflow_ref: "document_review_workflow",
+      roles: [compiled_role],
+      roles_by_ref: %{"deterministic_review" => compiled_role},
+      dependencies: []
+    }
+
+    assert graph.roles == [role]
+    assert graph.dependencies == [dependency]
+    assert workflow.runtime_role_ref == :deterministic_review
+    assert compiled_graph.roles_by_ref["deterministic_review"].operation_ref == "review_run"
   end
 end

@@ -11,6 +11,7 @@ defmodule Mezzanine.Pack.Manifest do
     EvidenceSpec,
     ExecutionRecipeSpec,
     LifecycleSpec,
+    OperationGraph,
     OperatorActionSpec,
     ProjectionSpec,
     ResourceEffectBinding,
@@ -21,7 +22,8 @@ defmodule Mezzanine.Pack.Manifest do
     SourcePublicationBinding,
     SourcePublishSpec,
     SubjectKindSpec,
-    ToolBinding
+    ToolBinding,
+    WorkflowSpec
   }
 
   @type pack_identifier :: atom() | String.t()
@@ -44,6 +46,8 @@ defmodule Mezzanine.Pack.Manifest do
           context_source_specs: [ContextSourceSpec.t()],
           lifecycle_specs: [LifecycleSpec.t()],
           execution_recipe_specs: [ExecutionRecipeSpec.t()],
+          operation_graph_specs: [OperationGraph.t()],
+          workflow_specs: [WorkflowSpec.t()],
           decision_specs: [DecisionSpec.t()],
           evidence_specs: [EvidenceSpec.t()],
           operator_action_specs: [OperatorActionSpec.t()],
@@ -65,6 +69,8 @@ defmodule Mezzanine.Pack.Manifest do
     context_source_specs: [],
     lifecycle_specs: [],
     execution_recipe_specs: [],
+    operation_graph_specs: [],
+    workflow_specs: [],
     decision_specs: [],
     evidence_specs: [],
     operator_action_specs: [],
@@ -109,6 +115,136 @@ defmodule Mezzanine.Pack.BindingSpec do
   def kind(%{__struct__: ToolBinding}), do: :runtime_tool
   def kind(%{__struct__: EvidenceBinding}), do: :evidence
   def kind(%{__struct__: ResourceEffectBinding}), do: :resource_effect
+end
+
+defmodule Mezzanine.Pack.OperationRole do
+  @moduledoc """
+  Product workflow role that resolves to one concrete binding operation at compile time.
+  """
+
+  @type pack_identifier :: atom() | String.t()
+  @type operation_class ::
+          :source_read
+          | :source_write
+          | :runtime_operation
+          | :runtime_tool_invocation
+          | :evidence_collection
+          | :resource_effect
+
+  @type completion_policy :: :required | :optional
+  @type failure_policy :: :fail_closed | :degrade | :retry | :cancel
+
+  @type t :: %__MODULE__{
+          role_ref: pack_identifier(),
+          binding_ref: pack_identifier(),
+          operation_role: pack_identifier(),
+          operation_class: operation_class(),
+          projection_order_key: pos_integer(),
+          completion_policy: completion_policy(),
+          failure_policy: failure_policy(),
+          metadata: map()
+        }
+
+  @enforce_keys [
+    :role_ref,
+    :binding_ref,
+    :operation_role,
+    :operation_class,
+    :projection_order_key
+  ]
+  defstruct @enforce_keys ++
+              [completion_policy: :required, failure_policy: :fail_closed, metadata: %{}]
+end
+
+defmodule Mezzanine.Pack.OperationDependency do
+  @moduledoc """
+  Product workflow dependency between operation roles.
+  """
+
+  @type pack_identifier :: atom() | String.t()
+  @type relation ::
+          :before
+          | :after
+          | :parallel_allowed
+          | :blocks_on_success
+          | :blocks_on_review
+          | :blocks_on_confirmation
+
+  @type completion_policy :: :required | :optional
+  @type failure_policy :: :fail_closed | :degrade | :retry | :cancel
+
+  @type t :: %__MODULE__{
+          from_role: pack_identifier(),
+          to_role: pack_identifier(),
+          relation: relation(),
+          completion_policy: completion_policy(),
+          failure_policy: failure_policy(),
+          review_policy_ref: pack_identifier() | nil,
+          confirmation_policy_ref: pack_identifier() | nil,
+          metadata: map()
+        }
+
+  @enforce_keys [:from_role, :to_role, :relation]
+  defstruct @enforce_keys ++
+              [
+                completion_policy: :required,
+                failure_policy: :fail_closed,
+                review_policy_ref: nil,
+                confirmation_policy_ref: nil,
+                metadata: %{}
+              ]
+end
+
+defmodule Mezzanine.Pack.OperationGraph do
+  @moduledoc """
+  Product workflow operation graph authored as pack data.
+  """
+
+  alias Mezzanine.Pack.{OperationDependency, OperationRole}
+
+  @type pack_identifier :: atom() | String.t()
+
+  @type t :: %__MODULE__{
+          graph_ref: pack_identifier(),
+          workflow_ref: pack_identifier(),
+          roles: [OperationRole.t()],
+          dependencies: [OperationDependency.t()],
+          joins: [map()],
+          metadata: map()
+        }
+
+  @enforce_keys [:graph_ref, :workflow_ref, :roles, :dependencies]
+  defstruct @enforce_keys ++ [joins: [], metadata: %{}]
+end
+
+defmodule Mezzanine.Pack.WorkflowSpec do
+  @moduledoc """
+  Product workflow declaration that names product role refs, not provider operations.
+  """
+
+  @type pack_identifier :: atom() | String.t()
+
+  @type t :: %__MODULE__{
+          workflow_ref: pack_identifier(),
+          source_role_ref: pack_identifier() | nil,
+          runtime_role_ref: pack_identifier() | nil,
+          publication_role_ref: pack_identifier() | nil,
+          evidence_role_refs: [pack_identifier()],
+          resource_effect_role_refs: [pack_identifier()],
+          operation_graph_ref: pack_identifier(),
+          metadata: map()
+        }
+
+  @enforce_keys [:workflow_ref, :operation_graph_ref]
+  defstruct @enforce_keys ++
+              [
+                source_role_ref: nil,
+                runtime_role_ref: nil,
+                publication_role_ref: nil,
+                evidence_role_refs: [],
+                resource_effect_role_refs: [],
+                metadata: %{}
+              ]
 end
 
 defmodule Mezzanine.Pack.SourceBinding do
