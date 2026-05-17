@@ -34,7 +34,33 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphWorkflowStep do
           }
   end
 
+  defmodule CancellationResult do
+    @moduledoc "Deterministic result of one operation graph cancellation step."
+
+    @enforce_keys [
+      :cancellation_fact,
+      :facts,
+      :cancellation_intents,
+      :compensation_intents,
+      :state
+    ]
+
+    defstruct @enforce_keys ++ [metadata: %{}]
+
+    @type state :: :cancelling | :terminal
+
+    @type t :: %__MODULE__{
+            cancellation_fact: OperationGraphExecutor.CancellationRequestFact.t(),
+            facts: map(),
+            cancellation_intents: [OperationGraphExecutor.CancellationIntent.t()],
+            compensation_intents: [OperationGraphExecutor.CompensationIntent.t()],
+            state: state(),
+            metadata: map()
+          }
+  end
+
   @type step_result :: StepResult.t()
+  @type cancellation_result :: CancellationResult.t()
 
   @spec apply_activity_result(
           map(),
@@ -74,6 +100,34 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphWorkflowStep do
          metadata: %{
            graph_ref: graph.graph_ref,
            completed_node_ref: recorded_fact.node_ref
+         }
+       }}
+    end
+  end
+
+  @spec apply_cancellation_request(map(), map(), map(), map()) ::
+          {:ok, cancellation_result()} | {:error, term()}
+  def apply_cancellation_request(graph, facts, cancellation_attrs, schedule_attrs)
+      when is_map(graph) and is_map(facts) and is_map(cancellation_attrs) and
+             is_map(schedule_attrs) do
+    request_attrs = Map.merge(schedule_attrs, cancellation_attrs)
+
+    with {:ok, {cancellation_fact, updated_facts}} <-
+           OperationGraphExecutor.apply_cancellation_request(graph, facts, request_attrs),
+         {:ok, cancellation_intents} <-
+           OperationGraphExecutor.cancellation_intents(graph, updated_facts, request_attrs),
+         {:ok, compensation_intents} <-
+           OperationGraphExecutor.compensation_intents(graph, updated_facts, request_attrs) do
+      {:ok,
+       %CancellationResult{
+         cancellation_fact: cancellation_fact,
+         facts: updated_facts,
+         cancellation_intents: cancellation_intents,
+         compensation_intents: compensation_intents,
+         state: cancellation_state(cancellation_fact, cancellation_intents, compensation_intents),
+         metadata: %{
+           graph_ref: graph.graph_ref,
+           cancellation_request_ref: cancellation_fact.event_ref
          }
        }}
     end
@@ -211,6 +265,14 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphWorkflowStep do
     do: value
 
   defp positive_integer_or_default(_value, default), do: default
+
+  defp cancellation_state(cancellation_fact, cancellation_intents, compensation_intents) do
+    if cancellation_fact.terminal? and cancellation_intents == [] and compensation_intents == [] do
+      :terminal
+    else
+      :cancelling
+    end
+  end
 
   defp step_state(_graph, _facts, [_ | _]), do: :dispatching
 

@@ -296,6 +296,93 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphExecutorTest do
            ]
   end
 
+  test "cancellation requests stop ready dispatch and build cancel and compensation intents" do
+    graph =
+      graph!(
+        nodes: [
+          node!("node://source", "role://source", :source_read, 1),
+          node!("node://publication", "role://publication", :source_write, 2)
+        ],
+        dependencies: [
+          dependency!("node://source", "node://publication", :blocks_on_success)
+        ]
+      )
+
+    facts = %{
+      active_node_refs: ["node://publication"],
+      succeeded_node_refs: ["node://source"],
+      terminal_event_refs_by_node_ref: %{
+        "node://source" => "event://source/succeeded"
+      }
+    }
+
+    assert {:ok, {fact, updated_facts}} =
+             OperationGraphExecutor.apply_cancellation_request(graph, facts, %{
+               event_ref: "event://graph/cancel-requested",
+               reason: "operator_cancel"
+             })
+
+    assert fact.canceling_node_refs == ["node://publication"]
+    refute fact.terminal?
+    assert updated_facts.cancellation_requested_ref == "event://graph/cancel-requested"
+    assert updated_facts.canceling_node_refs == ["node://publication"]
+    assert OperationGraphExecutor.ready_node_refs(graph, updated_facts) == []
+
+    attrs = cancellation_schedule_attrs()
+
+    assert {:ok, [cancel_intent]} =
+             OperationGraphExecutor.cancellation_intents(graph, updated_facts, attrs)
+
+    assert cancel_intent.node_ref == "node://publication"
+    assert cancel_intent.operation_plan_ref == "operation-plan://tenant/run-a/publication"
+    assert cancel_intent.cancellation_policy == %{mode: :activity_cancel}
+    assert cancel_intent.reason == "operator_cancel"
+    assert cancel_intent.idempotency_key == "idem-graph-run-1:cancel:node://publication"
+
+    assert {:ok, [compensation_intent]} =
+             OperationGraphExecutor.compensation_intents(graph, updated_facts, attrs)
+
+    assert compensation_intent.node_ref == "node://source"
+    assert compensation_intent.operation_plan_ref == "operation-plan://tenant/run-a/source"
+    assert compensation_intent.predecessor_event_ref == "event://source/succeeded"
+    assert compensation_intent.compensation_policy == %{activity: :compensate_source_read}
+    assert compensation_intent.idempotency_key == "idem-graph-run-1:compensate:node://source"
+  end
+
+  test "compensation intents run in reverse graph order and skip completed policies already handled" do
+    graph =
+      graph!(
+        nodes: [
+          node!("node://source", "role://source", :source_read, 1),
+          node!("node://publication", "role://publication", :source_write, 2)
+        ],
+        dependencies: [
+          dependency!("node://source", "node://publication", :blocks_on_success)
+        ]
+      )
+
+    facts = %{
+      cancellation_requested_ref: "event://graph/cancel-requested",
+      cancellation_reason: "operator_cancel",
+      succeeded_node_refs: ["node://source", "node://publication"],
+      compensated_node_refs: ["node://source"],
+      terminal_event_refs_by_node_ref: %{
+        "node://source" => "event://source/succeeded",
+        "node://publication" => "event://publication/succeeded"
+      }
+    }
+
+    assert {:ok, [intent]} =
+             OperationGraphExecutor.compensation_intents(
+               graph,
+               facts,
+               cancellation_schedule_attrs()
+             )
+
+    assert intent.node_ref == "node://publication"
+    assert intent.predecessor_event_ref == "event://publication/succeeded"
+  end
+
   test "recorded activity results fail closed without event refs" do
     graph =
       graph!(
@@ -355,6 +442,26 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphExecutorTest do
       timeout_policy: %{},
       cancellation_policy: %{},
       metadata: %{}
+    }
+  end
+
+  defp cancellation_schedule_attrs do
+    %{
+      workflow_run_ref: "workflow-run://tenant/run-a",
+      operation_context_ref: "operation-context://tenant/request-a",
+      operation_plans_by_node_ref: %{
+        "node://source" => "operation-plan://tenant/run-a/source",
+        "node://publication" => "operation-plan://tenant/run-a/publication"
+      },
+      cancellation_policies_by_node_ref: %{
+        "node://publication" => %{mode: :activity_cancel}
+      },
+      compensation_policies_by_node_ref: %{
+        "node://source" => %{activity: :compensate_source_read},
+        "node://publication" => %{activity: :compensate_publication}
+      },
+      idempotency_key: "idem-graph-run-1",
+      reason: "operator_cancel"
     }
   end
 end

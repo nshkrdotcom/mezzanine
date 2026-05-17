@@ -74,20 +74,104 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphExecutor do
           }
   end
 
+  defmodule CancellationRequestFact do
+    @moduledoc "Recorded workflow fact derived from one operation graph cancellation request."
+
+    @enforce_keys [
+      :event_ref,
+      :reason,
+      :canceling_node_refs,
+      :terminal?
+    ]
+
+    defstruct @enforce_keys ++ [metadata: %{}]
+
+    @type t :: %__MODULE__{
+            event_ref: String.t(),
+            reason: String.t(),
+            canceling_node_refs: [String.t()],
+            terminal?: boolean(),
+            metadata: map()
+          }
+  end
+
+  defmodule CancellationIntent do
+    @moduledoc "Workflow-safe intent for cancelling one active operation graph node."
+
+    @enforce_keys [
+      :cancel_intent_ref,
+      :node_ref,
+      :operation_context_ref,
+      :operation_plan_ref,
+      :cancellation_policy,
+      :reason,
+      :idempotency_key
+    ]
+
+    defstruct @enforce_keys ++ [metadata: %{}]
+
+    @type t :: %__MODULE__{
+            cancel_intent_ref: String.t(),
+            node_ref: String.t(),
+            operation_context_ref: String.t(),
+            operation_plan_ref: String.t(),
+            cancellation_policy: map(),
+            reason: String.t(),
+            idempotency_key: String.t(),
+            metadata: map()
+          }
+  end
+
+  defmodule CompensationIntent do
+    @moduledoc "Workflow-safe intent for compensating one completed operation graph node."
+
+    @enforce_keys [
+      :compensation_intent_ref,
+      :node_ref,
+      :operation_context_ref,
+      :operation_plan_ref,
+      :predecessor_event_ref,
+      :compensation_policy,
+      :reason,
+      :idempotency_key
+    ]
+
+    defstruct @enforce_keys ++ [metadata: %{}]
+
+    @type t :: %__MODULE__{
+            compensation_intent_ref: String.t(),
+            node_ref: String.t(),
+            operation_context_ref: String.t(),
+            operation_plan_ref: String.t(),
+            predecessor_event_ref: String.t(),
+            compensation_policy: map(),
+            reason: String.t(),
+            idempotency_key: String.t(),
+            metadata: map()
+          }
+  end
+
   @type activity_intent :: ActivityIntent.t()
   @type activity_result_fact :: ActivityResultFact.t()
+  @type cancellation_request_fact :: CancellationRequestFact.t()
+  @type cancellation_intent :: CancellationIntent.t()
+  @type compensation_intent :: CompensationIntent.t()
 
   @spec ready_node_refs(map(), map()) :: [String.t()]
   def ready_node_refs(graph, facts) when is_map(graph) and is_map(facts) do
     normalized_facts = normalize_facts(facts)
 
-    graph.nodes
-    |> Enum.reject(
-      &(completed?(normalized_facts, &1.node_ref) or in_progress?(normalized_facts, &1.node_ref))
-    )
-    |> Enum.filter(&predecessors_satisfied?(graph.dependencies, &1.node_ref, normalized_facts))
-    |> Enum.sort_by(&stable_node_key(graph, &1))
-    |> Enum.map(& &1.node_ref)
+    if cancellation_requested?(normalized_facts) do
+      []
+    else
+      graph.nodes
+      |> Enum.reject(
+        &(completed?(normalized_facts, &1.node_ref) or in_progress?(normalized_facts, &1.node_ref))
+      )
+      |> Enum.filter(&predecessors_satisfied?(graph.dependencies, &1.node_ref, normalized_facts))
+      |> Enum.sort_by(&stable_node_key(graph, &1))
+      |> Enum.map(& &1.node_ref)
+    end
   end
 
   @spec ready_activity_intents(map(), map(), map() | keyword()) ::
@@ -116,6 +200,78 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphExecutor do
     end
   end
 
+  @spec apply_cancellation_request(map(), map(), map() | keyword()) ::
+          {:ok, {cancellation_request_fact(), map()}} | {:error, term()}
+  def apply_cancellation_request(graph, facts, attrs)
+      when is_map(graph) and is_map(facts) and (is_map(attrs) or is_list(attrs)) do
+    with {:ok, event_ref} <- required_cancellation_string(attrs, :event_ref) do
+      normalized_facts = normalize_facts(facts)
+      canceling_node_refs = cancelable_node_refs(graph, normalized_facts)
+
+      fact = %CancellationRequestFact{
+        event_ref: event_ref,
+        reason: cancellation_reason(attrs),
+        canceling_node_refs: canceling_node_refs,
+        terminal?: canceling_node_refs == [],
+        metadata: get_attr(attrs, :metadata, %{})
+      }
+
+      {:ok, {fact, apply_cancellation_request_fact(facts, fact)}}
+    end
+  end
+
+  @spec cancellation_intents(map(), map(), map() | keyword()) ::
+          {:ok, [cancellation_intent()]} | {:error, term()}
+  def cancellation_intents(graph, facts, attrs)
+      when is_map(graph) and is_map(facts) and (is_map(attrs) or is_list(attrs)) do
+    node_lookup = Map.new(graph.nodes, &{&1.node_ref, &1})
+
+    with {:ok, context_ref} <- required_string(attrs, :operation_context_ref),
+         {:ok, plans_by_node} <- required_map(attrs, :operation_plans_by_node_ref),
+         {:ok, cancellation_request_ref} <- cancellation_request_ref(facts),
+         {:ok, canceling_node_refs} <-
+           sort_node_refs_by_graph(graph, node_lookup, fact_refs(facts, :canceling_node_refs)) do
+      build_cancellation_intents(
+        canceling_node_refs,
+        graph,
+        attrs,
+        context_ref,
+        plans_by_node,
+        node_lookup,
+        cancellation_request_ref
+      )
+    end
+  end
+
+  @spec compensation_intents(map(), map(), map() | keyword()) ::
+          {:ok, [compensation_intent()]} | {:error, term()}
+  def compensation_intents(graph, facts, attrs)
+      when is_map(graph) and is_map(facts) and (is_map(attrs) or is_list(attrs)) do
+    node_lookup = Map.new(graph.nodes, &{&1.node_ref, &1})
+
+    with {:ok, context_ref} <- required_string(attrs, :operation_context_ref),
+         {:ok, plans_by_node} <- required_map(attrs, :operation_plans_by_node_ref),
+         {:ok, cancellation_request_ref} <- cancellation_request_ref(facts),
+         {:ok, compensatable_node_refs} <-
+           sort_node_refs_by_graph(
+             graph,
+             node_lookup,
+             compensatable_node_refs(graph, facts, attrs),
+             :desc
+           ) do
+      build_compensation_intents(
+        compensatable_node_refs,
+        graph,
+        facts,
+        attrs,
+        context_ref,
+        plans_by_node,
+        node_lookup,
+        cancellation_request_ref
+      )
+    end
+  end
+
   defp build_ready_activity_intents(graph, facts, attrs, context_ref, plans_by_node, node_lookup) do
     graph
     |> ready_node_refs(facts)
@@ -134,6 +290,152 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphExecutor do
     |> case do
       {:ok, intents} -> {:ok, Enum.reverse(intents)}
       {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp sort_node_refs_by_graph(graph, node_lookup, node_refs, direction \\ :asc) do
+    node_refs
+    |> Enum.reduce_while({:ok, []}, fn node_ref, {:ok, nodes} ->
+      case fetch_node(node_lookup, node_ref) do
+        {:ok, node} -> {:cont, {:ok, [node | nodes]}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+    |> case do
+      {:ok, nodes} ->
+        sorted_refs =
+          nodes
+          |> Enum.sort_by(&stable_node_key(graph, &1), direction)
+          |> Enum.map(& &1.node_ref)
+
+        {:ok, sorted_refs}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp build_cancellation_intents(
+         node_refs,
+         graph,
+         attrs,
+         context_ref,
+         plans_by_node,
+         node_lookup,
+         cancellation_request_ref
+       ) do
+    node_refs
+    |> Enum.reduce_while({:ok, []}, fn node_ref, {:ok, intents} ->
+      case cancellation_intent(
+             graph,
+             attrs,
+             context_ref,
+             plans_by_node,
+             node_lookup,
+             node_ref,
+             cancellation_request_ref
+           ) do
+        {:ok, intent} -> {:cont, {:ok, [intent | intents]}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+    |> reverse_intents()
+  end
+
+  defp build_compensation_intents(
+         node_refs,
+         graph,
+         facts,
+         attrs,
+         context_ref,
+         plans_by_node,
+         node_lookup,
+         cancellation_request_ref
+       ) do
+    node_refs
+    |> Enum.reduce_while({:ok, []}, fn node_ref, {:ok, intents} ->
+      case compensation_intent(
+             graph,
+             facts,
+             attrs,
+             context_ref,
+             plans_by_node,
+             node_lookup,
+             node_ref,
+             cancellation_request_ref
+           ) do
+        {:ok, intent} -> {:cont, {:ok, [intent | intents]}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+    |> reverse_intents()
+  end
+
+  defp reverse_intents({:ok, intents}), do: {:ok, Enum.reverse(intents)}
+  defp reverse_intents({:error, reason}), do: {:error, reason}
+
+  defp cancellation_intent(
+         graph,
+         attrs,
+         context_ref,
+         plans,
+         node_lookup,
+         node_ref,
+         cancellation_request_ref
+       ) do
+    with {:ok, node} <- fetch_node(node_lookup, node_ref),
+         {:ok, operation_plan_ref} <- operation_plan_ref(plans, node_ref) do
+      {:ok,
+       %CancellationIntent{
+         cancel_intent_ref: cancellation_intent_ref(attrs, node_ref),
+         node_ref: node_ref,
+         operation_context_ref: context_ref,
+         operation_plan_ref: operation_plan_ref,
+         cancellation_policy: policy_for(attrs, :cancellation_policies_by_node_ref, node_ref),
+         reason: cancellation_reason(attrs),
+         idempotency_key: idempotency_key(attrs, "cancel", node_ref),
+         metadata: %{
+           graph_ref: graph.graph_ref,
+           cancellation_request_ref: cancellation_request_ref,
+           operation_role_ref: node.operation_role_ref,
+           operation_class: node.operation_class,
+           projection_order_key: node.projection_order_key
+         }
+       }}
+    end
+  end
+
+  defp compensation_intent(
+         graph,
+         facts,
+         attrs,
+         context_ref,
+         plans,
+         node_lookup,
+         node_ref,
+         cancellation_request_ref
+       ) do
+    with {:ok, node} <- fetch_node(node_lookup, node_ref),
+         {:ok, operation_plan_ref} <- operation_plan_ref(plans, node_ref),
+         {:ok, predecessor_event_ref} <- terminal_event_ref(facts, node_ref) do
+      {:ok,
+       %CompensationIntent{
+         compensation_intent_ref: compensation_intent_ref(attrs, node_ref),
+         node_ref: node_ref,
+         operation_context_ref: context_ref,
+         operation_plan_ref: operation_plan_ref,
+         predecessor_event_ref: predecessor_event_ref,
+         compensation_policy: policy_for(attrs, :compensation_policies_by_node_ref, node_ref),
+         reason: cancellation_reason(attrs),
+         idempotency_key: idempotency_key(attrs, "compensate", node_ref),
+         metadata: %{
+           graph_ref: graph.graph_ref,
+           cancellation_request_ref: cancellation_request_ref,
+           operation_role_ref: node.operation_role_ref,
+           operation_class: node.operation_class,
+           projection_order_key: node.projection_order_key
+         }
+       }}
     end
   end
 
@@ -187,6 +489,13 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphExecutor do
     end
   end
 
+  defp fetch_node(node_lookup, node_ref) do
+    case Map.fetch(node_lookup, node_ref) do
+      {:ok, node} -> {:ok, node}
+      :error -> {:error, {:unknown_operation_graph_node, %{node_ref: node_ref}}}
+    end
+  end
+
   defp required_status(attrs) do
     case get_attr(attrs, :status) do
       status when status in [:succeeded, :failed, :degraded, :canceled] ->
@@ -204,6 +513,13 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphExecutor do
     case get_attr(attrs, key) do
       value when is_binary(value) and value != "" -> {:ok, value}
       _missing -> {:error, {:missing_required_activity_result_field, key}}
+    end
+  end
+
+  defp required_cancellation_string(attrs, key) do
+    case get_attr(attrs, key) do
+      value when is_binary(value) and value != "" -> {:ok, value}
+      _missing -> {:error, {:missing_required_cancellation_request_field, key}}
     end
   end
 
@@ -229,15 +545,24 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphExecutor do
   defp apply_activity_result_fact(facts, %ActivityResultFact{terminal?: false} = fact) do
     facts
     |> delete_fact_ref(:active_node_refs, fact.node_ref)
+    |> delete_fact_ref(:canceling_node_refs, fact.node_ref)
     |> put_fact_ref(:retry_node_refs, fact.node_ref)
   end
 
   defp apply_activity_result_fact(facts, %ActivityResultFact{} = fact) do
     facts
     |> delete_fact_ref(:active_node_refs, fact.node_ref)
+    |> delete_fact_ref(:canceling_node_refs, fact.node_ref)
     |> delete_fact_ref(:retry_node_refs, fact.node_ref)
     |> put_fact_ref(fact_status_key(fact.status), fact.node_ref)
     |> put_terminal_event_ref(fact.node_ref, fact.event_ref)
+  end
+
+  defp apply_cancellation_request_fact(facts, %CancellationRequestFact{} = fact) do
+    facts
+    |> put_attr(:cancellation_requested_ref, fact.event_ref)
+    |> put_attr(:cancellation_reason, fact.reason)
+    |> put_fact_refs(:canceling_node_refs, fact.canceling_node_refs)
   end
 
   defp fact_status_key(:succeeded), do: :succeeded_node_refs
@@ -254,9 +579,15 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphExecutor do
     end)
   end
 
+  defp put_fact_refs(facts, key, node_refs) do
+    Enum.reduce(node_refs, facts, &put_fact_ref(&2, key, &1))
+  end
+
   defp delete_fact_ref(facts, key, node_ref) do
     Map.update(facts, key, [], fn refs -> refs |> List.wrap() |> List.delete(node_ref) end)
   end
+
+  defp put_attr(attrs, key, value), do: Map.put(attrs, key, value)
 
   defp put_terminal_event_ref(facts, node_ref, event_ref) do
     Map.update(facts, :terminal_event_refs_by_node_ref, %{node_ref => event_ref}, fn refs ->
@@ -355,15 +686,49 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphExecutor do
     end
   end
 
+  defp terminal_event_ref(facts, node_ref) do
+    facts
+    |> get_attr(:terminal_event_refs_by_node_ref, %{})
+    |> Map.fetch(node_ref)
+    |> case do
+      {:ok, event_ref} when is_binary(event_ref) -> {:ok, event_ref}
+      _missing -> {:error, {:missing_terminal_event_ref, %{node_ref: node_ref}}}
+    end
+  end
+
   defp activity_intent_ref(attrs, node_ref) do
     workflow_ref = get_attr(attrs, :workflow_run_ref, "workflow-run://unknown")
     "activity-intent://#{workflow_ref}/#{node_ref}"
+  end
+
+  defp cancellation_intent_ref(attrs, node_ref) do
+    workflow_ref = get_attr(attrs, :workflow_run_ref, "workflow-run://unknown")
+    "cancel-intent://#{workflow_ref}/#{node_ref}"
+  end
+
+  defp compensation_intent_ref(attrs, node_ref) do
+    workflow_ref = get_attr(attrs, :workflow_run_ref, "workflow-run://unknown")
+    "compensation-intent://#{workflow_ref}/#{node_ref}"
+  end
+
+  defp idempotency_key(attrs, action, node_ref) do
+    base = get_attr(attrs, :idempotency_key, "operation-graph")
+    "#{base}:#{action}:#{node_ref}"
   end
 
   defp policy_for(attrs, key, node_ref) do
     attrs
     |> get_attr(key, %{})
     |> Map.get(node_ref, %{})
+  end
+
+  defp cancellation_reason(attrs), do: get_attr(attrs, :reason, "operation_graph_cancellation")
+
+  defp cancellation_request_ref(facts) do
+    case get_attr(facts, :cancellation_requested_ref) do
+      value when is_binary(value) and value != "" -> {:ok, value}
+      _missing -> {:error, :missing_cancellation_request_ref}
+    end
   end
 
   defp required_string(attrs, key) do
@@ -434,8 +799,48 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphExecutor do
   end
 
   defp in_progress?(facts, node_ref) do
-    node_ref in facts.active_node_refs or node_ref in facts.retry_node_refs
+    node_ref in facts.active_node_refs or node_ref in facts.retry_node_refs or
+      node_ref in facts.canceling_node_refs
   end
+
+  defp cancellation_requested?(facts), do: is_binary(facts.cancellation_requested_ref)
+
+  defp cancelable_node_refs(graph, facts) do
+    candidate_refs =
+      facts.active_node_refs ++
+        facts.retry_node_refs ++
+        facts.canceling_node_refs
+
+    graph.nodes
+    |> Enum.filter(&(&1.node_ref in candidate_refs))
+    |> Enum.reject(&completed?(facts, &1.node_ref))
+    |> Enum.sort_by(&stable_node_key(graph, &1))
+    |> Enum.map(& &1.node_ref)
+  end
+
+  defp compensatable_node_refs(graph, facts, attrs) do
+    facts = normalize_facts(facts)
+    compensated_node_refs = fact_refs(facts, :compensated_node_refs)
+
+    graph.nodes
+    |> Enum.filter(&compensatable_node?(&1, facts, attrs, compensated_node_refs))
+    |> Enum.map(& &1.node_ref)
+  end
+
+  defp compensatable_node?(node, facts, attrs, compensated_node_refs) do
+    policy = policy_for(attrs, :compensation_policies_by_node_ref, node.node_ref)
+
+    node.node_ref in compensatable_completed_node_refs(facts) and
+      node.node_ref not in compensated_node_refs and
+      policy != %{} and
+      policy_enabled?(policy)
+  end
+
+  defp compensatable_completed_node_refs(facts) do
+    facts.succeeded_node_refs ++ facts.degraded_node_refs
+  end
+
+  defp policy_enabled?(policy), do: get_attr(policy, :enabled?, true) != false
 
   defp normalize_facts(facts) do
     terminal = fact_refs(facts, :terminal_node_refs)
@@ -448,9 +853,12 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphExecutor do
       failed_node_refs: fact_refs(facts, :failed_node_refs),
       canceled_node_refs: fact_refs(facts, :canceled_node_refs),
       active_node_refs: fact_refs(facts, :active_node_refs),
-      retry_node_refs: fact_refs(facts, :retry_node_refs)
+      retry_node_refs: fact_refs(facts, :retry_node_refs),
+      canceling_node_refs: fact_refs(facts, :canceling_node_refs),
+      compensated_node_refs: fact_refs(facts, :compensated_node_refs),
+      cancellation_requested_ref: get_attr(facts, :cancellation_requested_ref)
     }
   end
 
-  defp fact_refs(facts, key), do: facts |> Map.get(key, []) |> List.wrap()
+  defp fact_refs(facts, key), do: facts |> get_attr(key, []) |> List.wrap()
 end

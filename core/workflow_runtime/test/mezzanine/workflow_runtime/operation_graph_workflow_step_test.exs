@@ -126,6 +126,49 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphWorkflowStepTest do
     assert step.state == :waiting
   end
 
+  test "cancellation request produces cancel and compensation intents without ready dispatch" do
+    graph =
+      graph!(
+        nodes: [
+          node!("node://source", "role://source", :source_read, 1),
+          node!("node://publication", "role://publication", :source_write, 2)
+        ],
+        dependencies: [
+          dependency!("node://source", "node://publication", :blocks_on_success)
+        ]
+      )
+
+    assert {:ok, step} =
+             OperationGraphWorkflowStep.apply_cancellation_request(
+               graph,
+               %{
+                 active_node_refs: ["node://publication"],
+                 succeeded_node_refs: ["node://source"],
+                 terminal_event_refs_by_node_ref: %{
+                   "node://source" => "event://source/succeeded"
+                 }
+               },
+               %{
+                 event_ref: "event://graph/cancel-requested",
+                 reason: "operator_cancel"
+               },
+               cancellation_schedule_attrs()
+             )
+
+    assert step.cancellation_fact.event_ref == "event://graph/cancel-requested"
+    assert step.cancellation_fact.canceling_node_refs == ["node://publication"]
+    assert step.facts.cancellation_requested_ref == "event://graph/cancel-requested"
+    assert step.state == :cancelling
+
+    assert [cancel_intent] = step.cancellation_intents
+    assert cancel_intent.node_ref == "node://publication"
+    assert cancel_intent.operation_plan_ref == "operation-plan://tenant/run-a/publication"
+
+    assert [compensation_intent] = step.compensation_intents
+    assert compensation_intent.node_ref == "node://source"
+    assert compensation_intent.predecessor_event_ref == "event://source/succeeded"
+  end
+
   test "terminal final-node result marks the step terminal" do
     graph =
       graph!(
@@ -215,5 +258,23 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphWorkflowStepTest do
       idempotency_key: "idem-graph-run-1",
       occurred_at: ~U[2026-05-17 07:20:00Z]
     })
+  end
+
+  defp cancellation_schedule_attrs do
+    %{
+      workflow_run_ref: "workflow-run://tenant/run-a",
+      operation_context_ref: "operation-context://tenant/request-a",
+      operation_plans_by_node_ref: %{
+        "node://source" => "operation-plan://tenant/run-a/source",
+        "node://publication" => "operation-plan://tenant/run-a/publication"
+      },
+      cancellation_policies_by_node_ref: %{
+        "node://publication" => %{mode: :activity_cancel}
+      },
+      compensation_policies_by_node_ref: %{
+        "node://source" => %{activity: :compensate_source_read}
+      },
+      idempotency_key: "idem-graph-run-1"
+    }
   end
 end
