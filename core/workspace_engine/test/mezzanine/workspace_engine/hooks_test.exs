@@ -319,6 +319,109 @@ defmodule Mezzanine.WorkspaceEngine.HooksTest do
     assert byte_size(receipt.result.output) <= 24
   end
 
+  test "runs hooks through a supervised task runner" do
+    supervisor_name = unique_supervisor_name()
+    start_supervised!({Task.Supervisor, name: supervisor_name})
+    parent = self()
+
+    {:ok, workspace} =
+      Allocator.reserve(%{
+        installation_id: "installation-1",
+        subject_id: "subject-1",
+        workspace_root: tmp_dir(),
+        hook_specs: [
+          %{"hook_ref" => "prepare", "stage" => "prepare_workspace", "timeout_ms" => 100}
+        ]
+      })
+
+    assert {:ok, [receipt]} =
+             Hooks.run(workspace, :prepare_workspace,
+               task_supervisor: supervisor_name,
+               runner: fn hook, _context ->
+                 send(parent, {:hook_runner_pid, self(), hook.hook_ref})
+                 :ok
+               end
+             )
+
+    assert receipt.status == :succeeded
+    assert_receive {:hook_runner_pid, runner_pid, "prepare"}
+    refute runner_pid == self()
+    refute Process.alive?(runner_pid)
+  end
+
+  test "kills supervised hook tasks on timeout" do
+    supervisor_name = unique_supervisor_name()
+    start_supervised!({Task.Supervisor, name: supervisor_name})
+    parent = self()
+
+    {:ok, workspace} =
+      Allocator.reserve(%{
+        installation_id: "installation-1",
+        subject_id: "subject-1",
+        workspace_root: tmp_dir(),
+        hook_specs: [
+          %{"hook_ref" => "prepare", "stage" => "prepare_workspace", "timeout_ms" => 1}
+        ]
+      })
+
+    assert {:error, {:hook_timeout, receipt}} =
+             Hooks.run(workspace, :prepare_workspace,
+               task_supervisor: supervisor_name,
+               runner: fn _hook, _context ->
+                 send(parent, {:timeout_runner_pid, self()})
+                 Process.sleep(:infinity)
+                 :ok
+               end
+             )
+
+    assert receipt.status == :timed_out
+    assert_receive {:timeout_runner_pid, runner_pid}
+    assert_process_dead(runner_pid)
+  end
+
+  test "captures raised hook exceptions as failed receipts" do
+    {:ok, workspace} =
+      Allocator.reserve(%{
+        installation_id: "installation-1",
+        subject_id: "subject-1",
+        workspace_root: tmp_dir(),
+        hook_specs: [
+          %{"hook_ref" => "prepare", "stage" => "prepare_workspace", "timeout_ms" => 100}
+        ]
+      })
+
+    assert {:error, {:hook_failed, receipt}} =
+             Hooks.run(workspace, :prepare_workspace,
+               runner: fn _hook, _context ->
+                 raise "hook exploded"
+               end
+             )
+
+    assert receipt.status == :failed
+    assert {:hook_exit, :error, %RuntimeError{message: "hook exploded"}} = receipt.reason
+  end
+
+  test "preserves matching hook receipt order" do
+    {:ok, workspace} =
+      Allocator.reserve(%{
+        installation_id: "installation-1",
+        subject_id: "subject-1",
+        workspace_root: tmp_dir(),
+        hook_specs: [
+          %{"hook_ref" => "first", "stage" => "prepare_workspace", "timeout_ms" => 100},
+          %{"hook_ref" => "second", "stage" => "prepare_workspace", "timeout_ms" => 100}
+        ]
+      })
+
+    assert {:ok, receipts} =
+             Hooks.run(workspace, :prepare_workspace,
+               runner: fn hook, _context -> {:ok, %{hook_ref: hook.hook_ref}} end
+             )
+
+    assert Enum.map(receipts, & &1.hook_ref) == ["first", "second"]
+    assert Enum.map(receipts, & &1.result.hook_ref) == ["first", "second"]
+  end
+
   defp tmp_dir do
     path =
       Path.join(
@@ -330,4 +433,21 @@ defmodule Mezzanine.WorkspaceEngine.HooksTest do
     File.mkdir_p!(path)
     path
   end
+
+  defp unique_supervisor_name do
+    Module.concat(__MODULE__, "HookTaskSupervisor#{System.unique_integer([:positive])}")
+  end
+
+  defp assert_process_dead(pid, attempts \\ 20)
+
+  defp assert_process_dead(pid, attempts) when attempts > 0 do
+    if Process.alive?(pid) do
+      Process.sleep(10)
+      assert_process_dead(pid, attempts - 1)
+    else
+      refute Process.alive?(pid)
+    end
+  end
+
+  defp assert_process_dead(pid, 0), do: refute(Process.alive?(pid))
 end

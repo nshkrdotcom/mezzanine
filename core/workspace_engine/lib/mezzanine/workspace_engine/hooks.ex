@@ -12,6 +12,7 @@ defmodule Mezzanine.WorkspaceEngine.Hooks do
   @default_timeout_ms 30_000
   @default_max_output_bytes 4_096
   @redaction_marker "[REDACTED]"
+  @default_task_supervisor Mezzanine.WorkspaceEngine.HookTaskSupervisor
   @default_action_by_stage %{
     after_create: :halt,
     before_run: :halt,
@@ -57,15 +58,41 @@ defmodule Mezzanine.WorkspaceEngine.Hooks do
   defp execute_hook(hook, workspace, runner, opts) do
     context = context(workspace, hook)
     timeout_ms = timeout_ms(hook)
+    started_at = System.monotonic_time()
 
-    task = Task.async(fn -> safe_run(runner, hook, context) end)
+    emit_hook_event(:start, hook, %{system_time: System.system_time()}, %{status: :started})
 
-    hook_result =
-      case Task.yield(task, timeout_ms) do
-        nil -> Task.shutdown(task, :brutal_kill)
-        result -> result
-      end
+    case start_hook_task(task_supervisor(opts), runner, hook, context) do
+      {:ok, task} ->
+        hook_result = await_hook_task(task, timeout_ms)
+        emit_completion_event(hook, hook_result, started_at)
+        handle_hook_result(hook, hook_result, opts)
 
+      {:error, reason} ->
+        emit_hook_event(:exception, hook, duration_measurements(started_at), %{
+          status: :failed,
+          reason: {:task_start_failed, reason}
+        })
+
+        hook_error(:hook_failed, hook, :failed, {:task_start_failed, reason}, opts)
+    end
+  end
+
+  defp start_hook_task(task_supervisor, runner, hook, context) do
+    {:ok,
+     Task.Supervisor.async_nolink(task_supervisor, fn -> safe_run(runner, hook, context) end)}
+  catch
+    :exit, reason -> {:error, reason}
+  end
+
+  defp await_hook_task(task, timeout_ms) do
+    case Task.yield(task, timeout_ms) do
+      nil -> Task.shutdown(task, :brutal_kill)
+      result -> result
+    end
+  end
+
+  defp handle_hook_result(hook, hook_result, opts) do
     case hook_result do
       {:ok, {:runner_result, {:ok, result}}} ->
         {:ok, receipt(hook, :succeeded, result, nil, :continue, opts)}
@@ -82,6 +109,9 @@ defmodule Mezzanine.WorkspaceEngine.Hooks do
       {:ok, {:runner_exit, kind, reason}} ->
         hook_error(:hook_failed, hook, :failed, {:hook_exit, kind, reason}, opts)
 
+      {:exit, reason} ->
+        hook_error(:hook_failed, hook, :failed, {:task_exit, reason}, opts)
+
       nil ->
         hook_error(:hook_timeout, hook, :timed_out, :timeout, opts)
     end
@@ -94,6 +124,60 @@ defmodule Mezzanine.WorkspaceEngine.Hooks do
   end
 
   defp default_runner(_hook, _context), do: :ok
+
+  defp task_supervisor(opts), do: Keyword.get(opts, :task_supervisor, @default_task_supervisor)
+
+  defp emit_completion_event(hook, hook_result, started_at) do
+    case hook_result do
+      nil ->
+        emit_hook_event(:timeout, hook, duration_measurements(started_at), %{status: :timed_out})
+
+      {:ok, {:runner_result, {:ok, _result}}} ->
+        emit_hook_event(:stop, hook, duration_measurements(started_at), %{status: :succeeded})
+
+      {:ok, {:runner_result, :ok}} ->
+        emit_hook_event(:stop, hook, duration_measurements(started_at), %{status: :succeeded})
+
+      {:ok, {:runner_result, {:error, reason}}} ->
+        emit_hook_event(:stop, hook, duration_measurements(started_at), %{
+          status: :failed,
+          reason: reason
+        })
+
+      {:ok, {:runner_result, other}} ->
+        emit_hook_event(:stop, hook, duration_measurements(started_at), %{
+          status: :failed,
+          reason: {:invalid_hook_result, other}
+        })
+
+      {:ok, {:runner_exit, kind, reason}} ->
+        emit_hook_event(:exception, hook, duration_measurements(started_at), %{
+          status: :failed,
+          reason: {:hook_exit, kind, reason}
+        })
+
+      {:exit, reason} ->
+        emit_hook_event(:exception, hook, duration_measurements(started_at), %{
+          status: :failed,
+          reason: {:task_exit, reason}
+        })
+    end
+  end
+
+  defp duration_measurements(started_at),
+    do: %{duration: System.monotonic_time() - started_at}
+
+  defp emit_hook_event(event_name, hook, measurements, metadata) do
+    telemetry = :telemetry
+
+    if Code.ensure_loaded?(telemetry) do
+      :erlang.apply(telemetry, :execute, [
+        [:mezzanine, :workspace_engine, :hook, event_name],
+        measurements,
+        Map.merge(%{hook_ref: hook.hook_ref, stage: hook.stage}, metadata)
+      ])
+    end
+  end
 
   defp context(%WorkspaceRecord{} = workspace, hook) do
     runtime_refs = workspace.remote_hints || %{}

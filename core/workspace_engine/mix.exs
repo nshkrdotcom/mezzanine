@@ -21,7 +21,10 @@ defmodule MezzanineWorkspaceEngine.MixProject do
   end
 
   def application do
-    [extra_applications: [:logger]]
+    [
+      extra_applications: [:logger],
+      mod: {Mezzanine.WorkspaceEngine.Application, []}
+    ]
   end
 
   def cli do
