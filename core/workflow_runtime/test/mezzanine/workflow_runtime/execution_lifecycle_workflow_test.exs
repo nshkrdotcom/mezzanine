@@ -58,12 +58,17 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
        }}
     end
 
-    def publish_linear_source(
+    def publish_source(
           %{authorized_invocation_boundary: _boundary} = invocation,
+          publication_role_ref,
           request,
+          source_binding,
           _opts
         ) do
-      send(self(), {:fake_source_publication, invocation, request})
+      send(
+        self(),
+        {:fake_source_publication, invocation, publication_role_ref, request, source_binding}
+      )
 
       {:ok,
        %{
@@ -600,8 +605,11 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     assert publish.source_publication_receipt.status == "published"
     assert publish.result_ref == "source-publication://linear-primary/linear_workpad_review"
 
-    assert_received {:fake_source_publication, invocation, request}
+    assert_received {:fake_source_publication, invocation, :source_publication, request,
+                     source_binding}
+
     assert invocation.tenant_id == "tenant-acme"
+    assert source_binding == %{}
     assert request.source_publish_ref == "linear_workpad_review"
     assert request.source_binding_id == "linear-primary"
     assert request.comment_id == "comment-1"

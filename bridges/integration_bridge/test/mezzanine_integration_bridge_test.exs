@@ -2518,8 +2518,9 @@ defmodule Mezzanine.IntegrationBridgeTest do
     end
 
     assert {:ok, result} =
-             IntegrationBridge.publish_linear_source(
+             IntegrationBridge.publish_source(
                invocation,
+               :source_publication,
                %{
                  source_publish_ref: "linear_workpad_review",
                  source_binding_id: "linear-primary",
@@ -2528,6 +2529,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
                  body: "Ready for review",
                  redaction_manifest_ref: "redaction://linear/workpad"
                },
+               source_binding(),
                invoke_fun: invoke_fun
              )
 
@@ -2552,8 +2554,9 @@ defmodule Mezzanine.IntegrationBridgeTest do
     end
 
     assert {:ok, result} =
-             IntegrationBridge.publish_linear_source(
+             IntegrationBridge.publish_source(
                invocation,
+               :source_publication,
                %{
                  source_publish_ref: "linear_workpad_review",
                  source_binding_id: "linear-primary",
@@ -2562,6 +2565,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
                  body: "Ready for review",
                  allow_create_fallback?: true
                },
+               source_binding(),
                dry_run?: true,
                credential_redeemed?: true,
                invoke_fun: invoke_fun
@@ -2596,8 +2600,9 @@ defmodule Mezzanine.IntegrationBridgeTest do
     end
 
     assert {:ok, result} =
-             IntegrationBridge.publish_linear_source(
+             IntegrationBridge.publish_source(
                invocation,
+               :source_publication,
                %{
                  source_publish_ref: "linear_workpad_review",
                  source_binding_id: "linear-primary",
@@ -2607,6 +2612,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
                  body: "Ready for review",
                  allow_create_fallback?: true
                },
+               source_binding(),
                invoke_fun: invoke_fun
              )
 
@@ -2640,8 +2646,9 @@ defmodule Mezzanine.IntegrationBridgeTest do
     end
 
     assert {:ok, result} =
-             IntegrationBridge.publish_linear_source(
+             IntegrationBridge.publish_source(
                invocation,
+               :source_publication,
                %{
                  source_publish_ref: "linear_workpad_review",
                  source_binding_id: "linear-primary",
@@ -2651,6 +2658,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
                  body: "Ready for review",
                  allow_create_fallback?: true
                },
+               source_binding(),
                invoke_fun: invoke_fun
              )
 
@@ -2693,8 +2701,9 @@ defmodule Mezzanine.IntegrationBridgeTest do
     end
 
     assert {:ok, result} =
-             IntegrationBridge.update_linear_issue_state(
+             IntegrationBridge.publish_source(
                invocation,
+               :source_publication,
                %{
                  source_publish_ref: "linear_state_update",
                  source_binding_id: "linear-primary",
@@ -2703,6 +2712,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
                  state_name: "Done",
                  team_id: "team-linear"
                },
+               source_binding(),
                invoke_fun: invoke_fun
              )
 

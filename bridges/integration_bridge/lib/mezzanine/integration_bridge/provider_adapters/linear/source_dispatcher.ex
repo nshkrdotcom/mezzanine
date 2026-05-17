@@ -47,6 +47,17 @@ defmodule Mezzanine.IntegrationBridge.ProviderAdapters.Linear.SourceDispatcher d
     ["linear.users.get_self", "linear.issues.list"]
   end
 
+  @spec publication_allowed_operations(atom() | String.t(), map(), map(), keyword()) :: [
+          String.t()
+        ]
+  def publication_allowed_operations(_publication_role_ref, _source_binding, attrs, _opts \\ []) do
+    if issue_state_publication?(attrs) do
+      ["linear.issues.update", "linear.workflow_states.list"]
+    else
+      ["linear.comments.create", "linear.comments.update"]
+    end
+  end
+
   @spec refresh_issue(AuthorizedInvocation.t(), String.t() | map(), map(), keyword()) ::
           {:ok, map()} | {:error, term()}
   def refresh_issue(
@@ -501,6 +512,17 @@ defmodule Mezzanine.IntegrationBridge.ProviderAdapters.Linear.SourceDispatcher d
     reason
     |> inspect()
     |> not_found_message?()
+  end
+
+  defp issue_state_publication?(attrs) do
+    present_string?(Map.get(attrs, :state_id) || Map.get(attrs, "state_id")) or
+      present_string?(Map.get(attrs, :state_name) || Map.get(attrs, "state_name")) or
+      Map.get(attrs, :capability_id) == "linear.issues.update" or
+      Map.get(attrs, "capability_id") == "linear.issues.update" or
+      (Map.get(attrs, :publication_kind) || Map.get(attrs, "publication_kind")) in [
+        :issue_state_update,
+        "issue_state_update"
+      ]
   end
 
   defp present_string?(value) when is_binary(value), do: String.trim(value) != ""

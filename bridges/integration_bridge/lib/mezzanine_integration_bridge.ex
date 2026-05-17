@@ -84,17 +84,21 @@ defmodule Mezzanine.IntegrationBridge do
     to: Mezzanine.IntegrationBridge.SourceDispatcher,
     as: :read_allowed_operations
 
-  @spec publish_linear_source(AuthorizedInvocation.t(), map(), keyword()) ::
+  @spec publish_source(AuthorizedInvocation.t(), atom() | String.t(), map(), map(), keyword()) ::
           {:ok, map()} | {:error, term()}
-  defdelegate publish_linear_source(invocation, attrs, opts \\ []),
-    to: Mezzanine.IntegrationBridge.SourceDispatcher,
-    as: :publish_source
+  defdelegate publish_source(invocation, publication_role_ref, attrs, source_binding, opts \\ []),
+    to: Mezzanine.IntegrationBridge.SourceDispatcher
 
-  @spec update_linear_issue_state(AuthorizedInvocation.t(), map(), keyword()) ::
-          {:ok, map()} | {:error, term()}
-  defdelegate update_linear_issue_state(invocation, attrs, opts \\ []),
-    to: Mezzanine.IntegrationBridge.SourceDispatcher,
-    as: :update_source_state
+  @spec source_publication_allowed_operations(atom() | String.t(), map(), map(), keyword()) ::
+          [String.t()]
+  defdelegate source_publication_allowed_operations(
+                publication_role_ref,
+                source_binding,
+                attrs,
+                opts \\ []
+              ),
+              to: Mezzanine.IntegrationBridge.SourceDispatcher,
+              as: :publication_allowed_operations
 
   @spec prepare_linear_api_key_invocation(String.t(), map() | keyword(), keyword()) ::
           {:ok, map()} | {:error, term()}

@@ -108,25 +108,47 @@ defmodule Mezzanine.IntegrationBridge.SourceDispatcher do
     end
   end
 
-  @spec publish_source(AuthorizedInvocation.t(), map(), keyword()) ::
+  @spec publish_source(AuthorizedInvocation.t(), source_role_ref(), map(), map(), keyword()) ::
           {:ok, map()} | {:error, term()}
-  def publish_source(%AuthorizedInvocation{} = invocation, attrs, opts \\ [])
-      when (is_map(attrs) or is_list(attrs)) and is_list(opts) do
-    attrs_map = attrs |> Map.new()
+  def publish_source(
+        %AuthorizedInvocation{} = invocation,
+        publication_role_ref,
+        attrs,
+        source_binding,
+        opts \\ []
+      )
+      when (is_atom(publication_role_ref) or is_binary(publication_role_ref)) and
+             (is_map(attrs) or is_list(attrs)) and is_map(source_binding) and is_list(opts) do
+    attrs_map = Map.new(attrs)
 
-    with {:ok, adapter} <- source_adapter(attrs_map, opts) do
-      adapter.publish_source(invocation, attrs, opts)
+    with {:ok, adapter} <- source_adapter(source_binding, opts) do
+      opts = Keyword.put(opts, :publication_role_ref, publication_role_ref)
+
+      if issue_state_publication?(attrs_map) do
+        adapter.update_issue_state(invocation, attrs_map, opts)
+      else
+        adapter.publish_source(invocation, attrs_map, opts)
+      end
     end
   end
 
-  @spec update_source_state(AuthorizedInvocation.t(), map(), keyword()) ::
-          {:ok, map()} | {:error, term()}
-  def update_source_state(%AuthorizedInvocation{} = invocation, attrs, opts \\ [])
-      when (is_map(attrs) or is_list(attrs)) and is_list(opts) do
-    attrs_map = attrs |> Map.new()
+  @spec publication_allowed_operations(source_role_ref(), map(), map(), keyword()) :: [String.t()]
+  def publication_allowed_operations(publication_role_ref, source_binding, attrs, opts \\ [])
+      when (is_atom(publication_role_ref) or is_binary(publication_role_ref)) and
+             is_map(source_binding) and (is_map(attrs) or is_list(attrs)) and is_list(opts) do
+    attrs_map = Map.new(attrs)
 
-    with {:ok, adapter} <- source_adapter(attrs_map, opts) do
-      adapter.update_issue_state(invocation, attrs, opts)
+    case source_adapter(source_binding, opts) do
+      {:ok, adapter} ->
+        adapter.publication_allowed_operations(
+          publication_role_ref,
+          source_binding,
+          attrs_map,
+          opts
+        )
+
+      {:error, _reason} ->
+        []
     end
   end
 
@@ -137,4 +159,15 @@ defmodule Mezzanine.IntegrationBridge.SourceDispatcher do
       adapter -> {:error, {:invalid_source_adapter, adapter}}
     end
   end
+
+  defp issue_state_publication?(attrs) do
+    present?(value(attrs, :state_id)) or present?(value(attrs, :state_name)) or
+      value(attrs, :capability_id) == "linear.issues.update" or
+      value(attrs, :publication_kind) in [:issue_state_update, "issue_state_update"]
+  end
+
+  defp present?(value) when is_binary(value), do: String.trim(value) != ""
+  defp present?(value), do: not is_nil(value)
+
+  defp value(map, key), do: Map.get(map, key) || Map.get(map, Atom.to_string(key))
 end

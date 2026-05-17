@@ -1444,7 +1444,27 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
         governed_default?: true
       )
 
-    bridge.publish_linear_source(invocation, request, [])
+    bridge.publish_source(
+      invocation,
+      publication_role_ref(request),
+      request,
+      source_binding(request),
+      []
+    )
+  end
+
+  defp publication_role_ref(request) do
+    Map.get(request, :publication_role_ref) ||
+      Map.get(request, :source_publication_role_ref) ||
+      Map.get(request, :source_role_ref) ||
+      :source_publication
+  end
+
+  defp source_binding(request) do
+    case Map.get(request, :source_binding) || Map.get(request, "source_binding") do
+      %{} = binding -> binding
+      _other -> %{}
+    end
   end
 
   defp source_publication_request(attrs, source_publish_ref) do
