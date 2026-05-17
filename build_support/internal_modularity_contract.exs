@@ -124,7 +124,8 @@ defmodule Mezzanine.Build.InternalModularityContract do
         "core/evidence_engine",
         "core/execution_engine",
         "core/mezzanine_core",
-        "core/object_engine"
+        "core/object_engine",
+        "core/substrate_model"
       ]
     },
     %{

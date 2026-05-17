@@ -7,6 +7,10 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
   alias Mezzanine.Execution.ExecutionRecord
   alias Mezzanine.Objects.SubjectRecord
   alias Mezzanine.Projections.{ProjectionRow, ReceiptReducer}
+  alias Mezzanine.Projections.SubjectRuntimeProjection
+  alias Mezzanine.Substrate.OperationGroupReceipt
+  alias Mezzanine.Substrate.OperationReceipt
+  alias Mezzanine.Substrate.ResultEnvelope
 
   @required_evidence [
     "github_pr",
@@ -18,6 +22,15 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
     "run_log",
     "source_comment",
     "connector_event"
+  ]
+
+  @operation_roles [
+    {:source, :source_intake},
+    {:publication, :source_publication},
+    {:runtime, :runtime_operation},
+    {:tool, :tool_operation},
+    {:evidence, :evidence_operation},
+    {:resource_effect, :resource_effect}
   ]
 
   test "reduces terminal success into execution, subject, review, evidence, projection, and audit facts" do
@@ -222,6 +235,81 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
     assert audit_fact.payload["receipt_id"] == "receipt-completed"
   end
 
+  test "reduces generic operation receipts through the production reducer path" do
+    receipts = Enum.map(@operation_roles, &operation_receipt/1)
+
+    assert {:ok, reduced} = ReceiptReducer.reduce(receipts)
+
+    assert reduced.reducer_module == ReceiptReducer
+    assert %SubjectRuntimeProjection{} = reduced.projection
+    assert reduced.projection.status == :succeeded
+    assert length(reduced.projection.operations) == 6
+
+    assert Enum.map(reduced.operation_dispositions, & &1.disposition) ==
+             List.duplicate(:accepted, 6)
+
+    assert Enum.map(reduced.projection.source_publications, & &1.operation_role) == [:publication]
+    assert Enum.map(reduced.projection.evidence, & &1.operation_role) == [:evidence]
+
+    assert Enum.map(reduced.projection.resource_effects, & &1.operation_role) == [
+             :resource_effect
+           ]
+
+    assert reduced.lower_receipt_summary.operations == reduced.projection.operations
+
+    assert reduced.lower_receipt_summary.provider_object_refs["external_object://publication"] ==
+             ["provider-object://publication"]
+
+    projection_fields = Map.from_struct(reduced.projection)
+    summary_fields = Map.from_struct(reduced.lower_receipt_summary)
+    operation_fields = reduced.projection.operations |> hd() |> Map.from_struct()
+
+    refute Map.has_key?(projection_fields, :github_pr)
+    refute Map.has_key?(projection_fields, :linear_comment)
+    refute Map.has_key?(projection_fields, :codex_session)
+    refute Map.has_key?(summary_fields, :github_pr_evidence)
+    refute Map.has_key?(operation_fields, :linear_comment_id)
+  end
+
+  test "reduces generic operation group receipts with child operation statuses" do
+    success =
+      operation_receipt({:resource_effect, :resource_effect},
+        receipt_ref: "receipt://cleanup/branch"
+      )
+
+    retryable =
+      operation_receipt({:resource_effect, :resource_effect},
+        receipt_ref: "receipt://cleanup/tag",
+        status: :retryable_failure
+      )
+
+    {:ok, group} =
+      OperationGroupReceipt.new(%{
+        group_receipt_ref: "receipt-group://cleanup/resources",
+        operation_context_ref: "operation-context://tenant-a/request-a",
+        receipt_refs: [success.receipt_ref, retryable.receipt_ref],
+        status: :partial_success,
+        metadata: %{group_kind: :resource_effect, subject_ref: "subject://document/1"}
+      })
+
+    assert {:ok, reduced} = ReceiptReducer.reduce(group, operation_receipts: [retryable, success])
+
+    assert reduced.reducer_module == ReceiptReducer
+    assert reduced.projection.status == :partial_success
+
+    assert [%{status: :partial_success, child_operations: child_operations}] =
+             reduced.projection.operation_groups
+
+    assert Enum.map(child_operations, & &1.status) == [:succeeded, :retryable_failure]
+
+    assert Enum.map(child_operations, & &1.receipt_ref) == [
+             success.receipt_ref,
+             retryable.receipt_ref
+           ]
+
+    assert reduced.lower_receipt_summary.operation_groups == reduced.projection.operation_groups
+  end
+
   test "reduces every terminal lower outcome into stable execution and subject states" do
     cases = [
       {"failed", :failed, "failed", nil},
@@ -381,6 +469,54 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
       })
 
     %{subject: subject, execution: execution}
+  end
+
+  defp operation_receipt({operation_role, operation_class}, opts \\ []) do
+    receipt_ref =
+      Keyword.get(opts, :receipt_ref, "receipt://#{operation_role}/#{operation_class}")
+
+    status = Keyword.get(opts, :status, :succeeded)
+
+    {:ok, result} =
+      ResultEnvelope.new(%{
+        result_ref: "result://#{operation_role}/#{operation_class}",
+        storage_mode: :inline,
+        schema_ref: "schema://result/#{operation_role}",
+        redaction_ref: "redaction://result/ref-only",
+        data: %{result_ref: "result-data://#{operation_role}"}
+      })
+
+    {:ok, receipt} =
+      OperationReceipt.new(%{
+        receipt_ref: receipt_ref,
+        operation_context_ref: "operation-context://tenant-a/request-a",
+        operation_plan_ref: "operation-plan://tenant-a/#{operation_role}",
+        trace_ref: "trace://tenant-a/run-a",
+        status: status,
+        started_at: ~U[2026-05-17 00:00:00Z],
+        completed_at: ~U[2026-05-17 00:00:01Z],
+        result: result,
+        lineage_event_refs: [
+          "lineage://#{operation_role}/effect_receipted",
+          "lineage://#{operation_role}/receipt_reduced"
+        ],
+        metadata: %{
+          operation_role: operation_role,
+          operation_class: operation_class,
+          subject_ref: "subject://document/1",
+          provider_object_refs: %{
+            "external_object://#{operation_role}" => ["provider-object://#{operation_role}"]
+          },
+          provider_facts: [
+            %{fact_ref: "provider-fact://#{operation_role}", fact_kind: :external_object}
+          ],
+          extensions: %{
+            "#{operation_role}_extension" => "extension-ref://#{operation_role}"
+          }
+        }
+      })
+
+    receipt
   end
 
   defp success_attrs(subject, execution, opts) do

@@ -12,7 +12,12 @@ defmodule Mezzanine.Projections.ReceiptReducer do
   alias Mezzanine.EvidenceLedger.EvidenceRecord
   alias Mezzanine.Execution.ExecutionRecord
   alias Mezzanine.Objects.SubjectRecord
+  alias Mezzanine.Projections.LowerReceiptSummary
   alias Mezzanine.Projections.ProjectionRow
+  alias Mezzanine.Projections.SubjectRuntimeProjection
+  alias Mezzanine.Substrate.OperationDisposition
+  alias Mezzanine.Substrate.OperationGroupReceipt
+  alias Mezzanine.Substrate.OperationReceipt
 
   @terminal_success_states ["completed", "success", "succeeded"]
   @terminal_cancel_states ["cancelled", "canceled"]
@@ -30,8 +35,31 @@ defmodule Mezzanine.Projections.ReceiptReducer do
           projection: map(),
           audit: map()
         }
+  @type generic_reduce_result :: %{
+          reducer_module: module(),
+          projection: SubjectRuntimeProjection.t(),
+          lower_receipt_summary: LowerReceiptSummary.t(),
+          operation_dispositions: [OperationDisposition.t()]
+        }
 
-  @spec reduce(map() | keyword()) :: {:ok, reduce_result()} | {:error, term()}
+  @spec reduce(
+          [OperationReceipt.t()]
+          | OperationReceipt.t()
+          | OperationGroupReceipt.t()
+          | map()
+          | keyword()
+        ) ::
+          {:ok, generic_reduce_result() | reduce_result()} | {:error, term()}
+  def reduce([%OperationReceipt{} | _rest] = receipts) do
+    with {:ok, projection} <- SubjectRuntimeProjection.from_operation_receipts(receipts) do
+      {:ok, generic_reduction(projection, receipts)}
+    end
+  end
+
+  def reduce(%OperationReceipt{} = receipt), do: reduce([receipt])
+
+  def reduce(%OperationGroupReceipt{} = group), do: reduce(group, [])
+
   def reduce(attrs) when is_map(attrs) or is_list(attrs) do
     attrs = normalize_attrs(attrs)
     missing_evidence = missing_required_evidence(attrs)
@@ -73,6 +101,43 @@ defmodule Mezzanine.Projections.ReceiptReducer do
        }}
     end
   end
+
+  @spec reduce(OperationGroupReceipt.t(), keyword()) ::
+          {:ok, generic_reduce_result()} | {:error, term()}
+  def reduce(%OperationGroupReceipt{} = group, opts) when is_list(opts) do
+    receipts = Keyword.get(opts, :operation_receipts, [])
+
+    with {:ok, projection} <- SubjectRuntimeProjection.from_operation_group(group, receipts) do
+      {:ok, generic_reduction(projection, receipts)}
+    end
+  end
+
+  defp generic_reduction(projection, receipts) do
+    %{
+      reducer_module: __MODULE__,
+      projection: projection,
+      lower_receipt_summary: LowerReceiptSummary.from_projection(projection),
+      operation_dispositions: Enum.map(receipts, &operation_disposition/1)
+    }
+  end
+
+  defp operation_disposition(%OperationReceipt{} = receipt) do
+    {:ok, disposition} =
+      OperationDisposition.new(%{
+        disposition_ref: "operation-disposition://#{receipt.receipt_ref}",
+        receipt_ref: receipt.receipt_ref,
+        disposition: disposition(receipt.status),
+        metadata: %{status: receipt.status}
+      })
+
+    disposition
+  end
+
+  defp disposition(status) when status in [:accepted, :completed, :succeeded], do: :accepted
+  defp disposition(status) when status in [:retryable, :retryable_failure], do: :retryable_failure
+  defp disposition(status) when status in [:canceled, :cancelled], do: :cancelled
+  defp disposition(status) when status in [:blocked, :input_required], do: :blocked
+  defp disposition(_status), do: :terminal_failure
 
   defp reduce_execution(execution, attrs, receipt_state)
        when receipt_state in @terminal_success_states do
