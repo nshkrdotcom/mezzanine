@@ -158,6 +158,78 @@ defmodule Mezzanine.Substrate.OperationGraphTest do
     assert rework.state == :rework_requested
   end
 
+  test "work item projection makes graph waits and branch failures operator-visible" do
+    {:ok, work_item} =
+      WorkItem.new(%{
+        work_item_ref: "work-item://tenant-a/work-a",
+        operation_context_ref: "operation-context://tenant-a/request-a",
+        workflow_run_ref: "workflow-run://tenant-a/run-a",
+        state: :queued
+      })
+
+    {:ok, workflow} =
+      WorkflowRun.new(%{
+        workflow_run_ref: "workflow-run://tenant-a/run-a",
+        operation_context_ref: "operation-context://tenant-a/request-a",
+        work_item_ref: work_item.work_item_ref,
+        state: :running
+      })
+
+    review_graph =
+      graph!(
+        dependencies: [
+          dependency!("node://runtime", "node://publication", :blocks_on_review, :required),
+          dependency!(
+            "node://source",
+            "node://publication",
+            :blocks_on_confirmation,
+            :required
+          ),
+          dependency!("node://evidence", "node://publication", :blocks_on_success, :optional)
+        ]
+      )
+
+    assert {:ok, review_wait} =
+             WorkItemProjection.project(work_item, workflow, review_graph, %{
+               succeeded_node_refs: ["node://source", "node://runtime", "node://evidence"],
+               confirmed_node_refs: ["node://source"]
+             })
+
+    assert review_wait.state == :awaiting_review
+    assert review_wait.metadata.waiting_review_node_refs == ["node://runtime"]
+    assert review_wait.metadata.waiting_confirmation_node_refs == []
+    assert review_wait.metadata.ready_node_refs == []
+
+    assert {:ok, confirmation_wait} =
+             WorkItemProjection.project(work_item, workflow, review_graph, %{
+               succeeded_node_refs: ["node://source", "node://runtime", "node://evidence"],
+               reviewed_node_refs: ["node://runtime"]
+             })
+
+    assert confirmation_wait.state == :blocked
+    assert confirmation_wait.metadata.waiting_confirmation_node_refs == ["node://source"]
+    assert confirmation_wait.metadata.ready_node_refs == []
+
+    assert {:ok, failed_required_branch} =
+             WorkItemProjection.project(work_item, workflow, graph!(), %{
+               succeeded_node_refs: ["node://source"],
+               failed_node_refs: ["node://runtime"]
+             })
+
+    assert failed_required_branch.state == :failed
+    assert failed_required_branch.metadata.required_failed_node_refs == ["node://runtime"]
+
+    assert {:ok, optional_branch_failure} =
+             WorkItemProjection.project(work_item, workflow, graph!(), %{
+               succeeded_node_refs: ["node://source", "node://runtime"],
+               failed_node_refs: ["node://evidence"]
+             })
+
+    assert optional_branch_failure.state == :queued
+    assert optional_branch_failure.metadata.required_failed_node_refs == []
+    assert optional_branch_failure.metadata.ready_node_refs == ["node://publication"]
+  end
+
   defp graph!(opts \\ []) do
     nodes = [
       node!("node://source", :source, 1),
