@@ -66,6 +66,24 @@ defmodule Mezzanine.ConfigRegistry.BindingRegistry do
     end
   end
 
+  @spec resolve_operation_plan(keyword() | map()) :: {:ok, map()} | {:error, term()}
+  def resolve_operation_plan(attrs) when is_list(attrs) or is_map(attrs) do
+    with {:ok, request} <- operation_plan_request(attrs) do
+      case RunBindingSnapshot.by_run_binding(
+             request.tenant_id,
+             request.environment,
+             request.run_ref,
+             request.binding_ref
+           ) do
+        {:ok, %RunBindingSnapshot{} = snapshot} ->
+          snapshot_operation_plan(snapshot, request)
+
+        {:error, _not_found} ->
+          active_operation_plan(request)
+      end
+    end
+  end
+
   @spec capture_run_binding_snapshot(keyword() | map()) ::
           {:ok, RunBindingSnapshot.t()} | {:error, term()}
   def capture_run_binding_snapshot(attrs) when is_list(attrs) or is_map(attrs) do
@@ -404,6 +422,82 @@ defmodule Mezzanine.ConfigRegistry.BindingRegistry do
     end
   end
 
+  defp active_operation_plan(request) do
+    with {:ok, resolution} <-
+           resolve_active_binding(
+             tenant_id: request.tenant_id,
+             environment: request.environment,
+             pack_slug: request.pack_slug,
+             binding_ref: request.binding_ref,
+             binding_kind: request.binding_kind,
+             expected_binding_epoch: request.expected_binding_epoch,
+             operation_role: request.operation_role
+           ) do
+      {:ok, Map.put(resolution, :source, :active_binding_set)}
+    end
+  end
+
+  defp snapshot_operation_plan(%RunBindingSnapshot{} = snapshot, request) do
+    with :ok <- ensure_snapshot_kind(snapshot, request.binding_kind),
+         :ok <- ensure_snapshot_epoch(snapshot, request.expected_binding_epoch),
+         {:ok, dependencies, operation_dependency} <-
+           snapshot_dependencies_for_role(snapshot, request.operation_role) do
+      {:ok,
+       %{
+         source: :run_binding_snapshot,
+         run_binding_snapshot: snapshot,
+         descriptor: snapshot.descriptor,
+         manifest_dependencies: dependencies,
+         operation_dependency: operation_dependency,
+         binding_epoch: snapshot.binding_epoch,
+         binding_set_id: snapshot.binding_set_id
+       }}
+    end
+  end
+
+  defp snapshot_dependencies_for_role(%RunBindingSnapshot{} = snapshot, nil) do
+    {:ok, snapshot_dependency_items(snapshot), nil}
+  end
+
+  defp snapshot_dependencies_for_role(%RunBindingSnapshot{} = snapshot, operation_role) do
+    dependency =
+      snapshot
+      |> snapshot_dependency_items()
+      |> Enum.find(&(dependency_operation_role(&1) == operation_role))
+
+    case dependency do
+      nil ->
+        {:error,
+         {:missing_binding_operation_role,
+          %{binding_ref: snapshot.binding_ref, operation_role: operation_role}}}
+
+      dependency ->
+        {:ok, [dependency], dependency}
+    end
+  end
+
+  defp snapshot_dependency_items(%RunBindingSnapshot{manifest_dependencies: %{"items" => items}})
+       when is_list(items),
+       do: items
+
+  defp snapshot_dependency_items(%RunBindingSnapshot{manifest_dependencies: %{items: items}})
+       when is_list(items),
+       do: items
+
+  defp snapshot_dependency_items(%RunBindingSnapshot{manifest_dependencies: items})
+       when is_list(items),
+       do: items
+
+  defp snapshot_dependency_items(%RunBindingSnapshot{}), do: []
+
+  defp dependency_operation_role(dependency) when is_map(dependency) do
+    dependency
+    |> Map.get("operation_role", Map.get(dependency, :operation_role))
+    |> identifier!(:operation_role)
+  rescue
+    ArgumentError -> nil
+  end
+
   defp active_binding_set?(%BindingSet{} = binding_set) do
     case ActiveBindingSet.by_scope(
            binding_set.tenant_id,
@@ -457,6 +551,39 @@ defmodule Mezzanine.ConfigRegistry.BindingRegistry do
     end
   end
 
+  defp ensure_snapshot_kind(_snapshot, nil), do: :ok
+
+  defp ensure_snapshot_kind(%RunBindingSnapshot{} = snapshot, expected_kind) do
+    if snapshot.binding_kind == expected_kind do
+      :ok
+    else
+      {:error,
+       {:binding_kind_mismatch,
+        %{
+          binding_ref: snapshot.binding_ref,
+          expected_binding_kind: expected_kind,
+          actual_binding_kind: snapshot.binding_kind
+        }}}
+    end
+  end
+
+  defp ensure_snapshot_epoch(_snapshot, nil), do: :ok
+
+  defp ensure_snapshot_epoch(%RunBindingSnapshot{} = snapshot, expected_epoch) do
+    if snapshot.binding_epoch == expected_epoch do
+      :ok
+    else
+      {:error,
+       {:stale_binding_snapshot_epoch,
+        %{
+          run_ref: snapshot.run_ref,
+          binding_ref: snapshot.binding_ref,
+          expected_binding_epoch: expected_epoch,
+          snapshot_binding_epoch: snapshot.binding_epoch
+        }}}
+    end
+  end
+
   defp resolve_request(attrs) do
     with {:ok, tenant_id} <- required_attr(attrs, :tenant_id),
          {:ok, environment} <- required_attr(attrs, :environment),
@@ -484,6 +611,10 @@ defmodule Mezzanine.ConfigRegistry.BindingRegistry do
          {:ok, run_ref} <- required_attr(attrs, :run_ref) do
       {:ok, Map.put(request, :run_ref, run_ref)}
     end
+  end
+
+  defp operation_plan_request(attrs) do
+    snapshot_request(attrs)
   end
 
   defp snapshot_lookup_request(attrs) do

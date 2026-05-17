@@ -191,6 +191,11 @@ defmodule MezzanineConfigRegistry do
     BindingRegistry.resolve_active_binding(attrs)
   end
 
+  @spec resolve_operation_plan(keyword() | map()) :: {:ok, map()} | {:error, term()}
+  def resolve_operation_plan(attrs) when is_list(attrs) or is_map(attrs) do
+    BindingRegistry.resolve_operation_plan(attrs)
+  end
+
   @spec capture_run_binding_snapshot(keyword() | map()) ::
           {:ok, Mezzanine.ConfigRegistry.RunBindingSnapshot.t()} | {:error, term()}
   def capture_run_binding_snapshot(attrs) when is_list(attrs) or is_map(attrs) do

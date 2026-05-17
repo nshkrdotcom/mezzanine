@@ -229,6 +229,78 @@ defmodule Mezzanine.ConfigRegistry.BindingRegistryTest do
     assert pinned_snapshot.binding_set_id == snapshot.binding_set_id
   end
 
+  test "operation plan resolution uses run snapshots after active binding advances" do
+    installation = activate_fixture_installation!("tenant-snapshot-plan")
+
+    {:ok, first_active} =
+      MezzanineConfigRegistry.active_binding_set(
+        installation.tenant_id,
+        installation.environment,
+        installation.pack_slug
+      )
+
+    assert {:ok, %RunBindingSnapshot{} = snapshot} =
+             MezzanineConfigRegistry.capture_run_binding_snapshot(
+               tenant_id: installation.tenant_id,
+               environment: installation.environment,
+               pack_slug: installation.pack_slug,
+               run_ref: "run://binding-plan/1",
+               binding_ref: "case_source_primary",
+               binding_kind: :source,
+               expected_binding_epoch: first_active.binding_epoch
+             )
+
+    assert {:ok, %Installation{} = updated_installation} =
+             MezzanineConfigRegistry.update_bindings(installation, %{
+               "binding_notes" => %{"reason" => "advance-active-binding"}
+             })
+
+    assert {:error, {:stale_binding_epoch, _stale}} =
+             MezzanineConfigRegistry.resolve_active_binding(
+               tenant_id: updated_installation.tenant_id,
+               environment: updated_installation.environment,
+               pack_slug: updated_installation.pack_slug,
+               binding_ref: "case_source_primary",
+               binding_kind: :source,
+               operation_role: :read,
+               expected_binding_epoch: first_active.binding_epoch
+             )
+
+    assert {:ok, plan} =
+             MezzanineConfigRegistry.resolve_operation_plan(
+               tenant_id: updated_installation.tenant_id,
+               environment: updated_installation.environment,
+               pack_slug: updated_installation.pack_slug,
+               run_ref: "run://binding-plan/1",
+               binding_ref: "case_source_primary",
+               binding_kind: :source,
+               operation_role: :read,
+               expected_binding_epoch: first_active.binding_epoch
+             )
+
+    assert plan.source == :run_binding_snapshot
+    assert plan.run_binding_snapshot.id == snapshot.id
+    assert plan.binding_epoch == first_active.binding_epoch
+    assert plan.descriptor["binding_epoch"] == first_active.binding_epoch
+
+    assert [dependency] = plan.manifest_dependencies
+    assert dependency["operation_role"] == "read"
+    assert dependency["operation_ref"] == "search_cases"
+    assert plan.operation_dependency == dependency
+
+    assert {:error, {:stale_binding_epoch, _stale}} =
+             MezzanineConfigRegistry.resolve_operation_plan(
+               tenant_id: updated_installation.tenant_id,
+               environment: updated_installation.environment,
+               pack_slug: updated_installation.pack_slug,
+               run_ref: "run://binding-plan/missing",
+               binding_ref: "case_source_primary",
+               binding_kind: :source,
+               operation_role: :read,
+               expected_binding_epoch: first_active.binding_epoch
+             )
+  end
+
   test "missing binding refs fail closed" do
     installation = activate_fixture_installation!("tenant-missing")
 
