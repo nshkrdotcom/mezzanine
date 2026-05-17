@@ -1,4 +1,4 @@
-defmodule Mezzanine.SourceEngine.LinearSourceFlow do
+defmodule Mezzanine.SourceEngine.ProviderAdapters.Linear.SourceFlow do
   @moduledoc """
   Linear source intake and publication shaping for governed source coordinators.
 
@@ -8,7 +8,8 @@ defmodule Mezzanine.SourceEngine.LinearSourceFlow do
   admission attrs or publication receipts.
   """
 
-  alias Mezzanine.SourceEngine.{LinearIssue, SourceBinding}
+  alias Mezzanine.SourceEngine.ProviderAdapters.Linear.Issue
+  alias Mezzanine.SourceEngine.SourceBinding
 
   @candidate_states ["submitted", "retry_submission"]
   @default_page_size 50
@@ -176,7 +177,7 @@ defmodule Mezzanine.SourceEngine.LinearSourceFlow do
   def normalize_issue_refresh(output, envelope, binding)
       when is_map(output) and is_map(envelope) and is_map(binding) do
     with %{} = issue <- value(output, :issue),
-         {:ok, attrs} <- LinearIssue.subject_attrs(issue, envelope, binding) do
+         {:ok, attrs} <- Issue.subject_attrs(issue, envelope, binding) do
       {:ok,
        %{
          operation: "linear.issues.retrieve",
@@ -340,7 +341,7 @@ defmodule Mezzanine.SourceEngine.LinearSourceFlow do
 
   defp normalize_issues(issues, envelope, binding) do
     Enum.reduce_while(issues, {:ok, []}, fn issue, {:ok, acc} ->
-      case LinearIssue.subject_attrs(issue, envelope, binding) do
+      case Issue.subject_attrs(issue, envelope, binding) do
         {:ok, attrs} -> {:cont, {:ok, [attrs | acc]}}
         {:error, reason} -> {:halt, {:error, reason}}
       end

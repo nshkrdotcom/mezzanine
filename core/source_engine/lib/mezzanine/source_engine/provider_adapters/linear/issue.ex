@@ -1,4 +1,4 @@
-defmodule Mezzanine.SourceEngine.LinearIssue do
+defmodule Mezzanine.SourceEngine.ProviderAdapters.Linear.Issue do
   @moduledoc """
   Converts normalized Jido Linear issue output into subject ledger attrs.
 

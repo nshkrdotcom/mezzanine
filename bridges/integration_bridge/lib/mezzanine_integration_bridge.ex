@@ -11,7 +11,6 @@ defmodule Mezzanine.IntegrationBridge do
     GitHubPrDispatcher,
     LinearCredentialIngress,
     LinearGraphQLToolExecutor,
-    LinearSourceDispatcher,
     ReadDispatcher
   }
 
@@ -26,45 +25,76 @@ defmodule Mezzanine.IntegrationBridge do
   @spec dispatch_read(ReadIntent.t(), keyword()) :: {:ok, map()} | {:error, term()}
   defdelegate dispatch_read(intent, opts \\ []), to: ReadDispatcher
 
-  @spec fetch_linear_candidates(AuthorizedInvocation.t(), map(), keyword()) ::
+  @spec fetch_source_candidates(AuthorizedInvocation.t(), atom() | String.t(), map(), keyword()) ::
           {:ok, map()} | {:error, term()}
-  defdelegate fetch_linear_candidates(invocation, source_binding, opts \\ []),
-    to: LinearSourceDispatcher,
+  defdelegate fetch_source_candidates(invocation, source_role_ref, source_binding, opts \\ []),
+    to: Mezzanine.IntegrationBridge.SourceDispatcher,
     as: :fetch_candidates
 
-  @spec refresh_linear_issue(AuthorizedInvocation.t(), String.t() | map(), map(), keyword()) ::
-          {:ok, map()} | {:error, term()}
-  defdelegate refresh_linear_issue(invocation, issue_or_attrs, source_binding, opts \\ []),
-    to: LinearSourceDispatcher,
-    as: :refresh_issue
-
-  @spec fetch_linear_current_issue_states(
+  @spec refresh_source_item(
           AuthorizedInvocation.t(),
+          atom() | String.t(),
+          String.t() | map(),
+          map(),
+          keyword()
+        ) ::
+          {:ok, map()} | {:error, term()}
+  defdelegate refresh_source_item(
+                invocation,
+                source_role_ref,
+                issue_or_attrs,
+                source_binding,
+                opts \\ []
+              ),
+              to: Mezzanine.IntegrationBridge.SourceDispatcher,
+              as: :refresh_item
+
+  @spec fetch_source_current_states(
+          AuthorizedInvocation.t(),
+          atom() | String.t(),
           [String.t()],
           map(),
           keyword()
         ) ::
           {:ok, map()} | {:error, term()}
-  defdelegate fetch_linear_current_issue_states(
+  defdelegate fetch_source_current_states(
                 invocation,
+                source_role_ref,
                 issue_ids,
                 source_binding,
                 opts \\ []
               ),
-              to: LinearSourceDispatcher,
-              as: :current_issue_states
+              to: Mezzanine.IntegrationBridge.SourceDispatcher,
+              as: :current_states
+
+  @spec normalize_source_page(atom() | String.t(), map(), map(), map(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  defdelegate normalize_source_page(
+                source_role_ref,
+                output,
+                envelope,
+                source_binding,
+                opts \\ []
+              ),
+              to: Mezzanine.IntegrationBridge.SourceDispatcher,
+              as: :normalize_page
+
+  @spec source_read_allowed_operations(atom() | String.t(), map(), keyword()) :: [String.t()]
+  defdelegate source_read_allowed_operations(source_role_ref, source_binding, opts \\ []),
+    to: Mezzanine.IntegrationBridge.SourceDispatcher,
+    as: :read_allowed_operations
 
   @spec publish_linear_source(AuthorizedInvocation.t(), map(), keyword()) ::
           {:ok, map()} | {:error, term()}
   defdelegate publish_linear_source(invocation, attrs, opts \\ []),
-    to: LinearSourceDispatcher,
+    to: Mezzanine.IntegrationBridge.SourceDispatcher,
     as: :publish_source
 
   @spec update_linear_issue_state(AuthorizedInvocation.t(), map(), keyword()) ::
           {:ok, map()} | {:error, term()}
   defdelegate update_linear_issue_state(invocation, attrs, opts \\ []),
-    to: LinearSourceDispatcher,
-    as: :update_issue_state
+    to: Mezzanine.IntegrationBridge.SourceDispatcher,
+    as: :update_source_state
 
   @spec prepare_linear_api_key_invocation(String.t(), map() | keyword(), keyword()) ::
           {:ok, map()} | {:error, term()}

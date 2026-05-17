@@ -1,4 +1,4 @@
-defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
+defmodule Mezzanine.IntegrationBridge.ProviderAdapters.Linear.SourceDispatcher do
   @moduledoc """
   Governed Linear source read and publication dispatcher.
 
@@ -11,7 +11,7 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
   alias Jido.Integration.V2.GovernedLowerDenial
   alias Mezzanine.IntegrationBridge.AuthorizedInvocation
   alias Mezzanine.IntegrationBridge.DirectRunDispatcher
-  alias Mezzanine.SourceEngine.LinearSourceFlow
+  alias Mezzanine.SourceEngine.ProviderAdapters.Linear.SourceFlow
 
   @spec fetch_candidates(AuthorizedInvocation.t(), map(), keyword()) ::
           {:ok, map()} | {:error, term()}
@@ -22,7 +22,7 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
          {:ok, dispatch} <-
            dispatch_linear(invocation, "linear.issues.list", input, opts),
          {:ok, normalized} <-
-           LinearSourceFlow.normalize_candidate_page(
+           SourceFlow.normalize_candidate_page(
              output!(dispatch),
              source_envelope(invocation, normalize_opts),
              source_binding
@@ -35,6 +35,18 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
     end
   end
 
+  @spec normalize_candidate_page(map(), map(), map(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  def normalize_candidate_page(output, envelope, source_binding, opts \\ [])
+      when is_map(output) and is_map(envelope) and is_map(source_binding) and is_list(opts) do
+    SourceFlow.normalize_candidate_page(output, envelope, source_binding)
+  end
+
+  @spec read_allowed_operations(atom() | String.t(), map(), keyword()) :: [String.t()]
+  def read_allowed_operations(_source_role_ref, _source_binding, _opts \\ []) do
+    ["linear.users.get_self", "linear.issues.list"]
+  end
+
   @spec refresh_issue(AuthorizedInvocation.t(), String.t() | map(), map(), keyword()) ::
           {:ok, map()} | {:error, term()}
   def refresh_issue(
@@ -44,11 +56,11 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
         opts \\ []
       )
       when is_map(source_binding) and is_list(opts) do
-    with {:ok, input} <- LinearSourceFlow.refresh_issue_input(issue_or_attrs, opts),
+    with {:ok, input} <- SourceFlow.refresh_issue_input(issue_or_attrs, opts),
          {:ok, dispatch} <-
            dispatch_linear(invocation, "linear.issues.retrieve", input, opts),
          {:ok, normalized} <-
-           LinearSourceFlow.normalize_issue_refresh(
+           SourceFlow.normalize_issue_refresh(
              output!(dispatch),
              source_envelope(invocation, opts),
              source_binding
@@ -70,12 +82,12 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
       )
       when is_list(issue_ids) and is_map(source_binding) and is_list(opts) do
     with {:ok, inputs} <-
-           LinearSourceFlow.current_state_fetch_inputs(issue_ids, source_binding, opts),
+           SourceFlow.current_state_fetch_inputs(issue_ids, source_binding, opts),
          {:ok, normalize_opts, viewer_dispatch} <-
            current_state_normalize_opts(invocation, source_binding, opts),
          {:ok, dispatches} <- dispatch_current_state_inputs(invocation, inputs, opts),
          {:ok, normalized} <-
-           LinearSourceFlow.normalize_current_state_page(
+           SourceFlow.normalize_current_state_page(
              merge_current_state_outputs(dispatches),
              source_envelope(invocation, normalize_opts),
              source_binding,
@@ -98,7 +110,7 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
     attrs = normalize_attrs(attrs)
 
     with {:ok, attrs} <- resolve_issue_state_attrs(invocation, attrs, opts),
-         {:ok, input} <- LinearSourceFlow.issue_state_update_input(attrs),
+         {:ok, input} <- SourceFlow.issue_state_update_input(attrs),
          result <- dispatch_linear(invocation, "linear.issues.update", input, opts) do
       issue_state_update_result(result, attrs, opts)
     end
@@ -110,7 +122,7 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
       when (is_map(attrs) or is_list(attrs)) and is_list(opts) do
     attrs = normalize_attrs(attrs)
 
-    with {:ok, {capability_id, input}} <- LinearSourceFlow.publication_input(attrs) do
+    with {:ok, {capability_id, input}} <- SourceFlow.publication_input(attrs) do
       invocation
       |> dispatch_linear(capability_id, input, opts)
       |> publication_result(invocation, attrs, capability_id, opts)
@@ -118,7 +130,7 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
   end
 
   defp issue_state_update_result({:ok, dispatch}, attrs, opts) do
-    with {:ok, receipt} <- LinearSourceFlow.issue_state_update_receipt(dispatch, attrs) do
+    with {:ok, receipt} <- SourceFlow.issue_state_update_receipt(dispatch, attrs) do
       {:ok,
        dispatch
        |> annotate_provider_effect(opts)
@@ -133,7 +145,7 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
   defp issue_state_update_result({:error, reason}, _attrs, _opts), do: {:error, reason}
 
   defp publication_result({:ok, dispatch}, _invocation, attrs, _capability_id, opts) do
-    with {:ok, receipt} <- LinearSourceFlow.publication_receipt(dispatch, attrs) do
+    with {:ok, receipt} <- SourceFlow.publication_receipt(dispatch, attrs) do
       {:ok,
        dispatch
        |> annotate_provider_effect(opts)
@@ -158,7 +170,7 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
   defp lower_denial_publication_result(denial, attrs, capability_id, opts) do
     receipt_attrs = Map.put_new(attrs, :capability_id, capability_id)
 
-    with {:ok, receipt} <- LinearSourceFlow.publication_denial_receipt(denial, receipt_attrs) do
+    with {:ok, receipt} <- SourceFlow.publication_denial_receipt(denial, receipt_attrs) do
       {:ok,
        %{
          governed_lower_denial: denial,
@@ -181,10 +193,10 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
         |> Map.put(:allow_create_fallback?, true)
 
       with {:ok, {"linear.comments.create", input}} <-
-             LinearSourceFlow.publication_input(fallback_attrs),
+             SourceFlow.publication_input(fallback_attrs),
            {:ok, dispatch} <- dispatch_linear(invocation, "linear.comments.create", input, opts),
            {:ok, receipt} <-
-             LinearSourceFlow.publication_receipt(
+             SourceFlow.publication_receipt(
                dispatch,
                Map.put(fallback_attrs, :capability_id, "linear.comments.create")
              ) do
@@ -213,7 +225,7 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
   end
 
   defp candidate_fetch_input(invocation, source_binding, opts) do
-    case LinearSourceFlow.candidate_fetch_input(source_binding, opts) do
+    case SourceFlow.candidate_fetch_input(source_binding, opts) do
       {:ok, input} ->
         {:ok, input, opts, nil}
 
@@ -223,7 +235,7 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
              {:ok, viewer} <- viewer_from_dispatch(viewer_dispatch),
              viewer_dispatch <- annotate_provider_effect(viewer_dispatch, opts),
              viewer_opts <- Keyword.put(opts, :viewer, viewer),
-             {:ok, input} <- LinearSourceFlow.candidate_fetch_input(source_binding, viewer_opts) do
+             {:ok, input} <- SourceFlow.candidate_fetch_input(source_binding, viewer_opts) do
           {:ok, input, viewer_opts, viewer_dispatch}
         end
 
@@ -264,11 +276,11 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
         {:ok, attrs}
 
       present_string?(Map.get(attrs, :state_name) || Map.get(attrs, "state_name")) ->
-        with {:ok, input} <- LinearSourceFlow.issue_state_lookup_input(attrs),
+        with {:ok, input} <- SourceFlow.issue_state_lookup_input(attrs),
              {:ok, dispatch} <-
                dispatch_linear(invocation, "linear.workflow_states.list", input, opts),
              {:ok, state_id} <-
-               LinearSourceFlow.issue_state_id_from_lookup(output!(dispatch), attrs) do
+               SourceFlow.issue_state_id_from_lookup(output!(dispatch), attrs) do
           {:ok,
            attrs
            |> Map.put(:state_id, state_id)

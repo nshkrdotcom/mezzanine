@@ -2,8 +2,7 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
   use ExUnit.Case, async: true
 
   alias Mezzanine.SourceEngine.Admission
-  alias Mezzanine.SourceEngine.LinearIssue
-  alias Mezzanine.SourceEngine.LinearSourceFlow
+  alias Mezzanine.SourceEngine.ProviderAdapters.Linear.{Issue, SourceFlow}
   alias Mezzanine.SourceEngine.SourceBinding
   alias Mezzanine.SourceEngine.SourceEvent
 
@@ -152,7 +151,7 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
     }
 
     assert {:ok, matched} =
-             LinearIssue.subject_attrs(
+             Issue.subject_attrs(
                linear_issue(),
                Map.put(source_envelope(), :viewer, %{id: "usr-linear-viewer"}),
                binding
@@ -162,7 +161,7 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
     assert matched.state_mapping.reason == "blocked_by_non_terminal"
 
     assert {:ok, ignored} =
-             LinearIssue.subject_attrs(
+             Issue.subject_attrs(
                linear_issue(),
                Map.put(source_envelope(), :viewer, %{id: "usr-someone-else"}),
                binding
@@ -174,7 +173,7 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
 
   test "normalizes Linear issue source facts into installation-scoped subject attrs" do
     assert {:ok, attrs} =
-             LinearIssue.subject_attrs(
+             Issue.subject_attrs(
                linear_issue(),
                source_envelope(),
                source_binding()
@@ -236,24 +235,24 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
     binding = source_binding()
 
     assert {:error, :missing_tenant_scope} =
-             LinearIssue.subject_attrs(issue, Map.delete(source_envelope(), :tenant_id), binding)
+             Issue.subject_attrs(issue, Map.delete(source_envelope(), :tenant_id), binding)
 
     assert {:error, :missing_installation_scope} =
-             LinearIssue.subject_attrs(
+             Issue.subject_attrs(
                issue,
                Map.delete(source_envelope(), :installation_id),
                binding
              )
 
     assert {:error, :authorization_scope_missing} =
-             LinearIssue.subject_attrs(
+             Issue.subject_attrs(
                issue,
                Map.delete(source_envelope(), :authorization_scope),
                binding
              )
 
     assert {:error, :authorization_scope_mismatch} =
-             LinearIssue.subject_attrs(
+             Issue.subject_attrs(
                issue,
                %{source_envelope() | authorization_scope: %{"tenant_id" => "tenant-2"}},
                binding
@@ -267,7 +266,7 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
     }
 
     assert {:ok, input} =
-             LinearSourceFlow.candidate_fetch_input(binding,
+             SourceFlow.candidate_fetch_input(binding,
                viewer: %{id: "usr-linear-viewer"},
                page_size: 25,
                cursor: "cursor-1"
@@ -285,12 +284,12 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
            }
 
     assert {:error, :linear_viewer_required_for_me_assignee} =
-             LinearSourceFlow.candidate_fetch_input(binding)
+             SourceFlow.candidate_fetch_input(binding)
   end
 
   test "builds current-state Linear fetch inputs by de-duplicating and batching requested ids" do
     assert {:ok, inputs} =
-             LinearSourceFlow.current_state_fetch_inputs(
+             SourceFlow.current_state_fetch_inputs(
                ["lin-issue-1", "lin-issue-2", "lin-issue-1", "lin-issue-3"],
                source_binding(),
                page_size: 2
@@ -307,7 +306,7 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
     second_issue = %{first_issue | id: "lin-issue-654", identifier: "ENG-654"}
 
     assert {:ok, current_state} =
-             LinearSourceFlow.normalize_current_state_page(
+             SourceFlow.normalize_current_state_page(
                %{issues: [second_issue, first_issue]},
                Map.put(source_envelope(), :viewer, %{id: "usr-linear-viewer"}),
                %{source_binding() | candidate_filters: %{assignee: "me"}},
@@ -330,7 +329,7 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
       |> Map.put(:project, "ops-automation")
       |> Map.put(:team, "Platform")
 
-    assert {:ok, attrs} = LinearIssue.subject_attrs(issue, source_envelope(), source_binding())
+    assert {:ok, attrs} = Issue.subject_attrs(issue, source_envelope(), source_binding())
 
     assert attrs.source_routing["project"] == %{"name" => "ops-automation"}
     assert attrs.source_routing["team"] == %{"name" => "Platform"}
@@ -341,7 +340,7 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
     envelope = source_envelope()
 
     assert {:ok, page} =
-             LinearSourceFlow.normalize_candidate_page(
+             SourceFlow.normalize_candidate_page(
                %{issues: [linear_issue()], page_info: %{has_next_page: false}},
                envelope,
                binding
@@ -351,7 +350,7 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
     assert [%{source_ref: "linear://installation-1/issue/ENG-321"}] = page.subject_attrs
 
     assert {:ok, refreshed} =
-             LinearSourceFlow.normalize_issue_refresh(%{issue: linear_issue()}, envelope, binding)
+             SourceFlow.normalize_issue_refresh(%{issue: linear_issue()}, envelope, binding)
 
     assert refreshed.operation == "linear.issues.retrieve"
     assert refreshed.subject_attrs.provider_external_ref == "lin-issue-321"
@@ -359,7 +358,7 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
 
   test "builds Linear publication inputs and public-safe publication receipt refs" do
     assert {:ok, {"linear.comments.update", update_input}} =
-             LinearSourceFlow.publication_input(%{
+             SourceFlow.publication_input(%{
                comment_id: "comment-1",
                body: "Ready for review"
              })
@@ -367,7 +366,7 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
     assert update_input == %{comment_id: "comment-1", body: "Ready for review"}
 
     assert {:ok, {"linear.comments.create", create_input}} =
-             LinearSourceFlow.publication_input(%{
+             SourceFlow.publication_input(%{
                issue_id: "lin-issue-321",
                body: "Ready for review",
                allow_create_fallback?: true
@@ -376,7 +375,7 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
     assert create_input == %{issue_id: "lin-issue-321", body: "Ready for review"}
 
     assert {:ok, receipt} =
-             LinearSourceFlow.publication_receipt(
+             SourceFlow.publication_receipt(
                %{
                  output: %{success: true, comment: %{id: "comment-1"}},
                  governed_lower_envelope: %{
@@ -415,7 +414,7 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
 
   test "builds Linear publication governed-denial receipts without provider response refs" do
     assert {:ok, receipt} =
-             LinearSourceFlow.publication_denial_receipt(
+             SourceFlow.publication_denial_receipt(
                %{
                  lower_denial_ref:
                    "lower-denial://lower-request%3A%2F%2Fsource%2Fcomment-1/policy_denied",
@@ -452,7 +451,7 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
 
   test "builds Linear state-name lookup input and issue-state publication receipts" do
     assert {:ok, lookup_input} =
-             LinearSourceFlow.issue_state_lookup_input(%{
+             SourceFlow.issue_state_lookup_input(%{
                state_name: "Done",
                team_id: "team-linear"
              })
@@ -463,7 +462,7 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
            }
 
     assert {:ok, "state-done"} =
-             LinearSourceFlow.issue_state_id_from_lookup(
+             SourceFlow.issue_state_id_from_lookup(
                %{
                  workflow_states: [
                    %{id: "state-backlog", name: "Backlog", team: %{id: "team-linear"}},
@@ -474,7 +473,7 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
              )
 
     assert {:ok, receipt} =
-             LinearSourceFlow.issue_state_update_receipt(
+             SourceFlow.issue_state_update_receipt(
                %{
                  output: %{
                    success: true,

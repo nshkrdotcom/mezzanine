@@ -567,8 +567,9 @@ defmodule Mezzanine.IntegrationBridgeTest do
     end
 
     assert {:ok, result} =
-             IntegrationBridge.fetch_linear_candidates(
+             IntegrationBridge.fetch_source_candidates(
                invocation,
+               :issue_tracker,
                source_binding,
                invoke_fun: invoke_fun,
                viewer: %{id: "usr-linear-viewer"}
@@ -632,8 +633,9 @@ defmodule Mezzanine.IntegrationBridgeTest do
     end
 
     assert {:ok, result} =
-             IntegrationBridge.fetch_linear_candidates(
+             IntegrationBridge.fetch_source_candidates(
                prepared.authorized_invocation,
+               :issue_tracker,
                source_binding(),
                Keyword.merge(prepared.source_opts,
                  invoke_fun: invoke_fun,
@@ -701,8 +703,9 @@ defmodule Mezzanine.IntegrationBridgeTest do
     end
 
     assert {:ok, result} =
-             IntegrationBridge.fetch_linear_candidates(
+             IntegrationBridge.fetch_source_candidates(
                prepared.authorized_invocation,
+               :issue_tracker,
                source_binding(),
                Keyword.merge(prepared.source_opts,
                  invoke_fun: invoke_fun,
@@ -2420,8 +2423,9 @@ defmodule Mezzanine.IntegrationBridgeTest do
     end
 
     assert {:ok, result} =
-             IntegrationBridge.fetch_linear_candidates(
+             IntegrationBridge.fetch_source_candidates(
                invocation,
+               :issue_tracker,
                source_binding(),
                invoke_fun: invoke_fun
              )
@@ -2455,8 +2459,9 @@ defmodule Mezzanine.IntegrationBridgeTest do
     end
 
     assert {:ok, result} =
-             IntegrationBridge.fetch_linear_current_issue_states(
+             IntegrationBridge.fetch_source_current_states(
                invocation,
+               :issue_tracker,
                ["lin-issue-321", "lin-issue-654", "lin-issue-321", "lin-issue-777"],
                source_binding(),
                invoke_fun: invoke_fun,
@@ -2491,8 +2496,9 @@ defmodule Mezzanine.IntegrationBridgeTest do
     end
 
     assert {:ok, result} =
-             IntegrationBridge.refresh_linear_issue(
+             IntegrationBridge.refresh_source_item(
                invocation,
+               :issue_tracker,
                "lin-issue-321",
                source_binding(),
                invoke_fun: invoke_fun
