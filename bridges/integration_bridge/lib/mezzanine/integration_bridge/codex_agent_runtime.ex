@@ -276,7 +276,7 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
       tenant_id: Keyword.get(opts, :tenant_id, map_value(attrs, :tenant_ref)),
       trace_id: map_value(attrs, :trace_id),
       environment: Keyword.get(opts, :environment, :prod),
-      allowed_operations: [@capability_id],
+      allowed_operations: Keyword.get(opts, :allowed_operations, [@capability_id]),
       sandbox:
         Keyword.get(opts, :sandbox, %{
           level: :strict,
@@ -286,6 +286,7 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
           allowed_tools: [@capability_id]
         })
     ]
+    |> put_present(:runtime_binding, Keyword.get(opts, :runtime_binding))
     |> put_present(:runtime_auth_mode, Keyword.get(opts, :runtime_auth_mode))
     |> put_present(:runtime_auth_scope, Keyword.get(opts, :runtime_auth_scope))
   end

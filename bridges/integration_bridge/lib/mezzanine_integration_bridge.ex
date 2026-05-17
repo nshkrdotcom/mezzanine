@@ -117,10 +117,75 @@ defmodule Mezzanine.IntegrationBridge do
   defdelegate execute_dynamic_tool(invocation, tool_name, arguments, opts \\ []),
     to: LinearGraphQLToolExecutor
 
-  @spec execute_linear_graphql_tool(AuthorizedInvocation.t(), term(), keyword()) ::
-          {:ok, map()} | {:error, term()}
-  defdelegate execute_linear_graphql_tool(invocation, arguments, opts \\ []),
-    to: LinearGraphQLToolExecutor
+  @spec invoke_runtime_operation(
+          term(),
+          term(),
+          term(),
+          map(),
+          map() | keyword() | nil,
+          keyword()
+        ) :: {:ok, map()} | {:error, term()}
+  defdelegate invoke_runtime_operation(
+                invocation,
+                runtime_role_ref,
+                operation_role_ref,
+                attrs,
+                runtime_binding,
+                opts \\ []
+              ),
+              to: Mezzanine.IntegrationBridge.RuntimeDispatcher
+
+  @spec runtime_operation_allowed_operations(
+          term(),
+          term(),
+          map() | keyword() | nil,
+          map(),
+          keyword()
+        ) ::
+          [String.t()]
+  defdelegate runtime_operation_allowed_operations(
+                runtime_role_ref,
+                operation_role_ref,
+                runtime_binding,
+                attrs,
+                opts \\ []
+              ),
+              to: Mezzanine.IntegrationBridge.RuntimeDispatcher
+
+  @spec invoke_runtime_tool(
+          AuthorizedInvocation.t(),
+          term(),
+          term(),
+          term(),
+          map() | keyword() | nil,
+          keyword()
+        ) :: {:ok, map()} | {:error, term()}
+  defdelegate invoke_runtime_tool(
+                invocation,
+                tool_role_ref,
+                operation_role_ref,
+                arguments,
+                tool_binding,
+                opts \\ []
+              ),
+              to: Mezzanine.IntegrationBridge.ToolDispatcher
+
+  @spec runtime_tool_allowed_operations(
+          term(),
+          term(),
+          map() | keyword() | nil,
+          term(),
+          keyword()
+        ) ::
+          [String.t()]
+  defdelegate runtime_tool_allowed_operations(
+                tool_role_ref,
+                operation_role_ref,
+                tool_binding,
+                attrs,
+                opts \\ []
+              ),
+              to: Mezzanine.IntegrationBridge.ToolDispatcher
 
   @spec create_github_pr(AuthorizedInvocation.t(), map() | keyword(), keyword()) ::
           {:ok, map()} | {:error, term()}

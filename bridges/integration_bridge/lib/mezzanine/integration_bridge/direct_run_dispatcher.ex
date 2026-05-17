@@ -64,6 +64,7 @@ defmodule Mezzanine.IntegrationBridge.DirectRunDispatcher do
     |> put_new_present(:trace_id, envelope.trace_id)
     |> put_new_present(:actor_id, actor_id(invocation))
     |> put_new_present(:environment, environment(invocation, opts))
+    |> put_new_present(:tool_binding, Keyword.get(opts, :tool_binding))
     |> Keyword.put_new(:allowed_operations, envelope.allowed_operations)
   end
 

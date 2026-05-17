@@ -405,6 +405,41 @@ defmodule Mezzanine.IntegrationBridgeTest do
            }
   end
 
+  test "generic runtime tool invocation resolves a Linear GraphQL tool binding" do
+    invocation = authorized_invocation_allowing(["linear.graphql.execute"])
+
+    invoke_fun = fn capability, input, opts ->
+      send(self(), {:runtime_tool_invoke, capability, input, opts})
+
+      {:ok, %{output: %{data: %{"viewer" => %{"id" => "usr-linear-viewer"}}}}}
+    end
+
+    tool_binding = %{
+      tool_binding_ref: "tool-binding://extravaganza/issue-graphql-tool",
+      adapter_ref: :linear,
+      operation_ref: "linear.graphql.execute",
+      tool_name: "linear_graphql",
+      allowed_operations: ["linear.graphql.execute"]
+    }
+
+    assert {:ok, result} =
+             IntegrationBridge.invoke_runtime_tool(
+               invocation,
+               :issue_graphql_tool,
+               :execute_query,
+               %{"query" => "query Viewer { viewer { id } }", "variables" => %{}},
+               tool_binding,
+               invoke_fun: invoke_fun
+             )
+
+    assert_received {:runtime_tool_invoke, "linear.graphql.execute", input, opts}
+    assert input.query == "query Viewer { viewer { id } }"
+    assert Keyword.fetch!(opts, :allowed_operations) == ["linear.graphql.execute"]
+    assert Keyword.fetch!(opts, :tool_binding).tool_binding_ref =~ "issue-graphql-tool"
+    assert result.tool_name == "linear_graphql"
+    assert result.success? == true
+  end
+
   test "Linear GraphQL dynamic tool marks partial GraphQL error responses unsuccessful" do
     invocation = authorized_invocation_allowing(["linear.graphql.execute"])
 
@@ -735,6 +770,153 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert "linear.workflow_states.list" in prepared.authorized_invocation.invocation_request.allowed_operations
 
     assert "linear.issues.update" in prepared.authorized_invocation.invocation_request.allowed_operations
+  end
+
+  test "generic runtime operation resolves a Codex CLI runtime binding" do
+    attrs = %{
+      tenant_ref: "tenant://sample-app",
+      installation_ref: "installation://sample-app/codex",
+      subject_ref: "subject://sample-app/codex",
+      run_ref: "run://sample-app/codex",
+      trace_id: "trace://sample-app/codex",
+      idempotency_key: "idem-codex",
+      authority_context_ref: "authority-context://sample-app/codex"
+    }
+
+    invoke_fun = fn capability_id, input, opts ->
+      assert Process.get(:codex_authority_admitted?) == true
+      send(self(), {:codex_invoke, capability_id, input, opts})
+
+      {:ok,
+       %{
+         run: %{run_id: "jido-run-codex"},
+         attempt: %{attempt_id: "jido-attempt-codex"},
+         output: %{
+           text: "Sample App headless Codex live path is operational.",
+           provider_session_id: "codex-provider-session-1",
+           status: :completed
+         }
+       }}
+    end
+
+    authority_admission_fun = fn authority_attrs ->
+      send(self(), {:runtime_authority_admission, authority_attrs})
+      Process.put(:codex_authority_admitted?, true)
+
+      {:ok,
+       authority_attrs
+       |> Map.take([
+         :authority_packet_ref,
+         :connector_binding_ref,
+         :credential_lease_ref,
+         :provider_family
+       ])
+       |> Map.put(:handoff_ref, "workflow-authority-handoff://#{authority_attrs.idempotency_key}")
+       |> Map.put(:raw_material_present?, false)}
+    end
+
+    runtime_binding = %{
+      runtime_binding_ref: "runtime-binding://extravaganza/coding-agent-runtime",
+      adapter_ref: :codex_cli,
+      manifest_ref: "manifest://jido/connectors/codex_cli@local",
+      operation_ref: "codex.session.turn",
+      allowed_operations: ["codex.session.turn"]
+    }
+
+    assert {:ok, projection} =
+             IntegrationBridge.invoke_runtime_operation(
+               nil,
+               :coding_agent_runtime,
+               :session_turn,
+               attrs,
+               runtime_binding,
+               invoke_fun: invoke_fun,
+               connection_id: "conn-codex",
+               authority_admission_fun: authority_admission_fun,
+               start_runtime_router?: false,
+               register_connector?: false
+             )
+
+    assert_received {:runtime_authority_admission, authority_attrs}
+    assert authority_attrs.provider_family == "codex"
+    assert_received {:codex_invoke, "codex.session.turn", input, opts}
+    assert input.authority_metadata["capability_id"] == "codex.session.turn"
+    assert Keyword.fetch!(opts, :allowed_operations) == ["codex.session.turn"]
+    assert Keyword.fetch!(opts, :runtime_binding).runtime_binding_ref =~ "coding-agent-runtime"
+    assert projection.run_ref == "run://sample-app/codex"
+    assert projection.status == "completed"
+
+    Process.delete(:codex_authority_admitted?)
+  end
+
+  test "generic runtime operation honors supervised workspace hooks" do
+    parent = self()
+    workspace_root = tmp_dir("generic-codex-before-run")
+
+    attrs =
+      codex_agent_attrs()
+      |> Map.put(:workspace_ref, "workspace://generic-codex-before-run")
+      |> Map.put(:run_ref, "run://neutral/generic-codex-before-run")
+
+    runtime_binding = %{
+      runtime_binding_ref: "runtime-binding://extravaganza/coding-agent-runtime",
+      adapter_ref: :codex_cli,
+      manifest_ref: "manifest://jido/connectors/codex_cli@local",
+      operation_ref: "codex.session.turn",
+      allowed_operations: ["codex.session.turn"]
+    }
+
+    hook_runner = fn hook, context ->
+      send(parent, {:generic_runtime_hook, hook.hook_ref, context.cwd, context.run_ref})
+      {:ok, %{stdout: "ready secret-token", stderr: ""}}
+    end
+
+    invoke_fun = fn capability_id, input, opts ->
+      send(parent, {:generic_runtime_invoke, capability_id, input.cwd, opts})
+
+      {:ok,
+       %{
+         run: %{run_id: "jido-run-generic-before-run"},
+         attempt: %{attempt_id: "jido-attempt-generic-before-run"},
+         output: %{provider_session_id: "codex-session-generic-before-run", status: :completed}
+       }}
+    end
+
+    assert {:ok, projection} =
+             IntegrationBridge.invoke_runtime_operation(
+               nil,
+               :coding_agent_runtime,
+               :session_turn,
+               attrs,
+               runtime_binding,
+               cwd: workspace_root,
+               workspace_hook_specs: [
+                 %{"hook_ref" => "preflight", "stage" => "before_run", "timeout_ms" => 100}
+               ],
+               workspace_hook_runner: hook_runner,
+               hook_redactions: ["secret-token"],
+               invoke_fun: invoke_fun,
+               connection_id: "conn-codex",
+               start_runtime_router?: false,
+               register_connector?: false
+             )
+
+    assert_receive {:generic_runtime_hook, "preflight", ^workspace_root,
+                    "run://neutral/generic-codex-before-run"}
+
+    assert_receive {:generic_runtime_invoke, "codex.session.turn", ^workspace_root, invoke_opts}
+    assert Keyword.fetch!(invoke_opts, :runtime_binding).runtime_binding_ref =~ "coding-agent-runtime"
+
+    assert [hook_event] =
+             Enum.filter(
+               projection.runtime_events,
+               &(&1.event_kind == "workspace.hook.before_run")
+             )
+
+    assert [receipt] = hook_event.extensions.hook_receipts
+    assert receipt.stage == :before_run
+    assert receipt.status == :succeeded
+    assert receipt.result.stdout == "ready [REDACTED]"
   end
 
   test "Codex agent runtime invokes Jido codex.session.turn and returns AppKit readback projection" do
