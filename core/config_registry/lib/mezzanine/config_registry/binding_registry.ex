@@ -44,6 +44,12 @@ defmodule Mezzanine.ConfigRegistry.BindingRegistry do
     ActiveBindingSet.by_scope(tenant_id, environment, pack_slug)
   end
 
+  @spec active_binding_set_for_installation(String.t()) ::
+          {:ok, ActiveBindingSet.t()} | {:error, term()}
+  def active_binding_set_for_installation(installation_id) when is_binary(installation_id) do
+    ActiveBindingSet.by_installation(installation_id)
+  end
+
   @spec resolve_active_binding(keyword() | map()) :: {:ok, map()} | {:error, term()}
   def resolve_active_binding(attrs) when is_list(attrs) or is_map(attrs) do
     with {:ok, request} <- resolve_request(attrs),
@@ -89,6 +95,26 @@ defmodule Mezzanine.ConfigRegistry.BindingRegistry do
         request.run_ref,
         request.binding_ref
       )
+    end
+  end
+
+  @spec binding_set_gc_status(String.t()) :: {:ok, map()} | {:error, term()}
+  def binding_set_gc_status(binding_set_id) when is_binary(binding_set_id) do
+    with {:ok, %BindingSet{} = binding_set} <- Ash.get(BindingSet, binding_set_id),
+         {:ok, snapshots} <- RunBindingSnapshot.by_binding_set(binding_set_id),
+         {:ok, active?} <- active_binding_set?(binding_set) do
+      snapshot_count = length(snapshots)
+      status = gc_status(binding_set, active?, snapshot_count)
+
+      {:ok,
+       %{
+         binding_set_id: binding_set.id,
+         binding_set_status: binding_set.status,
+         active?: active?,
+         snapshot_count: snapshot_count,
+         status: status,
+         eligible?: status == :eligible
+       }}
     end
   end
 
@@ -213,15 +239,31 @@ defmodule Mezzanine.ConfigRegistry.BindingRegistry do
            installation.pack_slug
          ) do
       {:ok, %ActiveBindingSet{} = active} ->
-        active
-        |> ActiveBindingSet.replace_binding_set(
-          Map.drop(attrs, [:tenant_id, :environment, :pack_slug]),
-          return_notifications?: true
-        )
-        |> action_result()
+        with :ok <- retire_superseded_binding_set(active, binding_set) do
+          active
+          |> ActiveBindingSet.replace_binding_set(
+            Map.drop(attrs, [:tenant_id, :environment, :pack_slug]),
+            return_notifications?: true
+          )
+          |> action_result()
+        end
 
       {:error, _not_found} ->
         attrs |> ActiveBindingSet.activate(return_notifications?: true) |> action_result()
+    end
+  end
+
+  defp retire_superseded_binding_set(
+         %ActiveBindingSet{binding_set_id: binding_set_id},
+         %BindingSet{id: binding_set_id}
+       ),
+       do: :ok
+
+  defp retire_superseded_binding_set(%ActiveBindingSet{} = active, %BindingSet{} = _binding_set) do
+    with {:ok, %BindingSet{} = old_binding_set} <- Ash.get(BindingSet, active.binding_set_id),
+         {:ok, _retired_binding_set} <-
+           old_binding_set |> BindingSet.retire(return_notifications?: true) |> action_result() do
+      :ok
     end
   end
 
@@ -361,6 +403,25 @@ defmodule Mezzanine.ConfigRegistry.BindingRegistry do
           %{binding_ref: compiled_binding.binding_ref, operation_role: operation_role}}}
     end
   end
+
+  defp active_binding_set?(%BindingSet{} = binding_set) do
+    case ActiveBindingSet.by_scope(
+           binding_set.tenant_id,
+           binding_set.environment,
+           binding_set.pack_slug
+         ) do
+      {:ok, %ActiveBindingSet{} = active} -> {:ok, active.binding_set_id == binding_set.id}
+      {:error, _not_found} -> {:ok, false}
+    end
+  end
+
+  defp gc_status(_binding_set, true, _snapshot_count), do: :active
+
+  defp gc_status(_binding_set, false, snapshot_count) when snapshot_count > 0,
+    do: :retained_by_run_snapshots
+
+  defp gc_status(%BindingSet{status: :retired}, false, 0), do: :eligible
+  defp gc_status(_binding_set, false, 0), do: :not_retired
 
   defp ensure_expected_epoch(_active, nil), do: :ok
 

@@ -180,6 +180,12 @@ defmodule MezzanineConfigRegistry do
     BindingRegistry.active_binding_set(tenant_id, environment, pack_slug)
   end
 
+  @spec active_binding_set_for_installation(String.t()) ::
+          {:ok, Mezzanine.ConfigRegistry.ActiveBindingSet.t()} | {:error, term()}
+  def active_binding_set_for_installation(installation_id) when is_binary(installation_id) do
+    BindingRegistry.active_binding_set_for_installation(installation_id)
+  end
+
   @spec resolve_active_binding(keyword() | map()) :: {:ok, map()} | {:error, term()}
   def resolve_active_binding(attrs) when is_list(attrs) or is_map(attrs) do
     BindingRegistry.resolve_active_binding(attrs)
@@ -195,6 +201,11 @@ defmodule MezzanineConfigRegistry do
           {:ok, Mezzanine.ConfigRegistry.RunBindingSnapshot.t()} | {:error, term()}
   def resolve_run_binding_snapshot(attrs) when is_list(attrs) or is_map(attrs) do
     BindingRegistry.resolve_run_binding_snapshot(attrs)
+  end
+
+  @spec binding_set_gc_status(String.t()) :: {:ok, map()} | {:error, term()}
+  def binding_set_gc_status(binding_set_id) when is_binary(binding_set_id) do
+    BindingRegistry.binding_set_gc_status(binding_set_id)
   end
 
   @spec import_authoring_bundle(map(), keyword()) :: {:ok, map()} | {:error, term()}

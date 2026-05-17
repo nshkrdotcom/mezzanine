@@ -16,6 +16,7 @@ defmodule Mezzanine.ConfigRegistry.ActiveBindingSet do
     define(:activate, action: :activate)
     define(:get, action: :read)
     define(:by_scope, action: :by_scope, args: [:tenant_id, :environment, :pack_slug])
+    define(:by_installation, action: :by_installation, args: [:installation_id])
     define(:replace_binding_set, action: :replace_binding_set)
   end
 
@@ -47,6 +48,13 @@ defmodule Mezzanine.ConfigRegistry.ActiveBindingSet do
             pack_slug == ^arg(:pack_slug)
         )
       )
+    end
+
+    read :by_installation do
+      argument(:installation_id, :uuid, allow_nil?: false)
+      get?(true)
+
+      filter(expr(installation_id == ^arg(:installation_id)))
     end
 
     update :replace_binding_set do

@@ -25,6 +25,7 @@ defmodule Mezzanine.ConfigRegistry.RunBindingSnapshot do
     define(:capture, action: :capture)
     define(:get, action: :read)
     define(:by_snapshot_ref, action: :by_snapshot_ref, args: [:snapshot_ref])
+    define(:by_binding_set, action: :by_binding_set, args: [:binding_set_id])
 
     define(:by_run_binding,
       action: :by_run_binding,
@@ -58,6 +59,11 @@ defmodule Mezzanine.ConfigRegistry.RunBindingSnapshot do
       argument(:snapshot_ref, :string, allow_nil?: false)
       get?(true)
       filter(expr(snapshot_ref == ^arg(:snapshot_ref)))
+    end
+
+    read :by_binding_set do
+      argument(:binding_set_id, :uuid, allow_nil?: false)
+      filter(expr(binding_set_id == ^arg(:binding_set_id)))
     end
 
     read :by_run_binding do

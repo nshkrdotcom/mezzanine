@@ -33,6 +33,11 @@ defmodule Mezzanine.ConfigRegistry.BindingRegistryTest do
                installation.pack_slug
              )
 
+    assert {:ok, %ActiveBindingSet{} = by_installation} =
+             MezzanineConfigRegistry.active_binding_set_for_installation(installation.id)
+
+    assert by_installation.id == active.id
+
     assert active.binding_epoch > 0
     assert active.compiled_pack_revision == installation.compiled_pack_revision
 
@@ -144,6 +149,15 @@ defmodule Mezzanine.ConfigRegistry.BindingRegistryTest do
     assert second_active.binding_epoch > first_active.binding_epoch
     assert second_active.compiled_pack_revision == updated_installation.compiled_pack_revision
 
+    assert Ash.get!(BindingSet, first_active.binding_set_id).status == :retired
+
+    assert {:ok, gc_status} =
+             MezzanineConfigRegistry.binding_set_gc_status(first_active.binding_set_id)
+
+    assert gc_status.status == :eligible
+    assert gc_status.eligible?
+    assert gc_status.snapshot_count == 0
+
     assert {:error, {:stale_binding_epoch, stale}} =
              MezzanineConfigRegistry.resolve_active_binding(
                tenant_id: updated_installation.tenant_id,
@@ -194,6 +208,14 @@ defmodule Mezzanine.ConfigRegistry.BindingRegistryTest do
       )
 
     assert second_active.binding_epoch > snapshot.binding_epoch
+    assert Ash.get!(BindingSet, snapshot.binding_set_id).status == :retired
+
+    assert {:ok, gc_status} =
+             MezzanineConfigRegistry.binding_set_gc_status(snapshot.binding_set_id)
+
+    assert gc_status.status == :retained_by_run_snapshots
+    refute gc_status.eligible?
+    assert gc_status.snapshot_count == 1
 
     assert {:ok, %RunBindingSnapshot{} = pinned_snapshot} =
              MezzanineConfigRegistry.resolve_run_binding_snapshot(

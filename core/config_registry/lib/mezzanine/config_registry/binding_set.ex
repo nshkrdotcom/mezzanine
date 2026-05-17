@@ -15,6 +15,7 @@ defmodule Mezzanine.ConfigRegistry.BindingSet do
   code_interface do
     define(:register, action: :register)
     define(:get, action: :read)
+    define(:retire, action: :retire)
 
     define(:by_scope_epoch,
       action: :by_scope_epoch,
@@ -60,6 +61,12 @@ defmodule Mezzanine.ConfigRegistry.BindingSet do
     read :for_installation do
       argument(:installation_id, :uuid, allow_nil?: false)
       filter(expr(installation_id == ^arg(:installation_id)))
+    end
+
+    update :retire do
+      require_atomic?(false)
+
+      change(set_attribute(:status, :retired))
     end
   end
 
