@@ -13,6 +13,7 @@ defmodule Mezzanine.M1M2Runtime.DeterministicLowerCompletion do
   alias Mezzanine.LowerGateway
   alias Mezzanine.M1M2Runtime.WorkflowLowerGateway
   alias Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow
+  alias Mezzanine.WorkflowRuntime.TerminalLowerReceiptShape
 
   @release_manifest_ref "phase6-deterministic-lower-completion"
   @default_integration_bridge :"Elixir.Mezzanine.IntegrationBridge"
@@ -276,51 +277,7 @@ defmodule Mezzanine.M1M2Runtime.DeterministicLowerCompletion do
   end
 
   defp lower_receipt_payload(execution, accepted, facts, attrs) do
-    submission_ref = normalize_map(map_value(accepted, :submission_ref, %{}))
-    lower_receipt_ref = string_value(facts, "lower_receipt_ref")
-    runtime_events = list_value(facts, "runtime_events")
-    lower_event_ref = runtime_events |> List.last() |> map_value(:event_ref)
-
-    %{
-      "receipt_id" => lower_receipt_ref,
-      "receipt_state" => "succeeded",
-      "lower_receipt_ref" => lower_receipt_ref,
-      "run_id" => string_value(facts, "run_id") || string_value(submission_ref, "run_id"),
-      "attempt_id" =>
-        string_value(facts, "attempt_id") || string_value(submission_ref, "attempt_id"),
-      "lower_event_ref" => lower_event_ref,
-      "provider_object_refs" => list_value(facts, "provider_object_refs"),
-      "artifact_refs" => artifact_refs(facts),
-      "evidence_artifact_refs" => artifact_refs(facts),
-      "runtime_events" => runtime_events,
-      "token_totals" => map_value(facts, :token_totals, %{}),
-      "token_dedupe" => map_value(facts, :token_dedupe, %{}),
-      "rate_limit" => map_value(facts, :rate_limit, %{}),
-      "retry" => list_value(facts, "retry"),
-      "retry_receipts" => list_value(facts, "retry_receipts"),
-      "aitrace" => map_value(facts, :aitrace, %{}),
-      "prompt_provenance" => map_value(facts, :prompt_provenance, %{}),
-      "memory_context" => map_value(facts, :memory_context, %{}),
-      "provider_account" => map_value(facts, :provider_account, %{}),
-      "credential" => map_value(facts, :credential, %{}),
-      "runtime_profile" => map_value(facts, :runtime_profile, %{}),
-      "governed_lower_envelope" => map_value(facts, :governed_lower_envelope, %{}),
-      "authority_decision" => map_value(facts, :authority_decision, %{}),
-      "connector_manifests" => list_value(facts, "connector_manifests"),
-      "capability_negotiations" => list_value(facts, "capability_negotiations"),
-      "incident_bundles" => list_value(facts, "incident_bundles"),
-      "acceptance" => map_value(facts, :acceptance, %{}),
-      "github_pr_evidence" => map_value(facts, :github_pr_evidence, %{}),
-      "source_publication" => map_value(facts, :source_publication, %{}),
-      "workpad_refs" => list_value(facts, "workpad_refs"),
-      "trace_id" => execution.trace_id,
-      "causation_id" => execution.causation_id,
-      "idempotency_key" => execution.submission_dedupe_key,
-      "ji_submission_key" => string_value(submission_ref, "ji_submission_key"),
-      "recorded_by" => "mezzanine_m1_m2_runtime",
-      "actor_ref" => actor_ref(attrs)
-    }
-    |> compact_map()
+    TerminalLowerReceiptShape.from_deterministic_completion(execution, accepted, facts, attrs)
   end
 
   defp deterministic_facts(accepted) do
@@ -461,18 +418,6 @@ defmodule Mezzanine.M1M2Runtime.DeterministicLowerCompletion do
     end
   end
 
-  defp artifact_refs(facts) do
-    case list_value(facts, "artifact_refs") do
-      [] ->
-        facts
-        |> list_value("artifact_ref_strings")
-        |> Enum.map(&%{"kind" => "artifact", "content_ref" => &1})
-
-      refs ->
-        refs
-    end
-  end
-
   defp artifact_ref_strings(lower_receipt) do
     lower_receipt
     |> map_value(:artifact_refs, [])
@@ -569,8 +514,6 @@ defmodule Mezzanine.M1M2Runtime.DeterministicLowerCompletion do
   defp normalize_value(nil), do: nil
   defp normalize_value(value) when is_atom(value), do: Atom.to_string(value)
   defp normalize_value(value), do: value
-
-  defp compact_map(map), do: Map.reject(map, fn {_key, value} -> value in [nil, [], %{}] end)
 
   defp truthy?(value), do: value in [true, "true", 1, "1"]
 

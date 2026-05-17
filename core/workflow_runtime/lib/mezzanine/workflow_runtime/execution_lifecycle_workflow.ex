@@ -11,6 +11,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
   alias Mezzanine.Intent.RunIntent
   alias Mezzanine.WorkflowExecutionLifecycleInput
   alias Mezzanine.WorkflowReceiptSignal
+  alias Mezzanine.WorkflowRuntime.TerminalLowerReceiptShape
   alias Mezzanine.WorkflowSignalReceipt
   alias Mezzanine.WorkflowTerminalReceiptPolicy
   alias Mezzanine.WorkspaceEngine.{Cleanup, WorkspaceRecord}
@@ -1104,108 +1105,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
   end
 
   defp lower_receipt_payload(attrs) do
-    routing = Map.get(attrs, :routing_facts, %{}) || %{}
-
-    %{
-      receipt_id: Map.get(attrs, :signal_id, attrs.lower_receipt_ref),
-      receipt_state: Map.get(attrs, :receipt_state, attrs.terminal_state),
-      lower_receipt_ref: attrs.lower_receipt_ref,
-      run_id: Map.get(attrs, :lower_run_ref),
-      attempt_id: Map.get(attrs, :lower_attempt_ref),
-      lower_event_ref: Map.get(attrs, :lower_event_ref),
-      provider_object_refs: payload_value(attrs, routing, :provider_object_refs) || [],
-      evidence_artifact_refs: payload_value(attrs, routing, :evidence_artifact_refs) || [],
-      artifact_refs: payload_value(attrs, routing, :artifact_refs) || [],
-      token_totals: payload_value(attrs, routing, :token_totals),
-      token_dedupe: payload_value(attrs, routing, :token_dedupe),
-      rate_limit: payload_value(attrs, routing, :rate_limit),
-      retry: payload_value(attrs, routing, :retry),
-      retry_receipts: payload_value(attrs, routing, :retry_receipts) || [],
-      runtime_events: payload_value(attrs, routing, :runtime_events) || [],
-      aitrace: payload_value(attrs, routing, :aitrace),
-      prompt_provenance: payload_value(attrs, routing, :prompt_provenance),
-      semantic_failure: payload_value(attrs, routing, :semantic_failure),
-      provider_account: payload_value(attrs, routing, :provider_account),
-      credential: payload_value(attrs, routing, :credential),
-      runtime_profile: runtime_profile_payload(attrs, routing),
-      governed_lower_envelope: lower_envelope_payload(attrs, routing),
-      authority_decision: authority_decision_payload(attrs, routing),
-      connector_manifests: connector_manifest_payload(attrs, routing),
-      capability_negotiations: capability_negotiation_payload(attrs, routing),
-      incident_bundles: payload_value(attrs, routing, :incident_bundles) || [],
-      acceptance: payload_value(attrs, routing, :acceptance),
-      github_pr_evidence: payload_value(attrs, routing, :github_pr_evidence),
-      source_publication: payload_value(attrs, routing, :source_publication),
-      workpad_refs: payload_value(attrs, routing, :workpad_refs) || [],
-      trace_id: attrs.trace_id,
-      causation_id: attrs.correlation_id,
-      idempotency_key: attrs.idempotency_key
-    }
-  end
-
-  defp runtime_profile_payload(attrs, routing) do
-    payload_value(attrs, routing, :runtime_profile) ||
-      %{
-        runtime_profile_ref: payload_value(attrs, routing, :runtime_profile_ref),
-        runtime_profile_kind: payload_value(attrs, routing, :runtime_profile_kind)
-      }
-  end
-
-  defp lower_envelope_payload(attrs, routing) do
-    payload_value(attrs, routing, :governed_lower_envelope) ||
-      payload_value(attrs, routing, :lower_envelope) ||
-      %{
-        lower_request_ref: payload_value(attrs, routing, :lower_request_ref),
-        lower_runtime_kind: payload_value(attrs, routing, :lower_runtime_kind),
-        capability_id:
-          payload_value(attrs, routing, :capability_id) ||
-            payload_value(attrs, routing, :capability),
-        resource_scope_refs: payload_value(attrs, routing, :resource_scope_refs),
-        policy_bundle_refs: payload_value(attrs, routing, :policy_bundle_refs),
-        script_refs: payload_value(attrs, routing, :script_refs),
-        package_refs: payload_value(attrs, routing, :package_refs),
-        sandbox_profile_ref: payload_value(attrs, routing, :sandbox_profile_ref),
-        attestation_requirement_ref: payload_value(attrs, routing, :attestation_requirement_ref),
-        denial_refs: payload_value(attrs, routing, :denial_refs)
-      }
-  end
-
-  defp authority_decision_payload(attrs, routing) do
-    payload_value(attrs, routing, :authority_decision) ||
-      %{
-        authority_ref:
-          payload_value(attrs, routing, :authority_ref) ||
-            Map.get(attrs, :permission_decision_ref),
-        authority_decision_hash:
-          payload_value(attrs, routing, :authority_decision_hash) ||
-            Map.get(attrs, :decision_hash)
-      }
-  end
-
-  defp connector_manifest_payload(attrs, routing) do
-    case payload_value(attrs, routing, :connector_manifests) do
-      nil ->
-        attrs
-        |> payload_value(routing, :connector_manifest_refs)
-        |> List.wrap()
-        |> Enum.map(&%{connector_manifest_ref: &1})
-
-      manifests ->
-        manifests
-    end
-  end
-
-  defp capability_negotiation_payload(attrs, routing) do
-    case payload_value(attrs, routing, :capability_negotiations) do
-      nil ->
-        attrs
-        |> payload_value(routing, :capability_negotiation_refs)
-        |> List.wrap()
-        |> Enum.map(&%{capability_negotiation_ref: &1})
-
-      negotiations ->
-        negotiations
-    end
+    TerminalLowerReceiptShape.from_workflow_signal(attrs)
   end
 
   defp payload_value(attrs, routing, key) do
