@@ -2,7 +2,19 @@ defmodule MezzaninePackModelTest do
   use ExUnit.Case
 
   alias Mezzanine.Lifecycle.SubjectSnapshot
-  alias Mezzanine.Pack.{CompiledPack, ContextSourceSpec}
+
+  alias Mezzanine.Pack.{
+    BindingSpec,
+    CompiledPack,
+    ContextSourceSpec,
+    EvidenceBinding,
+    ResourceEffectBinding,
+    RuntimeBinding,
+    SourceBinding,
+    SourcePublicationBinding,
+    ToolBinding
+  }
+
   alias Mezzanine.Pack.SubjectContext
 
   test "subject snapshots canonicalize pack identifiers to strings" do
@@ -61,5 +73,74 @@ defmodule MezzaninePackModelTest do
            }
 
     assert compiled.context_sources_by_ref["workspace_memory"].binding_key == "memory_adapter"
+  end
+
+  test "generic binding records are explicit typed pack data" do
+    source = %SourceBinding{
+      binding_ref: :document_source,
+      source_kind: :document,
+      subject_kind: :review_document,
+      connector_ref: :local_document_http,
+      manifest_ref: :local_document_manifest,
+      operation_refs: %{read: :document_read},
+      credential_binding_ref: :document_http_credential
+    }
+
+    publication = %SourcePublicationBinding{
+      binding_ref: :document_publication,
+      source_binding_ref: :document_source,
+      connector_ref: :local_document_http,
+      manifest_ref: :local_document_manifest,
+      operation_refs: %{publish: :review_publish},
+      credential_binding_ref: :document_http_credential,
+      template_ref: :review_summary,
+      publication_profile_ref: :document_review_publication
+    }
+
+    runtime = %RuntimeBinding{
+      binding_ref: :deterministic_review_runtime,
+      runtime_family: :direct,
+      connector_ref: :local_document_http,
+      manifest_ref: :local_document_manifest,
+      operation_refs: %{run: :review_run},
+      credential_binding_ref: :document_http_credential
+    }
+
+    tool = %ToolBinding{
+      binding_ref: :review_lookup_tool,
+      runtime_binding_ref: :deterministic_review_runtime,
+      connector_ref: :local_document_http,
+      manifest_ref: :local_document_manifest,
+      operation_refs: %{lookup: :document_lookup},
+      authorization_class: :runtime_tool_invocation,
+      credential_binding_ref: :document_http_credential
+    }
+
+    evidence = %EvidenceBinding{
+      binding_ref: :review_evidence,
+      evidence_kind: :review_report,
+      connector_ref: :local_document_http,
+      manifest_ref: :local_document_manifest,
+      operation_refs: %{collect: :review_evidence_collect},
+      credential_binding_ref: :document_http_credential
+    }
+
+    effect = %ResourceEffectBinding{
+      binding_ref: :review_state_update,
+      effect_kind: :review_state_update,
+      connector_ref: :local_document_http,
+      manifest_ref: :local_document_manifest,
+      operation_refs: %{update: :review_state_update},
+      operation_group_ref: :review_write_effects,
+      credential_binding_ref: :document_http_credential,
+      confirmation_policy_ref: :operator_confirm_review_write
+    }
+
+    assert BindingSpec.kind(source) == :source
+    assert BindingSpec.kind(publication) == :source_publication
+    assert BindingSpec.kind(runtime) == :runtime
+    assert BindingSpec.kind(tool) == :runtime_tool
+    assert BindingSpec.kind(evidence) == :evidence
+    assert BindingSpec.kind(effect) == :resource_effect
   end
 end

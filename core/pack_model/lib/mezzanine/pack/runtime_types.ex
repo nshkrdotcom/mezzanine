@@ -106,18 +106,25 @@ defmodule Mezzanine.Pack.CompiledPack do
   """
 
   alias Mezzanine.Pack.{
+    BindingSpec,
     ContextSourceSpec,
     DecisionSpec,
+    EvidenceBinding,
     EvidenceSpec,
     ExecutionRecipeSpec,
     LifecycleSpec,
     Manifest,
     OperatorActionSpec,
     ProjectionSpec,
+    ResourceEffectBinding,
+    RuntimeBinding,
+    SourceBinding,
     SourceBindingSpec,
     SourceKindSpec,
+    SourcePublicationBinding,
     SourcePublishSpec,
-    SubjectKindSpec
+    SubjectKindSpec,
+    ToolBinding
   }
 
   @type trigger_key ::
@@ -132,6 +139,14 @@ defmodule Mezzanine.Pack.CompiledPack do
           | {:subject_entered_state, String.t()}
 
   @type state_key :: {String.t(), String.t()}
+  @type binding_kind :: BindingSpec.binding_kind()
+  @type binding_record ::
+          SourceBinding.t()
+          | SourcePublicationBinding.t()
+          | RuntimeBinding.t()
+          | ToolBinding.t()
+          | EvidenceBinding.t()
+          | ResourceEffectBinding.t()
 
   @type t :: %__MODULE__{
           pack_slug: String.t(),
@@ -139,6 +154,8 @@ defmodule Mezzanine.Pack.CompiledPack do
           manifest: Manifest.t(),
           subject_kinds: %{String.t() => SubjectKindSpec.t()},
           source_kinds: %{String.t() => SourceKindSpec.t()},
+          bindings_by_ref: %{String.t() => binding_record()},
+          bindings_by_kind: %{binding_kind() => [binding_record()]},
           source_bindings_by_ref: %{String.t() => SourceBindingSpec.t()},
           source_publishers_by_ref: %{String.t() => SourcePublishSpec.t()},
           context_sources_by_ref: %{String.t() => ContextSourceSpec.t()},
@@ -161,6 +178,8 @@ defmodule Mezzanine.Pack.CompiledPack do
     :manifest,
     subject_kinds: %{},
     source_kinds: %{},
+    bindings_by_ref: %{},
+    bindings_by_kind: %{},
     source_bindings_by_ref: %{},
     source_publishers_by_ref: %{},
     context_sources_by_ref: %{},

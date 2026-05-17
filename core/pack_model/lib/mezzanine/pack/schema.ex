@@ -4,22 +4,30 @@ defmodule Mezzanine.Pack.Manifest do
   """
 
   alias Mezzanine.Pack.{
+    BindingSpec,
     ContextSourceSpec,
     DecisionSpec,
+    EvidenceBinding,
     EvidenceSpec,
     ExecutionRecipeSpec,
     LifecycleSpec,
     OperatorActionSpec,
     ProjectionSpec,
+    ResourceEffectBinding,
+    RuntimeBinding,
+    SourceBinding,
     SourceBindingSpec,
     SourceKindSpec,
+    SourcePublicationBinding,
     SourcePublishSpec,
-    SubjectKindSpec
+    SubjectKindSpec,
+    ToolBinding
   }
 
   @type pack_identifier :: atom() | String.t()
   @type migration_strategy :: :additive | :force
   @type profile_slots :: map()
+  @type binding_record :: BindingSpec.binding_record()
 
   @type t :: %__MODULE__{
           pack_slug: pack_identifier(),
@@ -30,6 +38,7 @@ defmodule Mezzanine.Pack.Manifest do
           profile_slots: profile_slots() | nil,
           subject_kind_specs: [SubjectKindSpec.t()],
           source_kind_specs: [SourceKindSpec.t()],
+          binding_specs: [binding_record()],
           source_binding_specs: [SourceBindingSpec.t()],
           source_publish_specs: [SourcePublishSpec.t()],
           context_source_specs: [ContextSourceSpec.t()],
@@ -50,6 +59,7 @@ defmodule Mezzanine.Pack.Manifest do
     profile_slots: nil,
     subject_kind_specs: [],
     source_kind_specs: [],
+    binding_specs: [],
     source_binding_specs: [],
     source_publish_specs: [],
     context_source_specs: [],
@@ -59,6 +69,313 @@ defmodule Mezzanine.Pack.Manifest do
     evidence_specs: [],
     operator_action_specs: [],
     projection_specs: []
+  ]
+end
+
+defmodule Mezzanine.Pack.BindingSpec do
+  @moduledoc """
+  Generic binding discriminator for provider-neutral pack records.
+  """
+
+  alias Mezzanine.Pack.{
+    EvidenceBinding,
+    ResourceEffectBinding,
+    RuntimeBinding,
+    SourceBinding,
+    SourcePublicationBinding,
+    ToolBinding
+  }
+
+  @type binding_kind ::
+          :source
+          | :source_publication
+          | :runtime
+          | :runtime_tool
+          | :evidence
+          | :resource_effect
+
+  @type binding_record ::
+          SourceBinding.t()
+          | SourcePublicationBinding.t()
+          | RuntimeBinding.t()
+          | ToolBinding.t()
+          | EvidenceBinding.t()
+          | ResourceEffectBinding.t()
+
+  @spec kind(binding_record()) :: binding_kind()
+  def kind(%{__struct__: SourceBinding}), do: :source
+  def kind(%{__struct__: SourcePublicationBinding}), do: :source_publication
+  def kind(%{__struct__: RuntimeBinding}), do: :runtime
+  def kind(%{__struct__: ToolBinding}), do: :runtime_tool
+  def kind(%{__struct__: EvidenceBinding}), do: :evidence
+  def kind(%{__struct__: ResourceEffectBinding}), do: :resource_effect
+end
+
+defmodule Mezzanine.Pack.SourceBinding do
+  @moduledoc """
+  Generic source-reader binding declared by a product pack.
+  """
+
+  @type pack_identifier :: atom() | String.t()
+
+  @type t :: %__MODULE__{
+          binding_ref: pack_identifier(),
+          source_kind: pack_identifier(),
+          subject_kind: pack_identifier(),
+          connector_ref: pack_identifier(),
+          manifest_ref: pack_identifier(),
+          operation_refs: %{required(pack_identifier()) => pack_identifier()},
+          credential_binding_ref: pack_identifier(),
+          adapter_ref: pack_identifier() | nil,
+          connection_ref: pack_identifier() | nil,
+          candidate_filter_ref: pack_identifier() | nil,
+          cursor_policy_ref: pack_identifier() | nil,
+          projection_profile_ref: pack_identifier() | nil,
+          retry_policy_ref: pack_identifier() | nil,
+          metadata: map()
+        }
+
+  @enforce_keys [
+    :binding_ref,
+    :source_kind,
+    :subject_kind,
+    :connector_ref,
+    :manifest_ref,
+    :operation_refs,
+    :credential_binding_ref
+  ]
+  defstruct [
+    :binding_ref,
+    :source_kind,
+    :subject_kind,
+    :connector_ref,
+    :manifest_ref,
+    :operation_refs,
+    :credential_binding_ref,
+    :adapter_ref,
+    :connection_ref,
+    :candidate_filter_ref,
+    :cursor_policy_ref,
+    :projection_profile_ref,
+    :retry_policy_ref,
+    metadata: %{}
+  ]
+end
+
+defmodule Mezzanine.Pack.SourcePublicationBinding do
+  @moduledoc """
+  Generic source-writer binding declared by a product pack.
+  """
+
+  @type pack_identifier :: atom() | String.t()
+  @type idempotency_scope :: :subject | :execution | :source_event
+
+  @type t :: %__MODULE__{
+          binding_ref: pack_identifier(),
+          source_binding_ref: pack_identifier(),
+          connector_ref: pack_identifier(),
+          manifest_ref: pack_identifier(),
+          operation_refs: %{required(pack_identifier()) => pack_identifier()},
+          credential_binding_ref: pack_identifier(),
+          template_ref: pack_identifier(),
+          idempotency_scope: idempotency_scope(),
+          publication_profile_ref: pack_identifier() | nil,
+          retry_policy_ref: pack_identifier() | nil,
+          metadata: map()
+        }
+
+  @enforce_keys [
+    :binding_ref,
+    :source_binding_ref,
+    :connector_ref,
+    :manifest_ref,
+    :operation_refs,
+    :credential_binding_ref,
+    :template_ref
+  ]
+  defstruct [
+    :binding_ref,
+    :source_binding_ref,
+    :connector_ref,
+    :manifest_ref,
+    :operation_refs,
+    :credential_binding_ref,
+    :template_ref,
+    :publication_profile_ref,
+    :retry_policy_ref,
+    idempotency_scope: :subject,
+    metadata: %{}
+  ]
+end
+
+defmodule Mezzanine.Pack.RuntimeBinding do
+  @moduledoc """
+  Generic lower-runtime binding declared by a product pack.
+  """
+
+  @type pack_identifier :: atom() | String.t()
+  @type runtime_family :: :direct | :session | :workflow | :playbook | :scan | :inference
+
+  @type t :: %__MODULE__{
+          binding_ref: pack_identifier(),
+          runtime_family: runtime_family(),
+          connector_ref: pack_identifier(),
+          manifest_ref: pack_identifier(),
+          operation_refs: %{required(pack_identifier()) => pack_identifier()},
+          credential_binding_ref: pack_identifier(),
+          session_policy_ref: pack_identifier() | nil,
+          tool_catalog_ref: pack_identifier() | nil,
+          retry_policy_ref: pack_identifier() | nil,
+          metadata: map()
+        }
+
+  @enforce_keys [
+    :binding_ref,
+    :runtime_family,
+    :connector_ref,
+    :manifest_ref,
+    :operation_refs,
+    :credential_binding_ref
+  ]
+  defstruct [
+    :binding_ref,
+    :runtime_family,
+    :connector_ref,
+    :manifest_ref,
+    :operation_refs,
+    :credential_binding_ref,
+    :session_policy_ref,
+    :tool_catalog_ref,
+    :retry_policy_ref,
+    metadata: %{}
+  ]
+end
+
+defmodule Mezzanine.Pack.ToolBinding do
+  @moduledoc """
+  Generic runtime-tool binding declared by a product pack.
+  """
+
+  @type pack_identifier :: atom() | String.t()
+
+  @type t :: %__MODULE__{
+          binding_ref: pack_identifier(),
+          runtime_binding_ref: pack_identifier(),
+          connector_ref: pack_identifier(),
+          manifest_ref: pack_identifier(),
+          operation_refs: %{required(pack_identifier()) => pack_identifier()},
+          authorization_class: pack_identifier(),
+          credential_binding_ref: pack_identifier(),
+          tool_schema_ref: pack_identifier() | nil,
+          input_policy_ref: pack_identifier() | nil,
+          retry_policy_ref: pack_identifier() | nil,
+          metadata: map()
+        }
+
+  @enforce_keys [
+    :binding_ref,
+    :runtime_binding_ref,
+    :connector_ref,
+    :manifest_ref,
+    :operation_refs,
+    :authorization_class,
+    :credential_binding_ref
+  ]
+  defstruct [
+    :binding_ref,
+    :runtime_binding_ref,
+    :connector_ref,
+    :manifest_ref,
+    :operation_refs,
+    :authorization_class,
+    :credential_binding_ref,
+    :tool_schema_ref,
+    :input_policy_ref,
+    :retry_policy_ref,
+    metadata: %{}
+  ]
+end
+
+defmodule Mezzanine.Pack.EvidenceBinding do
+  @moduledoc """
+  Generic evidence-collection binding declared by a product pack.
+  """
+
+  @type pack_identifier :: atom() | String.t()
+
+  @type t :: %__MODULE__{
+          binding_ref: pack_identifier(),
+          evidence_kind: pack_identifier(),
+          connector_ref: pack_identifier(),
+          manifest_ref: pack_identifier(),
+          operation_refs: %{required(pack_identifier()) => pack_identifier()},
+          credential_binding_ref: pack_identifier(),
+          collection_policy_ref: pack_identifier() | nil,
+          retry_policy_ref: pack_identifier() | nil,
+          metadata: map()
+        }
+
+  @enforce_keys [
+    :binding_ref,
+    :evidence_kind,
+    :connector_ref,
+    :manifest_ref,
+    :operation_refs,
+    :credential_binding_ref
+  ]
+  defstruct [
+    :binding_ref,
+    :evidence_kind,
+    :connector_ref,
+    :manifest_ref,
+    :operation_refs,
+    :credential_binding_ref,
+    :collection_policy_ref,
+    :retry_policy_ref,
+    metadata: %{}
+  ]
+end
+
+defmodule Mezzanine.Pack.ResourceEffectBinding do
+  @moduledoc """
+  Generic side-effect binding declared by a product pack.
+  """
+
+  @type pack_identifier :: atom() | String.t()
+
+  @type t :: %__MODULE__{
+          binding_ref: pack_identifier(),
+          effect_kind: pack_identifier(),
+          connector_ref: pack_identifier(),
+          manifest_ref: pack_identifier(),
+          operation_refs: %{required(pack_identifier()) => pack_identifier()},
+          operation_group_ref: pack_identifier(),
+          credential_binding_ref: pack_identifier(),
+          confirmation_policy_ref: pack_identifier() | nil,
+          retry_policy_ref: pack_identifier() | nil,
+          metadata: map()
+        }
+
+  @enforce_keys [
+    :binding_ref,
+    :effect_kind,
+    :connector_ref,
+    :manifest_ref,
+    :operation_refs,
+    :operation_group_ref,
+    :credential_binding_ref
+  ]
+  defstruct [
+    :binding_ref,
+    :effect_kind,
+    :connector_ref,
+    :manifest_ref,
+    :operation_refs,
+    :operation_group_ref,
+    :credential_binding_ref,
+    :confirmation_policy_ref,
+    :retry_policy_ref,
+    metadata: %{}
   ]
 end
 

@@ -6,10 +6,16 @@ defmodule Mezzanine.Pack.CompilerTest do
     ContextSourceSpec,
     DecisionSpec,
     ExecutionRecipeSpec,
+    EvidenceBinding,
     LifecycleSpec,
     Manifest,
+    ResourceEffectBinding,
+    RuntimeBinding,
+    SourceBinding,
     SourceBindingSpec,
-    SubjectKindSpec
+    SourcePublicationBinding,
+    SubjectKindSpec,
+    ToolBinding
   }
 
   alias Mezzanine.Pack.Compiler
@@ -315,6 +321,80 @@ defmodule Mezzanine.Pack.CompilerTest do
     assert compiled.operator_actions_by_kind["retry_execution"].effect == :retry_execution
   end
 
+  test "compiles generic binding records into canonical runtime indices" do
+    manifest = generic_binding_manifest()
+
+    assert {:ok, compiled} = Compiler.compile(manifest)
+
+    assert compiled.bindings_by_ref |> Map.keys() |> Enum.sort() == [
+             "deterministic_review_runtime",
+             "document_publication",
+             "document_source",
+             "review_evidence",
+             "review_lookup_tool",
+             "review_state_update"
+           ]
+
+    assert compiled.bindings_by_kind |> Map.keys() |> Enum.sort() == [
+             :evidence,
+             :resource_effect,
+             :runtime,
+             :runtime_tool,
+             :source,
+             :source_publication
+           ]
+
+    source = compiled.bindings_by_ref["document_source"]
+    assert source.operation_refs == %{"read" => "document_read"}
+    assert source.connector_ref == "local_document_http"
+    assert source.manifest_ref == "local_document_manifest"
+    assert source.credential_binding_ref == "document_http_credential"
+
+    assert compiled.bindings_by_kind.source |> Enum.map(& &1.binding_ref) == [
+             "document_source"
+           ]
+
+    assert compiled.bindings_by_kind.resource_effect
+           |> Enum.map(& &1.confirmation_policy_ref) == [
+             "operator_confirm_review_write"
+           ]
+
+    assert compiled.bindings_by_ref["document_publication"].publication_profile_ref ==
+             "document_review_publication"
+  end
+
+  test "rejects generic binding records that hide operation roles or omit required safety refs" do
+    manifest = %Manifest{
+      generic_binding_manifest()
+      | binding_specs: [
+          %SourceBinding{
+            binding_ref: :document_source,
+            source_kind: :document,
+            subject_kind: :review_document,
+            connector_ref: :local_document_http,
+            manifest_ref: :local_document_manifest,
+            operation_refs: [:document_read],
+            credential_binding_ref: :document_http_credential
+          },
+          %ResourceEffectBinding{
+            binding_ref: :review_state_update,
+            effect_kind: :review_state_update,
+            connector_ref: :local_document_http,
+            manifest_ref: :local_document_manifest,
+            operation_refs: %{update: :review_state_update},
+            operation_group_ref: :review_write_effects,
+            credential_binding_ref: :document_http_credential
+          }
+        ]
+    }
+
+    assert {:error, issues} = Compiler.compile(manifest)
+    messages = Enum.map(issues, & &1.message)
+
+    assert Enum.any?(messages, &String.contains?(&1, "operation_refs"))
+    assert Enum.any?(messages, &String.contains?(&1, "confirmation_policy_ref"))
+  end
+
   test "rejects invalid state mappings, missing connector bindings, and missing workspace roots" do
     manifest = %Manifest{
       coding_ops_manifest()
@@ -430,6 +510,81 @@ defmodule Mezzanine.Pack.CompilerTest do
           max_turns: 12,
           stall_timeout_ms: 300_000,
           applicable_to: [:coding_task]
+        }
+      ]
+    }
+  end
+
+  defp generic_binding_manifest do
+    %Manifest{
+      pack_slug: :toy_document_review,
+      version: "1.0.0",
+      profile_slots: %{
+        source_profile_ref: :document_source_profile,
+        runtime_profile_ref: :deterministic_review_runtime,
+        tool_scope_ref: :document_review_tools,
+        evidence_profile_ref: :review_report_evidence,
+        publication_profile_ref: :document_review_publication,
+        review_profile_ref: :human_operator,
+        memory_profile_ref: :none,
+        projection_profile_ref: :document_review_projection
+      },
+      subject_kind_specs: [%SubjectKindSpec{name: :review_document}],
+      binding_specs: [
+        %SourceBinding{
+          binding_ref: :document_source,
+          source_kind: :document,
+          subject_kind: :review_document,
+          connector_ref: :local_document_http,
+          manifest_ref: :local_document_manifest,
+          operation_refs: %{read: :document_read},
+          credential_binding_ref: :document_http_credential
+        },
+        %SourcePublicationBinding{
+          binding_ref: :document_publication,
+          source_binding_ref: :document_source,
+          connector_ref: :local_document_http,
+          manifest_ref: :local_document_manifest,
+          operation_refs: %{publish: :review_publish},
+          credential_binding_ref: :document_http_credential,
+          template_ref: :review_summary,
+          publication_profile_ref: :document_review_publication,
+          idempotency_scope: :subject
+        },
+        %RuntimeBinding{
+          binding_ref: :deterministic_review_runtime,
+          runtime_family: :direct,
+          connector_ref: :local_document_http,
+          manifest_ref: :local_document_manifest,
+          operation_refs: %{run: :review_run},
+          credential_binding_ref: :document_http_credential
+        },
+        %ToolBinding{
+          binding_ref: :review_lookup_tool,
+          runtime_binding_ref: :deterministic_review_runtime,
+          connector_ref: :local_document_http,
+          manifest_ref: :local_document_manifest,
+          operation_refs: %{lookup: :document_lookup},
+          authorization_class: :runtime_tool_invocation,
+          credential_binding_ref: :document_http_credential
+        },
+        %EvidenceBinding{
+          binding_ref: :review_evidence,
+          evidence_kind: :review_report,
+          connector_ref: :local_document_http,
+          manifest_ref: :local_document_manifest,
+          operation_refs: %{collect: :review_evidence_collect},
+          credential_binding_ref: :document_http_credential
+        },
+        %ResourceEffectBinding{
+          binding_ref: :review_state_update,
+          effect_kind: :review_state_update,
+          connector_ref: :local_document_http,
+          manifest_ref: :local_document_manifest,
+          operation_refs: %{update: :review_state_update},
+          operation_group_ref: :review_write_effects,
+          credential_binding_ref: :document_http_credential,
+          confirmation_policy_ref: :operator_confirm_review_write
         }
       ]
     }

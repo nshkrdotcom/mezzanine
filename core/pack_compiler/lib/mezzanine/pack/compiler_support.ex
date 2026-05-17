@@ -312,18 +312,25 @@ defmodule Mezzanine.Pack.Validator do
   @moduledoc false
 
   alias Mezzanine.Pack.{
+    BindingSpec,
     ContextSourceSpec,
     DecisionSpec,
+    EvidenceBinding,
     EvidenceSpec,
     ExecutionRecipeSpec,
     LifecycleSpec,
     Manifest,
     OperatorActionSpec,
     ProjectionSpec,
+    ResourceEffectBinding,
+    RuntimeBinding,
+    SourceBinding,
     SourceBindingSpec,
     SourceKindSpec,
+    SourcePublicationBinding,
     SourcePublishSpec,
     SubjectKindSpec,
+    ToolBinding,
     ValidationError
   }
 
@@ -335,6 +342,7 @@ defmodule Mezzanine.Pack.Validator do
       validate_profile_slots(manifest.profile_slots) ++
       validate_subject_kind_specs(manifest.subject_kind_specs) ++
       validate_source_kind_specs(manifest.source_kind_specs) ++
+      validate_binding_specs(manifest.binding_specs) ++
       validate_source_binding_specs(manifest.source_binding_specs) ++
       validate_source_publish_specs(manifest.source_publish_specs) ++
       validate_context_source_specs(manifest.context_source_specs) ++
@@ -469,6 +477,182 @@ defmodule Mezzanine.Pack.Validator do
            )
          )
        end))
+  end
+
+  defp validate_binding_specs(specs) do
+    duplicate_identifier_issues(specs, :binding_ref, [:binding_specs], "binding") ++
+      (specs
+       |> Enum.with_index()
+       |> Enum.flat_map(fn {spec, index} ->
+         validate_binding_spec(spec, [:binding_specs, index])
+       end))
+  end
+
+  defp validate_binding_spec(%SourceBinding{} = spec, path) do
+    validate_common_binding(spec, path, "source")
+    |> append(identifier_issue(spec.source_kind, path ++ [:source_kind], "source_kind"))
+    |> append(identifier_issue(spec.subject_kind, path ++ [:subject_kind], "subject_kind"))
+    |> append(optional_identifier_issue(spec.adapter_ref, path ++ [:adapter_ref], "adapter_ref"))
+    |> append(
+      optional_identifier_issue(spec.connection_ref, path ++ [:connection_ref], "connection_ref")
+    )
+    |> append(
+      optional_identifier_issue(
+        spec.candidate_filter_ref,
+        path ++ [:candidate_filter_ref],
+        "candidate_filter_ref"
+      )
+    )
+    |> append(
+      optional_identifier_issue(
+        spec.cursor_policy_ref,
+        path ++ [:cursor_policy_ref],
+        "cursor_policy_ref"
+      )
+    )
+    |> append(
+      optional_identifier_issue(
+        spec.projection_profile_ref,
+        path ++ [:projection_profile_ref],
+        "projection_profile_ref"
+      )
+    )
+  end
+
+  defp validate_binding_spec(%SourcePublicationBinding{} = spec, path) do
+    validate_common_binding(spec, path, "source publication")
+    |> append(
+      identifier_issue(
+        spec.source_binding_ref,
+        path ++ [:source_binding_ref],
+        "source_binding_ref"
+      )
+    )
+    |> append(identifier_issue(spec.template_ref, path ++ [:template_ref], "template_ref"))
+    |> append(
+      source_publish_idempotency_scope_issue(spec.idempotency_scope, path ++ [:idempotency_scope])
+    )
+    |> append(
+      optional_identifier_issue(
+        spec.publication_profile_ref,
+        path ++ [:publication_profile_ref],
+        "publication_profile_ref"
+      )
+    )
+  end
+
+  defp validate_binding_spec(%RuntimeBinding{} = spec, path) do
+    validate_common_binding(spec, path, "runtime")
+    |> append(runtime_binding_family_issue(spec.runtime_family, path ++ [:runtime_family]))
+    |> append(
+      optional_identifier_issue(
+        spec.session_policy_ref,
+        path ++ [:session_policy_ref],
+        "session_policy_ref"
+      )
+    )
+    |> append(
+      optional_identifier_issue(
+        spec.tool_catalog_ref,
+        path ++ [:tool_catalog_ref],
+        "tool_catalog_ref"
+      )
+    )
+  end
+
+  defp validate_binding_spec(%ToolBinding{} = spec, path) do
+    validate_common_binding(spec, path, "runtime tool")
+    |> append(
+      identifier_issue(
+        spec.runtime_binding_ref,
+        path ++ [:runtime_binding_ref],
+        "runtime_binding_ref"
+      )
+    )
+    |> append(
+      identifier_issue(
+        spec.authorization_class,
+        path ++ [:authorization_class],
+        "authorization_class"
+      )
+    )
+    |> append(
+      optional_identifier_issue(
+        spec.tool_schema_ref,
+        path ++ [:tool_schema_ref],
+        "tool_schema_ref"
+      )
+    )
+    |> append(
+      optional_identifier_issue(
+        spec.input_policy_ref,
+        path ++ [:input_policy_ref],
+        "input_policy_ref"
+      )
+    )
+  end
+
+  defp validate_binding_spec(%EvidenceBinding{} = spec, path) do
+    validate_common_binding(spec, path, "evidence")
+    |> append(identifier_issue(spec.evidence_kind, path ++ [:evidence_kind], "evidence_kind"))
+    |> append(
+      optional_identifier_issue(
+        spec.collection_policy_ref,
+        path ++ [:collection_policy_ref],
+        "collection_policy_ref"
+      )
+    )
+  end
+
+  defp validate_binding_spec(%ResourceEffectBinding{} = spec, path) do
+    validate_common_binding(spec, path, "resource effect")
+    |> append(identifier_issue(spec.effect_kind, path ++ [:effect_kind], "effect_kind"))
+    |> append(
+      identifier_issue(
+        spec.operation_group_ref,
+        path ++ [:operation_group_ref],
+        "operation_group_ref"
+      )
+    )
+    |> append(
+      identifier_issue(
+        spec.confirmation_policy_ref,
+        path ++ [:confirmation_policy_ref],
+        "confirmation_policy_ref"
+      )
+    )
+  end
+
+  defp validate_binding_spec(spec, path) do
+    [
+      ValidationError.error(
+        path,
+        "binding_specs must contain explicit Mezzanine.Pack binding structs, got: #{inspect(spec)}"
+      )
+    ]
+  end
+
+  defp validate_common_binding(spec, path, label) do
+    []
+    |> append(identifier_issue(spec.binding_ref, path ++ [:binding_ref], "#{label} binding_ref"))
+    |> append(identifier_issue(spec.connector_ref, path ++ [:connector_ref], "connector_ref"))
+    |> append(identifier_issue(spec.manifest_ref, path ++ [:manifest_ref], "manifest_ref"))
+    |> append(operation_refs_issue(spec.operation_refs, path ++ [:operation_refs]))
+    |> append(
+      identifier_issue(
+        spec.credential_binding_ref,
+        path ++ [:credential_binding_ref],
+        "credential_binding_ref"
+      )
+    )
+    |> append(
+      optional_identifier_issue(
+        Map.get(spec, :retry_policy_ref),
+        path ++ [:retry_policy_ref],
+        "retry_policy_ref"
+      )
+    )
+    |> append(map_issue(Map.get(spec, :metadata, %{}), path ++ [:metadata]))
   end
 
   defp validate_source_binding_specs(specs) do
@@ -962,6 +1146,22 @@ defmodule Mezzanine.Pack.Validator do
     source_binding_refs =
       identifier_set(Enum.map(manifest.source_binding_specs, & &1.binding_ref))
 
+    generic_source_binding_refs =
+      manifest.binding_specs
+      |> Enum.flat_map(fn
+        %SourceBinding{} = binding -> [binding.binding_ref]
+        _binding -> []
+      end)
+      |> identifier_set()
+
+    generic_runtime_binding_refs =
+      manifest.binding_specs
+      |> Enum.flat_map(fn
+        %RuntimeBinding{} = binding -> [binding.binding_ref]
+        _binding -> []
+      end)
+      |> identifier_set()
+
     recipe_refs = identifier_set(Enum.map(manifest.execution_recipe_specs, & &1.recipe_ref))
     decision_kinds = identifier_set(Enum.map(manifest.decision_specs, & &1.decision_kind))
     evidence_kinds = identifier_set(Enum.map(manifest.evidence_specs, & &1.evidence_kind))
@@ -1059,6 +1259,38 @@ defmodule Mezzanine.Pack.Validator do
             [:source_publish_specs, index, :trigger]
           )
         )
+      end)
+
+    generic_binding_issues =
+      manifest.binding_specs
+      |> Enum.with_index()
+      |> Enum.flat_map(fn
+        {%SourceBinding{} = spec, index} ->
+          reference_issue(
+            spec.subject_kind,
+            subject_kinds,
+            [:binding_specs, index, :subject_kind],
+            "source binding subject kind"
+          )
+
+        {%SourcePublicationBinding{} = spec, index} ->
+          reference_issue(
+            spec.source_binding_ref,
+            generic_source_binding_refs,
+            [:binding_specs, index, :source_binding_ref],
+            "source publication binding"
+          )
+
+        {%ToolBinding{} = spec, index} ->
+          reference_issue(
+            spec.runtime_binding_ref,
+            generic_runtime_binding_refs,
+            [:binding_specs, index, :runtime_binding_ref],
+            "runtime tool binding"
+          )
+
+        {_spec, _index} ->
+          []
       end)
 
     lifecycle_issues =
@@ -1196,6 +1428,7 @@ defmodule Mezzanine.Pack.Validator do
     source_issues ++
       source_binding_issues ++
       source_publish_issues ++
+      generic_binding_issues ++
       lifecycle_issues ++
       recipe_issues ++
       decision_issues ++ evidence_issues ++ operator_action_issues ++ projection_issues
@@ -1478,6 +1711,33 @@ defmodule Mezzanine.Pack.Validator do
   defp map_issue(value, _path) when is_map(value), do: []
   defp map_issue(_value, path), do: [ValidationError.error(path, "must be a map")]
 
+  defp operation_refs_issue(value, path) when is_map(value) do
+    base_issues =
+      if map_size(value) == 0 do
+        [ValidationError.error(path, "operation_refs must not be empty")]
+      else
+        []
+      end
+
+    operation_issues =
+      value
+      |> Enum.flat_map(fn {role_ref, operation_ref} ->
+        identifier_issue(role_ref, path ++ [:role], "operation_refs role") ++
+          identifier_issue(operation_ref, path ++ [role_ref], "operation_refs operation ref")
+      end)
+
+    base_issues ++ operation_issues
+  end
+
+  defp operation_refs_issue(_value, path) do
+    [
+      ValidationError.error(
+        path,
+        "operation_refs must be a non-empty map of role refs to operation refs"
+      )
+    ]
+  end
+
   defp atom_list_issue(values, path) when is_list(values) do
     values
     |> Enum.with_index()
@@ -1539,6 +1799,19 @@ defmodule Mezzanine.Pack.Validator do
     else
       [
         ValidationError.error(path, "runtime_class must be one of the supported runtime classes")
+      ]
+    end
+  end
+
+  defp runtime_binding_family_issue(value, path) do
+    if value in [:direct, :session, :workflow, :playbook, :scan, :inference] do
+      []
+    else
+      [
+        ValidationError.error(
+          path,
+          "runtime_family must be :direct, :session, :workflow, :playbook, :scan, or :inference"
+        )
       ]
     end
   end
@@ -2094,16 +2367,22 @@ defmodule Mezzanine.Pack.Normalizer do
   alias Mezzanine.Pack.{
     ContextSourceSpec,
     DecisionSpec,
+    EvidenceBinding,
     EvidenceSpec,
     ExecutionRecipeSpec,
     LifecycleSpec,
     Manifest,
     OperatorActionSpec,
     ProjectionSpec,
+    ResourceEffectBinding,
+    RuntimeBinding,
+    SourceBinding,
     SourceBindingSpec,
     SourceKindSpec,
+    SourcePublicationBinding,
     SourcePublishSpec,
-    SubjectKindSpec
+    SubjectKindSpec,
+    ToolBinding
   }
 
   alias Mezzanine.Pack.Compiler.Helpers, as: H
@@ -2125,6 +2404,10 @@ defmodule Mezzanine.Pack.Normalizer do
         manifest.source_kind_specs
         |> Enum.map(&normalize_source_kind/1)
         |> Enum.sort_by(& &1.name),
+      binding_specs:
+        manifest.binding_specs
+        |> Enum.map(&normalize_binding/1)
+        |> Enum.sort_by(& &1.binding_ref),
       source_binding_specs:
         manifest.source_binding_specs
         |> Enum.map(&normalize_source_binding/1)
@@ -2197,6 +2480,101 @@ defmodule Mezzanine.Pack.Normalizer do
       spec
       | name: H.canonicalize_identifier!(spec.name),
         subject_kind: H.canonicalize_identifier!(spec.subject_kind)
+    }
+  end
+
+  @spec normalize_binding(Mezzanine.Pack.BindingSpec.binding_record()) ::
+          Mezzanine.Pack.BindingSpec.binding_record()
+  defp normalize_binding(%SourceBinding{} = spec) do
+    %SourceBinding{
+      spec
+      | binding_ref: H.canonicalize_identifier!(spec.binding_ref),
+        source_kind: H.canonicalize_identifier!(spec.source_kind),
+        subject_kind: H.canonicalize_identifier!(spec.subject_kind),
+        connector_ref: H.canonicalize_identifier!(spec.connector_ref),
+        manifest_ref: H.canonicalize_identifier!(spec.manifest_ref),
+        operation_refs: normalize_operation_refs(spec.operation_refs),
+        credential_binding_ref: H.canonicalize_identifier!(spec.credential_binding_ref),
+        adapter_ref: normalize_optional_identifier(spec.adapter_ref),
+        connection_ref: normalize_optional_identifier(spec.connection_ref),
+        candidate_filter_ref: normalize_optional_identifier(spec.candidate_filter_ref),
+        cursor_policy_ref: normalize_optional_identifier(spec.cursor_policy_ref),
+        projection_profile_ref: normalize_optional_identifier(spec.projection_profile_ref),
+        retry_policy_ref: normalize_optional_identifier(spec.retry_policy_ref)
+    }
+  end
+
+  defp normalize_binding(%SourcePublicationBinding{} = spec) do
+    %SourcePublicationBinding{
+      spec
+      | binding_ref: H.canonicalize_identifier!(spec.binding_ref),
+        source_binding_ref: H.canonicalize_identifier!(spec.source_binding_ref),
+        connector_ref: H.canonicalize_identifier!(spec.connector_ref),
+        manifest_ref: H.canonicalize_identifier!(spec.manifest_ref),
+        operation_refs: normalize_operation_refs(spec.operation_refs),
+        credential_binding_ref: H.canonicalize_identifier!(spec.credential_binding_ref),
+        template_ref: H.canonicalize_identifier!(spec.template_ref),
+        publication_profile_ref: normalize_optional_identifier(spec.publication_profile_ref),
+        retry_policy_ref: normalize_optional_identifier(spec.retry_policy_ref)
+    }
+  end
+
+  defp normalize_binding(%RuntimeBinding{} = spec) do
+    %RuntimeBinding{
+      spec
+      | binding_ref: H.canonicalize_identifier!(spec.binding_ref),
+        connector_ref: H.canonicalize_identifier!(spec.connector_ref),
+        manifest_ref: H.canonicalize_identifier!(spec.manifest_ref),
+        operation_refs: normalize_operation_refs(spec.operation_refs),
+        credential_binding_ref: H.canonicalize_identifier!(spec.credential_binding_ref),
+        session_policy_ref: normalize_optional_identifier(spec.session_policy_ref),
+        tool_catalog_ref: normalize_optional_identifier(spec.tool_catalog_ref),
+        retry_policy_ref: normalize_optional_identifier(spec.retry_policy_ref)
+    }
+  end
+
+  defp normalize_binding(%ToolBinding{} = spec) do
+    %ToolBinding{
+      spec
+      | binding_ref: H.canonicalize_identifier!(spec.binding_ref),
+        runtime_binding_ref: H.canonicalize_identifier!(spec.runtime_binding_ref),
+        connector_ref: H.canonicalize_identifier!(spec.connector_ref),
+        manifest_ref: H.canonicalize_identifier!(spec.manifest_ref),
+        operation_refs: normalize_operation_refs(spec.operation_refs),
+        authorization_class: H.canonicalize_identifier!(spec.authorization_class),
+        credential_binding_ref: H.canonicalize_identifier!(spec.credential_binding_ref),
+        tool_schema_ref: normalize_optional_identifier(spec.tool_schema_ref),
+        input_policy_ref: normalize_optional_identifier(spec.input_policy_ref),
+        retry_policy_ref: normalize_optional_identifier(spec.retry_policy_ref)
+    }
+  end
+
+  defp normalize_binding(%EvidenceBinding{} = spec) do
+    %EvidenceBinding{
+      spec
+      | binding_ref: H.canonicalize_identifier!(spec.binding_ref),
+        evidence_kind: H.canonicalize_identifier!(spec.evidence_kind),
+        connector_ref: H.canonicalize_identifier!(spec.connector_ref),
+        manifest_ref: H.canonicalize_identifier!(spec.manifest_ref),
+        operation_refs: normalize_operation_refs(spec.operation_refs),
+        credential_binding_ref: H.canonicalize_identifier!(spec.credential_binding_ref),
+        collection_policy_ref: normalize_optional_identifier(spec.collection_policy_ref),
+        retry_policy_ref: normalize_optional_identifier(spec.retry_policy_ref)
+    }
+  end
+
+  defp normalize_binding(%ResourceEffectBinding{} = spec) do
+    %ResourceEffectBinding{
+      spec
+      | binding_ref: H.canonicalize_identifier!(spec.binding_ref),
+        effect_kind: H.canonicalize_identifier!(spec.effect_kind),
+        connector_ref: H.canonicalize_identifier!(spec.connector_ref),
+        manifest_ref: H.canonicalize_identifier!(spec.manifest_ref),
+        operation_refs: normalize_operation_refs(spec.operation_refs),
+        operation_group_ref: H.canonicalize_identifier!(spec.operation_group_ref),
+        credential_binding_ref: H.canonicalize_identifier!(spec.credential_binding_ref),
+        confirmation_policy_ref: normalize_optional_identifier(spec.confirmation_policy_ref),
+        retry_policy_ref: normalize_optional_identifier(spec.retry_policy_ref)
     }
   end
 
@@ -2391,6 +2769,12 @@ defmodule Mezzanine.Pack.Normalizer do
   defp normalize_dispatch_requirement_value(value) when is_atom(value), do: Atom.to_string(value)
   defp normalize_dispatch_requirement_value(value), do: value
 
+  defp normalize_operation_refs(operation_refs) when is_map(operation_refs) do
+    Map.new(operation_refs, fn {role_ref, operation_ref} ->
+      {H.canonicalize_identifier!(role_ref), H.canonicalize_identifier!(operation_ref)}
+    end)
+  end
+
   defp normalize_optional_identifier(nil), do: nil
   defp normalize_optional_identifier(value), do: H.canonicalize_identifier!(value)
 end
@@ -2399,6 +2783,7 @@ defmodule Mezzanine.Pack.Builder do
   @moduledoc false
 
   alias Mezzanine.Pack.{
+    BindingSpec,
     CompiledPack,
     ContextSourceSpec,
     DecisionSpec,
@@ -2420,6 +2805,8 @@ defmodule Mezzanine.Pack.Builder do
       manifest: manifest,
       subject_kinds: subject_kinds,
       source_kinds: Map.new(manifest.source_kind_specs, &{&1.name, &1}),
+      bindings_by_ref: Map.new(manifest.binding_specs, &{&1.binding_ref, &1}),
+      bindings_by_kind: build_binding_kind_index(manifest.binding_specs),
       source_bindings_by_ref: Map.new(manifest.source_binding_specs, &{&1.binding_ref, &1}),
       source_publishers_by_ref: Map.new(manifest.source_publish_specs, &{&1.publish_ref, &1}),
       context_sources_by_ref:
@@ -2442,6 +2829,16 @@ defmodule Mezzanine.Pack.Builder do
       decision_triggers_by_event: build_decision_event_index(manifest.decision_specs),
       evidence_triggers_by_event: build_evidence_event_index(manifest.evidence_specs)
     }
+  end
+
+  @spec build_binding_kind_index([BindingSpec.binding_record()]) ::
+          %{BindingSpec.binding_kind() => [BindingSpec.binding_record()]}
+  defp build_binding_kind_index(binding_specs) do
+    binding_specs
+    |> Enum.group_by(&BindingSpec.kind/1)
+    |> Map.new(fn {kind, bindings} ->
+      {kind, Enum.sort_by(bindings, & &1.binding_ref)}
+    end)
   end
 
   @spec build_transition_index([LifecycleSpec.t()]) ::
