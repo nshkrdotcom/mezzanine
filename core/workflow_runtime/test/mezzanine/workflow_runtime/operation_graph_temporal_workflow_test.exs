@@ -3,6 +3,7 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphTemporalWorkflowTest do
   use Temporalex.Testing
 
   alias Mezzanine.WorkflowRuntime.OperationGraphTemporalWorkflow
+  alias Mezzanine.WorkflowRuntime.OperationGraphExecutor
 
   test "Temporal workflow drains generic operation graph nodes through one activity boundary" do
     assert {:ok, result} =
@@ -29,11 +30,22 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphTemporalWorkflowTest do
              "event://publication/succeeded"
            ]
 
+    assert result.terminal_event_refs == [
+             %{node_ref: "node://publication", event_ref: "event://publication/succeeded"},
+             %{node_ref: "node://review", event_ref: "event://review/succeeded"},
+             %{node_ref: "node://source", event_ref: "event://source/succeeded"}
+           ]
+
     assert result.facts.succeeded_node_refs == [
              "node://publication",
              "node://review",
              "node://source"
            ]
+
+    encoded_result = Temporalex.Converter.to_payload(result)
+    assert encoded_result.metadata["encoding"] == "json/plain"
+    assert {:ok, decoded_result} = Temporalex.Converter.from_payload(encoded_result)
+    assert decoded_result.workflow_state == "completed"
 
     assert_activity_called(Mezzanine.Activities.ExecuteOperationGraphNode)
     assert get_workflow_state().workflow_state == "completed"
@@ -45,6 +57,32 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphTemporalWorkflowTest do
     assert first_payload.activity_intent.node_ref == "node://source"
     assert first_payload.activity_intent.operation_plan_ref == "operation-plan://tenant/source"
     assert first_payload.activity_intent.predecessor_event_refs == []
+  end
+
+  test "activity payloads stay JSON-safe across the live Temporal boundary" do
+    assert {:ok, workflow_input} = OperationGraphTemporalWorkflow.new_input(workflow_input())
+
+    intent = %OperationGraphExecutor.ActivityIntent{
+      activity_intent_ref: "activity-intent://workflow-run/node-source",
+      node_ref: "node://source",
+      operation_context_ref: "operation-context://tenant/request-a",
+      operation_plan_ref: "operation-plan://tenant/source",
+      predecessor_event_refs: [],
+      retry_policy: %{},
+      timeout_policy: %{},
+      cancellation_policy: %{},
+      metadata: %{graph_ref: "operation-graph://tenant/run-a"}
+    }
+
+    payload = OperationGraphTemporalWorkflow.activity_payload(workflow_input, intent)
+
+    assert is_map(payload.activity_intent)
+    refute Map.has_key?(payload.activity_intent, :__struct__)
+    assert payload.activity_intent.node_ref == "node://source"
+    assert payload.activity_intent.operation_plan_ref == "operation-plan://tenant/source"
+
+    encoded = Temporalex.Converter.to_payload(payload)
+    assert encoded.metadata["encoding"] == "json/plain"
   end
 
   test "normalizes JSON-shaped workflow input and activity result attrs" do

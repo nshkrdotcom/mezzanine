@@ -51,7 +51,7 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphTemporalWorkflow do
       ) do
     %{
       graph_ref: input.graph.graph_ref,
-      activity_intent: intent,
+      activity_intent: activity_intent_payload(intent),
       activity_result_attrs_by_node_ref: input.activity_result_attrs_by_node_ref
     }
   end
@@ -96,14 +96,14 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphTemporalWorkflow do
       workflow_state: workflow_state(input.graph, facts),
       graph_ref: input.graph.graph_ref,
       operation_context_ref: input.schedule_attrs.operation_context_ref,
-      facts: facts,
+      facts: public_facts(facts),
       completed_node_refs: completed_node_refs(facts),
       retry_node_refs: fact_refs(facts, :retry_node_refs),
       activity_result_event_refs: Enum.map(recorded_facts, & &1.event_ref),
       activity_result_refs: recorded_facts |> Enum.map(& &1.result_ref) |> Enum.reject(&is_nil/1),
       recorded_node_refs: Enum.map(recorded_facts, & &1.node_ref),
-      terminal_event_refs_by_node_ref: Map.get(facts, :terminal_event_refs_by_node_ref, %{}),
-      metadata: input.metadata
+      terminal_event_refs: event_ref_entries(facts, :terminal_event_refs_by_node_ref),
+      metadata: public_metadata(input.metadata)
     }
   end
 
@@ -190,6 +190,74 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphTemporalWorkflow do
   defp result_attrs_for(attrs_by_node_ref, node_ref) do
     Map.get(attrs_by_node_ref, node_ref) || Map.get(attrs_by_node_ref, to_string(node_ref), %{})
   end
+
+  defp activity_intent_payload(%OperationGraphExecutor.ActivityIntent{} = intent) do
+    %{
+      activity_intent_ref: intent.activity_intent_ref,
+      node_ref: intent.node_ref,
+      operation_context_ref: intent.operation_context_ref,
+      operation_plan_ref: intent.operation_plan_ref,
+      predecessor_event_refs: intent.predecessor_event_refs,
+      retry_policy: intent.retry_policy,
+      timeout_policy: intent.timeout_policy,
+      cancellation_policy: intent.cancellation_policy,
+      metadata: intent.metadata
+    }
+  end
+
+  defp public_facts(facts) do
+    facts
+    |> Map.take([
+      :succeeded_node_refs,
+      :reviewed_node_refs,
+      :confirmed_node_refs,
+      :degraded_node_refs,
+      :failed_node_refs,
+      :canceled_node_refs,
+      :active_node_refs,
+      :retry_node_refs,
+      :canceling_node_refs,
+      :compensated_node_refs,
+      :cancellation_requested_ref,
+      :cancellation_reason
+    ])
+    |> Map.put(:terminal_event_refs, event_ref_entries(facts, :terminal_event_refs_by_node_ref))
+    |> Map.put(:review_event_refs, event_ref_entries(facts, :review_event_refs_by_node_ref))
+    |> Map.put(
+      :confirmation_event_refs,
+      event_ref_entries(facts, :confirmation_event_refs_by_node_ref)
+    )
+  end
+
+  defp event_ref_entries(facts, key) do
+    facts
+    |> Map.get(key, %{})
+    |> Enum.map(fn {node_ref, event_ref} ->
+      %{node_ref: node_ref, event_ref: event_ref}
+    end)
+    |> Enum.sort_by(& &1.node_ref)
+  end
+
+  defp public_metadata(metadata) when is_map(metadata) do
+    metadata
+    |> Enum.map(fn {key, value} ->
+      %{metadata_key: to_string(key), metadata_value: public_metadata_value(value)}
+    end)
+    |> Enum.sort_by(& &1.metadata_key)
+  end
+
+  defp public_metadata(_metadata), do: []
+
+  defp public_metadata_value(value) when is_map(value), do: public_metadata(value)
+
+  defp public_metadata_value(value) when is_list(value),
+    do: Enum.map(value, &public_metadata_value/1)
+
+  defp public_metadata_value(value)
+       when is_binary(value) or is_number(value) or is_boolean(value) or is_nil(value),
+       do: value
+
+  defp public_metadata_value(value), do: inspect(value)
 
   defp event_ref(graph_ref, node_ref, attrs) do
     value(attrs, :event_ref, "operation-graph-event://#{graph_ref}/#{node_ref}/succeeded")
@@ -357,6 +425,8 @@ defmodule Mezzanine.Workflows.OperationGraphRun do
   def handle_query("status", _args, state), do: {:reply, state || %{}}
 
   defp drain_graph(%WorkflowInput{} = input, facts, recorded_facts) do
+    set_graph_state(input, facts, recorded_facts)
+
     case OperationGraphExecutor.ready_activity_intents(input.graph, facts, input.schedule_attrs) do
       {:ok, []} ->
         {:ok, OperationGraphTemporalWorkflow.workflow_result(input, facts, recorded_facts)}
@@ -372,6 +442,7 @@ defmodule Mezzanine.Workflows.OperationGraphRun do
   defp run_intent(%WorkflowInput{} = input, facts, recorded_facts, intent) do
     payload = OperationGraphTemporalWorkflow.activity_payload(input, intent)
     active_facts = OperationGraphTemporalWorkflow.mark_active(facts, intent.node_ref)
+    set_graph_state(input, active_facts, recorded_facts)
 
     with {:ok, result_attrs} <-
            execute_activity(Mezzanine.Activities.ExecuteOperationGraphNode, payload,
@@ -388,6 +459,12 @@ defmodule Mezzanine.Workflows.OperationGraphRun do
            ) do
       drain_graph(input, step.facts, [step.recorded_fact | recorded_facts])
     end
+  end
+
+  defp set_graph_state(%WorkflowInput{} = input, facts, recorded_facts) do
+    input
+    |> OperationGraphTemporalWorkflow.workflow_result(facts, recorded_facts)
+    |> set_state()
   end
 end
 
