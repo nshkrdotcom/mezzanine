@@ -58,6 +58,13 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
       task_queue: "mezzanine.agentic",
       version: "incident-reconstruction.v1",
       workflow_id_format: "tenant:<tenant_ref>:incident:<incident_ref>"
+    },
+    %{
+      name: :operation_graph_run,
+      module: Mezzanine.Workflows.OperationGraphRun,
+      task_queue: "mezzanine.agentic",
+      version: "operation-graph-run.v1",
+      workflow_id_format: "tenant:<tenant_ref>:operation-graph:<graph_ref>:run:<run_ref>"
     }
   ]
 
@@ -253,6 +260,14 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
       task_queue: "mezzanine.review",
       lease_broker?: false,
       version: "create-review.v1"
+    },
+    %{
+      name: :execute_operation_graph_node,
+      module: Mezzanine.Activities.ExecuteOperationGraphNode,
+      owner_repo: :mezzanine,
+      task_queue: "mezzanine.hazmat",
+      lease_broker?: true,
+      version: "execute-operation-graph-node.v1"
     }
   ]
 
@@ -630,7 +645,7 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
   def complete? do
     [
       integration_mode() == :direct_temporalex_beam_workers,
-      length(workflow_types()) == 6,
+      length(workflow_types()) == 7,
       length(activity_registrations()) >= 6,
       length(operator_signal_registry()) == 6,
       decision_timer_policy().timer_semantics == :temporal_workflow_timer,

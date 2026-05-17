@@ -189,8 +189,14 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphExecutor do
 
   defp required_status(attrs) do
     case get_attr(attrs, :status) do
-      status when status in [:succeeded, :failed, :degraded, :canceled] -> {:ok, status}
-      _missing_or_unknown -> {:error, {:missing_required_activity_result_field, :status}}
+      status when status in [:succeeded, :failed, :degraded, :canceled] ->
+        {:ok, status}
+
+      status when status in ["succeeded", "failed", "degraded", "canceled"] ->
+        {:ok, String.to_existing_atom(status)}
+
+      _missing_or_unknown ->
+        {:error, {:missing_required_activity_result_field, :status}}
     end
   end
 
@@ -375,7 +381,14 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphExecutor do
   end
 
   defp get_attr(attrs, key, default \\ nil)
-  defp get_attr(attrs, key, default) when is_map(attrs), do: Map.get(attrs, key, default)
+
+  defp get_attr(attrs, key, default) when is_map(attrs) do
+    case Map.fetch(attrs, key) do
+      {:ok, value} -> value
+      :error -> Map.get(attrs, Atom.to_string(key), default)
+    end
+  end
+
   defp get_attr(attrs, key, default) when is_list(attrs), do: Keyword.get(attrs, key, default)
 
   defp predecessors_satisfied?(dependencies, node_ref, facts) do

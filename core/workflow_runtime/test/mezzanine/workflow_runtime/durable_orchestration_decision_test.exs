@@ -63,7 +63,8 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecisionTest do
              Mezzanine.Workflows.ExecutionAttempt,
              Mezzanine.Workflows.DecisionReview,
              Mezzanine.Workflows.JoinBarrier,
-             Mezzanine.Workflows.IncidentReconstruction
+             Mezzanine.Workflows.IncidentReconstruction,
+             Mezzanine.Workflows.OperationGraphRun
            ]
 
     assert Mezzanine.Activities.StartLowerExecution in activity_modules
@@ -80,6 +81,7 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecisionTest do
     assert Mezzanine.Activities.UpdateRuntimeProjection in activity_modules
     assert Mezzanine.Activities.MaterializeEvidence in activity_modules
     assert Mezzanine.Activities.CreateReview in activity_modules
+    assert Mezzanine.Activities.ExecuteOperationGraphNode in activity_modules
 
     for workflow <- workflow_modules do
       assert Code.ensure_loaded?(workflow)
@@ -101,7 +103,8 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecisionTest do
       Mezzanine.Workflows.ExecutionAttempt => "mezzanine.hazmat",
       Mezzanine.Workflows.DecisionReview => "mezzanine.review",
       Mezzanine.Workflows.JoinBarrier => "mezzanine.agentic",
-      Mezzanine.Workflows.IncidentReconstruction => "mezzanine.agentic"
+      Mezzanine.Workflows.IncidentReconstruction => "mezzanine.agentic",
+      Mezzanine.Workflows.OperationGraphRun => "mezzanine.agentic"
     }
 
     for {workflow, task_queue} <- expected_workflow_queues do
@@ -133,7 +136,8 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecisionTest do
       Mezzanine.Activities.PublishSource => "mezzanine.agentic",
       Mezzanine.Activities.UpdateRuntimeProjection => "mezzanine.agentic",
       Mezzanine.Activities.MaterializeEvidence => "mezzanine.agentic",
-      Mezzanine.Activities.CreateReview => "mezzanine.review"
+      Mezzanine.Activities.CreateReview => "mezzanine.review",
+      Mezzanine.Activities.ExecuteOperationGraphNode => "mezzanine.hazmat"
     }
 
     for {activity, task_queue} <- expected_activity_queues do

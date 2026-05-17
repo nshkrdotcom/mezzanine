@@ -54,9 +54,15 @@ defmodule Mezzanine.WorkflowRuntime.TemporalSupervisorTest do
              &(&1.task_queue == "mezzanine.agentic")
            ).workflows
 
+    assert Mezzanine.Workflows.OperationGraphRun in Enum.find(
+             specs,
+             &(&1.task_queue == "mezzanine.agentic")
+           ).workflows
+
     assert Mezzanine.Activities.StartLowerExecution in hazmat.activities
     assert Mezzanine.Activities.AgentLoopSubmitLowerRun in hazmat.activities
     assert Mezzanine.Activities.SubmitJidoLowerActivity in hazmat.activities
+    assert Mezzanine.Activities.ExecuteOperationGraphNode in hazmat.activities
 
     assert %{
              id: Mezzanine.WorkflowRuntime.TestTemporal.MezzanineHazmat,
