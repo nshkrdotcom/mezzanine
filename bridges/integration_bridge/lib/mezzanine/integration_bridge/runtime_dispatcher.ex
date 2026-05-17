@@ -57,24 +57,9 @@ defmodule Mezzanine.IntegrationBridge.RuntimeDispatcher do
         attrs,
         opts \\ []
       ) do
-    explicit_operations =
-      Keyword.get(opts, :allowed_operations) ||
-        value(attrs, :allowed_operations) ||
-        value(runtime_binding, :allowed_operations)
-
-    cond do
-      is_list(explicit_operations) and explicit_operations != [] ->
-        Enum.map(explicit_operations, &to_string/1)
-
-      operation = value(runtime_binding, :operation_ref) || value(runtime_binding, :operation) ->
-        [to_string(operation)]
-
-      is_atom(operation_role_ref) or is_binary(operation_role_ref) ->
-        [to_string(operation_role_ref)]
-
-      true ->
-        []
-    end
+    opts
+    |> explicit_allowed_operations(attrs, runtime_binding)
+    |> allowed_operations_or_fallback(binding_operation(runtime_binding), operation_role_ref)
   end
 
   defp normalize_binding(nil), do: {:error, :missing_runtime_binding}
@@ -113,19 +98,36 @@ defmodule Mezzanine.IntegrationBridge.RuntimeDispatcher do
     |> Keyword.put_new(:runtime_binding, binding)
   end
 
-  defp value(%_{} = struct, key), do: struct |> Map.from_struct() |> value(key)
-  defp value(%{} = map, key), do: Map.get(map, key) || Map.get(map, alternate_key(map, key))
-  defp value(list, key) when is_list(list), do: list |> Map.new() |> value(key)
-  defp value(_map, _key), do: nil
-
-  defp alternate_key(_map, key) when is_atom(key), do: Atom.to_string(key)
-
-  defp alternate_key(map, key) when is_binary(key) do
-    Enum.find(Map.keys(map), fn
-      existing_key when is_atom(existing_key) -> Atom.to_string(existing_key) == key
-      _existing_key -> false
-    end)
+  defp explicit_allowed_operations(opts, attrs, binding) do
+    Keyword.get(opts, :allowed_operations) ||
+      value(attrs, :allowed_operations) ||
+      value(binding, :allowed_operations)
   end
 
-  defp alternate_key(_map, _key), do: nil
+  defp binding_operation(binding),
+    do: value(binding, :operation_ref) || value(binding, :operation)
+
+  defp allowed_operations_or_fallback(operations, _operation, _role_ref)
+       when is_list(operations) and operations != [] do
+    Enum.map(operations, &to_string/1)
+  end
+
+  defp allowed_operations_or_fallback(_operations, operation, _role_ref)
+       when operation != nil and operation != false do
+    [to_string(operation)]
+  end
+
+  defp allowed_operations_or_fallback(_operations, _operation, role_ref)
+       when is_atom(role_ref) or is_binary(role_ref) do
+    [to_string(role_ref)]
+  end
+
+  defp allowed_operations_or_fallback(_operations, _operation, _role_ref), do: []
+
+  defp value(%_{} = struct, key), do: struct |> Map.from_struct() |> value(key)
+
+  defp value(%{} = map, key) when is_atom(key),
+    do: Map.get(map, key) || Map.get(map, Atom.to_string(key))
+
+  defp value(list, key) when is_list(list), do: list |> Map.new() |> value(key)
 end

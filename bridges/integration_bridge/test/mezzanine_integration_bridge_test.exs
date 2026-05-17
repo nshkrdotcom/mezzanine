@@ -15,6 +15,41 @@ defmodule Mezzanine.IntegrationBridgeTest do
   alias Mezzanine.IntegrationBridge.ProviderAuthorityAdmission
   alias Mezzanine.Intent.{EffectIntent, ReadIntent, RunIntent}
 
+  defmodule EvidenceAdapter do
+    def fetch(attrs, opts) do
+      send(self(), {:evidence_adapter_fetch, attrs, opts})
+
+      {:ok,
+       %{
+         effect_ref: "effect://evidence/test",
+         effect: "github_pr_evidence",
+         status: :receipt_recorded,
+         evidence_role_ref: Map.fetch!(attrs, :evidence_role_ref),
+         allowed_operations: Keyword.fetch!(opts, :allowed_operations),
+         receipt_refs: %{evidence_ref: "evidence://test"}
+       }}
+    end
+  end
+
+  defmodule ResourceEffectAdapter do
+    def cleanup(attrs, opts) do
+      send(self(), {:resource_effect_adapter_cleanup, attrs, opts})
+
+      {:ok,
+       %{
+         effect_ref: "effect://resource/test",
+         effect: "github_pr_branch_cleanup",
+         status: :receipt_recorded,
+         resource_effect_role_ref: Map.fetch!(attrs, :resource_effect_role_ref),
+         allowed_operations: Keyword.fetch!(opts, :allowed_operations),
+         operation_group_receipt: %{
+           operation_group_ref: "operation-group://test/github-pr-cleanup",
+           child_receipts: ["lower-receipt://github/pr-list"]
+         }
+       }}
+    end
+  end
+
   defmodule LowerFactsStub do
     @operations [
       :fetch_submission_receipt,
@@ -905,7 +940,9 @@ defmodule Mezzanine.IntegrationBridgeTest do
                     "run://neutral/generic-codex-before-run"}
 
     assert_receive {:generic_runtime_invoke, "codex.session.turn", ^workspace_root, invoke_opts}
-    assert Keyword.fetch!(invoke_opts, :runtime_binding).runtime_binding_ref =~ "coding-agent-runtime"
+
+    assert Keyword.fetch!(invoke_opts, :runtime_binding).runtime_binding_ref =~
+             "coding-agent-runtime"
 
     assert [hook_event] =
              Enum.filter(
@@ -3105,6 +3142,47 @@ defmodule Mezzanine.IntegrationBridgeTest do
              "connector-binding://github/github-conn-1"
   end
 
+  test "generic evidence dispatch uses binding operation refs before provider adapter code" do
+    binding = %{
+      binding_ref: "evidence-binding://test/github-pr",
+      evidence_kind: :github_pr_evidence,
+      connector_ref: "jido/connectors/github",
+      manifest_ref: "manifest://jido/connectors/github@local",
+      operation_refs: %{
+        fetch: "github.pr.fetch",
+        reviews: "github.pr.reviews.list"
+      },
+      credential_binding_ref: "credential-binding://github/test"
+    }
+
+    attrs = %{
+      repo: "nshkrdotcom/sample-app",
+      pull_number: 17,
+      trace_id: "trace-generic-evidence"
+    }
+
+    assert {:ok, receipt} =
+             IntegrationBridge.collect_evidence(
+               :proposed_change_evidence,
+               attrs,
+               binding,
+               evidence_adapter: EvidenceAdapter
+             )
+
+    assert_received {:evidence_adapter_fetch, forwarded_attrs, forwarded_opts}
+    assert forwarded_attrs.evidence_role_ref == :proposed_change_evidence
+    assert forwarded_attrs.repo == "nshkrdotcom/sample-app"
+    assert receipt.evidence_role_ref == :proposed_change_evidence
+
+    assert Keyword.fetch!(forwarded_opts, :allowed_operations) == [
+             "github.pr.fetch",
+             "github.pr.reviews.list"
+           ]
+
+    assert Keyword.fetch!(forwarded_opts, :evidence_binding).binding_ref ==
+             "evidence-binding://test/github-pr"
+  end
+
   test "GitHub PR evidence runtime refuses hidden write fixture setup" do
     assert {:error, :github_evidence_write_fixture_requires_separate_command} =
              GitHubPrEvidenceRuntime.fetch(
@@ -3233,6 +3311,52 @@ defmodule Mezzanine.IntegrationBridgeTest do
              "github.comment.create",
              "github.pr.update"
            ]
+  end
+
+  test "generic resource-effect dispatch uses binding operation refs and group metadata" do
+    binding = %{
+      binding_ref: "resource-effect-binding://test/github-pr-cleanup",
+      effect_kind: :github_pr_branch_cleanup,
+      connector_ref: "jido/connectors/github",
+      manifest_ref: "manifest://jido/connectors/github@local",
+      operation_group_ref: "operation-group://test/github-pr-cleanup",
+      operation_refs: %{
+        list: "github.pr.list",
+        comment: "github.comment.create",
+        close: "github.pr.update"
+      },
+      credential_binding_ref: "credential-binding://github/test",
+      confirmation_policy_ref: "confirmation-policy://github-pr-cleanup"
+    }
+
+    attrs = %{
+      repo: "nshkrdotcom/sample-app",
+      branch: "cleanup-branch",
+      confirm_close?: true,
+      trace_id: "trace-generic-resource-effect"
+    }
+
+    assert {:ok, receipt} =
+             IntegrationBridge.invoke_resource_effect(
+               :proposed_change_cleanup,
+               attrs,
+               binding,
+               resource_effect_adapter: ResourceEffectAdapter
+             )
+
+    assert_received {:resource_effect_adapter_cleanup, forwarded_attrs, forwarded_opts}
+    assert forwarded_attrs.resource_effect_role_ref == :proposed_change_cleanup
+    assert forwarded_attrs.branch == "cleanup-branch"
+    assert receipt.resource_effect_role_ref == :proposed_change_cleanup
+
+    assert Keyword.fetch!(forwarded_opts, :allowed_operations) == [
+             "github.comment.create",
+             "github.pr.list",
+             "github.pr.update"
+           ]
+
+    assert Keyword.fetch!(forwarded_opts, :resource_effect_binding).operation_group_ref ==
+             "operation-group://test/github-pr-cleanup"
   end
 
   test "GitHub PR branch cleanup runtime refuses unconfirmed close requests" do

@@ -50,8 +50,9 @@ defmodule Mezzanine.IntegrationBridge.GitHubPrEvidenceRuntime do
          {:ok, repo} <- repo(attrs),
          {:ok, connection_id} <- connection_id(attrs, opts),
          {:ok, pull_number} <- pull_number(attrs, repo, connection_id, opts),
-         invocation <- authorized_invocation(attrs, @capability_ids),
-         dispatch_opts <- dispatch_opts(attrs, connection_id, opts, @capability_ids),
+         allowed_operations <- allowed_operations(attrs, opts),
+         invocation <- authorized_invocation(attrs, allowed_operations),
+         dispatch_opts <- dispatch_opts(attrs, connection_id, opts, allowed_operations),
          {:ok, pr_dispatch} <-
            IntegrationBridge.fetch_github_pr(
              invocation,
@@ -72,6 +73,16 @@ defmodule Mezzanine.IntegrationBridge.GitHubPrEvidenceRuntime do
   end
 
   def fetch(_attrs, _opts), do: {:error, :invalid_github_pr_evidence_runtime_opts}
+
+  defp allowed_operations(attrs, opts) do
+    case Keyword.get(opts, :allowed_operations) || map_value(attrs, :allowed_operations) do
+      operations when is_list(operations) and operations != [] ->
+        Enum.map(operations, &to_string/1)
+
+      _missing ->
+        @capability_ids
+    end
+  end
 
   defp reject_hidden_write_setup(attrs) do
     if truthy?(map_value(attrs, :setup_fixture?)) or truthy?(map_value(attrs, :write_mode?)) do

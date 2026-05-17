@@ -187,6 +187,36 @@ defmodule Mezzanine.IntegrationBridge do
               ),
               to: Mezzanine.IntegrationBridge.ToolDispatcher
 
+  @spec collect_evidence(term(), map(), map() | keyword() | nil, keyword()) ::
+          {:ok, map()} | {:error, term()}
+  defdelegate collect_evidence(evidence_role_ref, attrs, evidence_binding, opts \\ []),
+    to: Mezzanine.IntegrationBridge.EvidenceDispatcher
+
+  @spec evidence_allowed_operations(term(), map() | keyword() | nil, map(), keyword()) ::
+          [String.t()]
+  defdelegate evidence_allowed_operations(evidence_role_ref, evidence_binding, attrs, opts \\ []),
+    to: Mezzanine.IntegrationBridge.EvidenceDispatcher
+
+  @spec invoke_resource_effect(term(), map(), map() | keyword() | nil, keyword()) ::
+          {:ok, map()} | {:error, term()}
+  defdelegate invoke_resource_effect(
+                resource_effect_role_ref,
+                attrs,
+                resource_effect_binding,
+                opts \\ []
+              ),
+              to: Mezzanine.IntegrationBridge.ResourceEffectDispatcher
+
+  @spec resource_effect_allowed_operations(term(), map() | keyword() | nil, map(), keyword()) ::
+          [String.t()]
+  defdelegate resource_effect_allowed_operations(
+                resource_effect_role_ref,
+                resource_effect_binding,
+                attrs,
+                opts \\ []
+              ),
+              to: Mezzanine.IntegrationBridge.ResourceEffectDispatcher
+
   @spec create_github_pr(AuthorizedInvocation.t(), map() | keyword(), keyword()) ::
           {:ok, map()} | {:error, term()}
   defdelegate create_github_pr(invocation, attrs, opts \\ []),

@@ -39,8 +39,9 @@ defmodule Mezzanine.IntegrationBridge.GitHubPrBranchCleanupRuntime do
          {:ok, repo} <- repo(attrs),
          {:ok, branch} <- branch(attrs),
          {:ok, connection_id} <- connection_id(attrs, opts),
-         invocation <- authorized_invocation(attrs, @capability_ids),
-         dispatch_opts <- dispatch_opts(attrs, connection_id, opts, @capability_ids),
+         allowed_operations <- allowed_operations(attrs, opts),
+         invocation <- authorized_invocation(attrs, allowed_operations),
+         dispatch_opts <- dispatch_opts(attrs, connection_id, opts, allowed_operations),
          {:ok, list_dispatch} <-
            IntegrationBridge.list_github_prs(invocation, list_attrs(repo, branch), dispatch_opts),
          pull_requests <- matching_pull_requests(list_dispatch, attrs, branch),
@@ -51,6 +52,16 @@ defmodule Mezzanine.IntegrationBridge.GitHubPrBranchCleanupRuntime do
   end
 
   def cleanup(_attrs, _opts), do: {:error, :invalid_github_pr_branch_cleanup_runtime_opts}
+
+  defp allowed_operations(attrs, opts) do
+    case Keyword.get(opts, :allowed_operations) || map_value(attrs, :allowed_operations) do
+      operations when is_list(operations) and operations != [] ->
+        Enum.map(operations, &to_string/1)
+
+      _missing ->
+        @capability_ids
+    end
+  end
 
   defp confirmed?(attrs, opts) do
     if truthy?(map_value(attrs, :confirm_close?)) or Keyword.get(opts, :confirm_close?) == true do
