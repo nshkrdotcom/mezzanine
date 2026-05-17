@@ -363,6 +363,104 @@ defmodule Mezzanine.Pack.CompilerTest do
              "document_review_publication"
   end
 
+  test "validates generic binding operations through a credential-free manifest resolver" do
+    resolver = fn request ->
+      send(self(), {:manifest_lookup_request, request})
+      {:ok, descriptor_for(request)}
+    end
+
+    assert {:ok, compiled} =
+             Compiler.compile(generic_binding_manifest(), manifest_resolver: resolver)
+
+    assert map_size(compiled.bindings_by_ref) == 6
+
+    requests =
+      for _index <- 1..6 do
+        assert_receive {:manifest_lookup_request, request}
+        request
+      end
+
+    assert requests |> Enum.map(& &1.operation_ref) |> Enum.sort() == [
+             "document_lookup",
+             "document_read",
+             "review_evidence_collect",
+             "review_publish",
+             "review_run",
+             "review_state_update"
+           ]
+
+    refute Enum.any?(requests, &Map.has_key?(&1, :api_key))
+    refute Enum.any?(requests, &Map.has_key?(&1, :access_token))
+    refute Enum.any?(requests, &Map.has_key?(&1, :oauth_session))
+    refute Enum.any?(requests, &Map.has_key?(&1, :provider_client))
+    assert Enum.all?(requests, &Map.has_key?(&1, :credential_scope_ref))
+  end
+
+  test "rejects manifest operation descriptors that do not match binding facts" do
+    resolver = fn request ->
+      descriptor =
+        if request.operation_ref == "document_read" do
+          request
+          |> descriptor_for()
+          |> Map.put(:operation_class, :source_write)
+        else
+          descriptor_for(request)
+        end
+
+      {:ok, descriptor}
+    end
+
+    assert {:error, issues} =
+             Compiler.compile(generic_binding_manifest(), manifest_resolver: resolver)
+
+    messages = Enum.map(issues, & &1.message)
+
+    assert Enum.any?(messages, &String.contains?(&1, "operation_class"))
+    assert Enum.any?(messages, &String.contains?(&1, "source_read"))
+    assert Enum.any?(messages, &String.contains?(&1, "source_write"))
+  end
+
+  test "rejects manifest digest drift and required scope expansion during compilation" do
+    manifest = generic_binding_manifest_with_source_manifest_metadata()
+
+    resolver = fn request ->
+      descriptor =
+        if request.operation_ref == "document_read" do
+          request
+          |> descriptor_for()
+          |> Map.put(:manifest_digest, "sha256:document-manifest-v2")
+          |> Map.put(:required_scopes, ["documents.read", "documents.write"])
+        else
+          descriptor_for(request)
+        end
+
+      {:ok, descriptor}
+    end
+
+    assert {:error, issues} =
+             Compiler.compile(manifest, manifest_resolver: resolver)
+
+    messages = Enum.map(issues, & &1.message)
+
+    assert Enum.any?(messages, &String.contains?(&1, "manifest_digest"))
+    assert Enum.any?(messages, &String.contains?(&1, "required scopes expanded"))
+    assert Enum.any?(messages, &String.contains?(&1, "documents.write"))
+  end
+
+  test "surfaces manifest resolver failures as compiler diagnostics" do
+    resolver = fn
+      %{operation_ref: "document_lookup"} -> {:error, :operation_missing}
+      request -> {:ok, descriptor_for(request)}
+    end
+
+    assert {:error, issues} =
+             Compiler.compile(generic_binding_manifest(), manifest_resolver: resolver)
+
+    messages = Enum.map(issues, & &1.message)
+
+    assert Enum.any?(messages, &String.contains?(&1, "operation_missing"))
+  end
+
   test "rejects generic binding records that hide operation roles or omit required safety refs" do
     manifest = %Manifest{
       generic_binding_manifest()
@@ -589,4 +687,44 @@ defmodule Mezzanine.Pack.CompilerTest do
       ]
     }
   end
+
+  defp generic_binding_manifest_with_source_manifest_metadata do
+    manifest = generic_binding_manifest()
+    [source | rest] = manifest.binding_specs
+
+    source = %{
+      source
+      | metadata: %{
+          manifest_digest: "sha256:document-manifest-v1",
+          required_scopes: %{read: ["documents.read"]}
+        }
+    }
+
+    %{manifest | binding_specs: [source | rest]}
+  end
+
+  defp descriptor_for(request) do
+    %{
+      connector_ref: request.connector_ref,
+      manifest_ref: request.manifest_ref,
+      operation_ref: request.operation_ref,
+      operation_role: request.operation_role,
+      operation_class: request.operation_class,
+      binding_kind: request.binding_kind,
+      side_effect_class: descriptor_side_effect_class(request.binding_kind),
+      input_schema_ref: "schema://#{request.operation_ref}/input",
+      output_schema_ref: "schema://#{request.operation_ref}/output",
+      credential_scope_ref: request.credential_scope_ref,
+      runtime_family: request.required_runtime_family,
+      manifest_digest: request.compiled_manifest_hash || "sha256:document-manifest-v1",
+      required_scopes: []
+    }
+  end
+
+  defp descriptor_side_effect_class(:evidence), do: :read
+  defp descriptor_side_effect_class(:resource_effect), do: :resource_effect
+  defp descriptor_side_effect_class(:runtime), do: :write
+  defp descriptor_side_effect_class(:runtime_tool), do: :read
+  defp descriptor_side_effect_class(:source), do: :read
+  defp descriptor_side_effect_class(:source_publication), do: :write
 end

@@ -335,9 +335,10 @@ defmodule Mezzanine.Pack.Validator do
   }
 
   alias Mezzanine.Pack.Compiler.Helpers, as: H
+  alias Mezzanine.Pack.ManifestOperationValidator
 
-  @spec diagnostics(Manifest.t()) :: [ValidationError.t()]
-  def diagnostics(%Manifest{} = manifest) do
+  @spec diagnostics(Manifest.t(), keyword()) :: [ValidationError.t()]
+  def diagnostics(%Manifest{} = manifest, opts \\ []) when is_list(opts) do
     validate_manifest(manifest) ++
       validate_profile_slots(manifest.profile_slots) ++
       validate_subject_kind_specs(manifest.subject_kind_specs) ++
@@ -352,7 +353,8 @@ defmodule Mezzanine.Pack.Validator do
       validate_evidence_specs(manifest.evidence_specs) ++
       validate_operator_action_specs(manifest.operator_action_specs) ++
       validate_projection_specs(manifest.projection_specs) ++
-      validate_cross_references(manifest)
+      validate_cross_references(manifest) ++
+      ManifestOperationValidator.diagnostics(manifest, opts)
   end
 
   defp validate_manifest(%Manifest{} = manifest) do

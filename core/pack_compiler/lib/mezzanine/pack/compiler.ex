@@ -8,10 +8,10 @@ defmodule Mezzanine.Pack.Compiler do
   @type pack_input :: term()
   @type compile_result :: {:ok, CompiledPack.t()} | {:error, [ValidationError.t()]}
 
-  @spec compile(pack_input()) :: compile_result()
-  def compile(pack_or_manifest) do
+  @spec compile(pack_input(), keyword()) :: compile_result()
+  def compile(pack_or_manifest, opts \\ []) when is_list(opts) do
     with {:ok, manifest} <- load_manifest(pack_or_manifest) do
-      diagnostics = Validator.diagnostics(manifest)
+      diagnostics = Validator.diagnostics(manifest, opts)
       errors = Enum.filter(diagnostics, &(&1.severity == :error))
 
       case errors do
@@ -27,10 +27,10 @@ defmodule Mezzanine.Pack.Compiler do
     end
   end
 
-  @spec diagnostics(pack_input()) :: [ValidationError.t()]
-  def diagnostics(pack_or_manifest) do
+  @spec diagnostics(pack_input(), keyword()) :: [ValidationError.t()]
+  def diagnostics(pack_or_manifest, opts \\ []) when is_list(opts) do
     case load_manifest(pack_or_manifest) do
-      {:ok, manifest} -> Validator.diagnostics(manifest)
+      {:ok, manifest} -> Validator.diagnostics(manifest, opts)
       {:error, issue} -> [issue]
     end
   end

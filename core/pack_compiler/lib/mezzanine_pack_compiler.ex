@@ -3,6 +3,6 @@ defmodule MezzaninePackCompiler do
   Convenience entrypoint for the neutral Mezzanine pack compiler package.
   """
 
-  defdelegate compile(pack_or_manifest), to: Mezzanine.Pack.Compiler
-  defdelegate diagnostics(pack_or_manifest), to: Mezzanine.Pack.Compiler
+  defdelegate compile(pack_or_manifest, opts \\ []), to: Mezzanine.Pack.Compiler
+  defdelegate diagnostics(pack_or_manifest, opts \\ []), to: Mezzanine.Pack.Compiler
 end
