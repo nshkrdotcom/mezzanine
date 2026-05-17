@@ -127,6 +127,7 @@ defmodule Mezzanine.IntegrationBridge.LinearGraphQLToolExecutor do
      })
      |> authority_refs(dispatch)
      |> lower_refs(dispatch)
+     |> generic_operation_refs(dispatch)
      |> maybe_put(:credential_redeemed?, credential_redeemed?(opts))}
   end
 
@@ -157,6 +158,7 @@ defmodule Mezzanine.IntegrationBridge.LinearGraphQLToolExecutor do
      })
      |> authority_refs(reason)
      |> lower_refs(reason)
+     |> generic_operation_refs(reason)
      |> maybe_put(:credential_redeemed?, credential_redeemed?(opts))}
   end
 
@@ -275,6 +277,21 @@ defmodule Mezzanine.IntegrationBridge.LinearGraphQLToolExecutor do
     result
     |> maybe_put(:lower_request_ref, lower_request_ref(source))
     |> maybe_put(:lower_receipt_ref, lower_receipt_ref(source))
+  end
+
+  defp generic_operation_refs(result, source) do
+    operation_receipt = value(source, :operation_receipt)
+
+    result
+    |> maybe_put(:operation_receipt, operation_receipt)
+    |> maybe_put(:effect_request_ref, value(operation_receipt, :effect_request_ref))
+    |> maybe_put(:connector_manifest_ref, value(operation_receipt, :connector_manifest_ref))
+    |> maybe_put(:connector_manifest_hash, value(operation_receipt, :connector_manifest_hash))
+    |> maybe_put(
+      :capability_negotiation_ref,
+      value(operation_receipt, :capability_negotiation_ref)
+    )
+    |> maybe_put(:evidence_profile_ref, value(operation_receipt, :evidence_profile_ref))
   end
 
   defp authority_refs(result, source) do

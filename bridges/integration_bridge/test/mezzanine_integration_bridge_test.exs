@@ -583,6 +583,14 @@ defmodule Mezzanine.IntegrationBridgeTest do
 
     assert result.source_intake.operation == "linear.issues.list"
     assert [%{source_ref: "linear://inst-1/issue/ENG-321"}] = result.source_intake.subject_attrs
+    assert result.operation_receipt.capability_id == "linear.issues.list"
+
+    assert result.operation_receipt.connector_manifest_ref ==
+             "manifest://jido/connectors/linear@local"
+
+    assert result.operation_receipt.effect_request_ref == result.lower_request_ref
+    assert result.operation_receipt.credential_lease_ref == result.credential_lease_ref
+    assert Enum.map(result.operation_receipts, & &1.capability_id) == ["linear.issues.list"]
   end
 
   test "Linear API key credential ingress prepares an authorized invocation and connection opts" do
@@ -807,6 +815,13 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert turn.authority_raw_material_present? == false
     assert turn.session_ref == "session://codex/codex-provider-session-1"
     assert turn.lower_request_ref == "lower-request://jido-run-codex/codex.session.turn"
+    assert turn.operation_receipt.capability_id == "codex.session.turn"
+
+    assert turn.operation_receipt.connector_manifest_ref ==
+             "manifest://jido/connectors/codex_cli@local"
+
+    assert turn.operation_receipt.effect_request_ref == turn.lower_request_ref
+    assert turn.operation_receipt.credential_lease_ref == turn.credential_lease_ref
 
     assert turn.lower_receipt_ref ==
              "lower-receipt://jido-attempt-codex/codex.session.turn/succeeded"
@@ -2735,6 +2750,16 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert result.github_operation_receipt.capability_id == "github.pr.create"
     assert result.github_operation_receipt.capability_negotiation_ref =~ "cap-neg://"
     assert result.github_operation_receipt.provider_response_ref == "artifact://github/pr-create"
+    assert result.operation_receipt.capability_id == "github.pr.create"
+
+    assert result.operation_receipt.connector_manifest_ref ==
+             "manifest://jido/connectors/github@local"
+
+    assert result.operation_receipt.effect_request_ref ==
+             result.operation_receipt.lower_request_ref
+
+    assert result.github_operation_receipt.credential_lease_ref ==
+             result.operation_receipt.credential_lease_ref
   end
 
   test "GitHub PR feedback sweep reads reviews, comments, statuses, and checks" do
@@ -2872,6 +2897,9 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert receipt.provider_refs.pull_request =~ "/pull/17"
     assert receipt.receipt_refs.lower_request_refs |> length() == 5
     assert Enum.map(receipt.operation_receipts, & &1.capability_id) == receipt.capability_ids
+    assert Enum.all?(receipt.operation_receipts, &is_binary(&1.connector_manifest_ref))
+    assert Enum.all?(receipt.operation_receipts, &is_binary(&1.credential_lease_ref))
+    assert Enum.all?(receipt.operation_receipts, &(&1.effect_request_ref == &1.lower_request_ref))
     assert receipt.metadata["authority_handoff"]["authorized?"] == true
     assert receipt.metadata["authority_handoff"]["handoff_ref"] =~ "workflow-authority-handoff://"
 
@@ -3059,7 +3087,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
     end
 
     assert {:ok,
-            %{
+            result = %{
               governed_lower_envelope: %GovernedLowerEnvelope{} = envelope,
               governed_lower_receipt: %GovernedLowerReceipt{} = receipt
             }} =
@@ -3097,6 +3125,11 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert receipt.sandbox_profile_ref == "sandbox://local/strict"
     assert receipt.attestation_requirement_ref == "attestation://local/dev"
     assert GovernedLowerReceipt.matches_envelope?(receipt, envelope)
+    assert result.operation_receipt.capability_id == "linear.issues.retrieve"
+    assert result.operation_receipt.connector_manifest_ref == envelope.connector_manifest_ref
+    assert result.operation_receipt.credential_lease_ref == result.credential_lease_ref
+    assert result.operation_receipt.effect_request_ref == envelope.lower_request_ref
+    assert result.operation_receipt.sandbox_profile_ref == "sandbox://local/strict"
 
     assert_received {:invoke, "linear.issues.retrieve", input, opts}
     assert input.governed_lower_envelope["lower_request_ref"] == envelope.lower_request_ref

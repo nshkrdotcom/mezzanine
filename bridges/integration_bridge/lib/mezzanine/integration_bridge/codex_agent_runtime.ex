@@ -655,9 +655,9 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
         |> Map.merge(codex_token_accounting_extensions(token_accounting))
         |> Map.merge(session_stop_extensions(session_stop)),
       action_receipts:
-        session_start_action_receipts(session_start) ++
-          Enum.map(turn_attempts, &action_receipt(&1, event_stream)) ++
-          session_stop_action_receipts(session_stop),
+        session_start_action_receipts(attrs, session_start) ++
+          Enum.map(turn_attempts, &action_receipt(attrs, &1, event_stream)) ++
+          session_stop_action_receipts(attrs, session_stop),
       runtime_events:
         hook_events(
           attrs,
@@ -791,7 +791,21 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
       provider_request_sent?: true,
       provider_response_received?: true,
       lower_request_ref: lower_request_ref,
-      lower_receipt_ref: lower_receipt_ref
+      lower_receipt_ref: lower_receipt_ref,
+      effect_request_ref: lower_request_ref,
+      connector_manifest_ref: codex_connector_manifest_ref(),
+      capability_negotiation_ref: capability_negotiation_ref(lower_request_ref),
+      evidence_profile_ref: codex_evidence_profile_ref(run_ref),
+      operation_receipt:
+        codex_operation_receipt(
+          attrs,
+          @capability_id,
+          lower_request_ref,
+          lower_receipt_ref,
+          status,
+          output_artifact_refs(result),
+          map_value(turn_attempt, :authority_handoff)
+        )
     }
     |> Map.merge(
       ProviderAuthorityAdmission.result_fields(map_value(turn_attempt, :authority_handoff))
@@ -805,15 +819,29 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
     |> Map.merge(codex_event_stream_turn_fields(event_stream, turn_index))
   end
 
-  defp action_receipt(turn_attempt, event_stream) do
+  defp action_receipt(attrs, turn_attempt, event_stream) do
     output = turn_attempt_output(turn_attempt)
     turn_index = map_value(turn_attempt, :turn_index)
     status = turn_status(output, event_stream, turn_index)
+    lower_request_ref = lower_request_ref(turn_attempt)
+    lower_receipt_ref = lower_receipt_ref(turn_attempt)
 
     %{
+      operation: @capability_id,
       status: action_receipt_status(status),
-      lower_receipt_ref: lower_receipt_ref(turn_attempt),
-      output_artifact_refs: output_artifact_refs(turn_attempt_result(turn_attempt))
+      lower_request_ref: lower_request_ref,
+      lower_receipt_ref: lower_receipt_ref,
+      output_artifact_refs: output_artifact_refs(turn_attempt_result(turn_attempt)),
+      operation_receipt:
+        codex_operation_receipt(
+          attrs,
+          @capability_id,
+          lower_request_ref,
+          lower_receipt_ref,
+          status,
+          output_artifact_refs(turn_attempt_result(turn_attempt)),
+          map_value(turn_attempt, :authority_handoff)
+        )
     }
   end
 
@@ -988,16 +1016,26 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
     }
   end
 
-  defp session_start_action_receipts(nil), do: []
+  defp session_start_action_receipts(_attrs, nil), do: []
 
-  defp session_start_action_receipts(evidence) do
+  defp session_start_action_receipts(attrs, evidence) do
     [
       %{
         operation: evidence.operation,
         status: :succeeded,
         lower_request_ref: evidence.lower_request_ref,
         lower_receipt_ref: evidence.lower_receipt_ref,
-        runtime_control_session_ref: evidence.runtime_control_session_ref
+        runtime_control_session_ref: evidence.runtime_control_session_ref,
+        operation_receipt:
+          codex_operation_receipt(
+            attrs,
+            evidence.operation,
+            evidence.lower_request_ref,
+            evidence.lower_receipt_ref,
+            evidence.lifecycle,
+            [],
+            nil
+          )
       }
     ]
   end
@@ -1120,16 +1158,26 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
     }
   end
 
-  defp session_stop_action_receipts(nil), do: []
+  defp session_stop_action_receipts(_attrs, nil), do: []
 
-  defp session_stop_action_receipts(evidence) do
+  defp session_stop_action_receipts(attrs, evidence) do
     [
       %{
         operation: evidence.operation,
         status: action_receipt_status(evidence.status),
         lower_request_ref: evidence.lower_request_ref,
         lower_receipt_ref: evidence.lower_receipt_ref,
-        runtime_control_session_ref: evidence.runtime_control_session_ref
+        runtime_control_session_ref: evidence.runtime_control_session_ref,
+        operation_receipt:
+          codex_operation_receipt(
+            attrs,
+            evidence.operation,
+            evidence.lower_request_ref,
+            evidence.lower_receipt_ref,
+            evidence.status,
+            [],
+            evidence
+          )
       }
     ]
   end
@@ -2823,6 +2871,60 @@ defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
     |> List.wrap()
     |> Enum.filter(&present_binary?/1)
   end
+
+  defp codex_operation_receipt(
+         attrs,
+         capability_id,
+         lower_request_ref,
+         lower_receipt_ref,
+         status,
+         artifact_refs,
+         authority_handoff
+       ) do
+    authority_fields = ProviderAuthorityAdmission.result_fields(authority_handoff)
+    run_ref = map_value(attrs, :run_ref)
+
+    %{
+      operation_receipt_ref: lower_receipt_ref,
+      lower_receipt_ref: lower_receipt_ref,
+      lower_request_ref: lower_request_ref,
+      lower_runtime_kind: "codex_session",
+      status: action_receipt_status_token(status),
+      capability_id: capability_id,
+      action_id: capability_id,
+      effect_request_ref: lower_request_ref,
+      connector_ref: "jido/connectors/#{@connector_id}",
+      connector_manifest_ref: codex_connector_manifest_ref(),
+      connector_binding_ref: Map.get(authority_fields, :connector_binding_ref),
+      credential_lease_ref: Map.get(authority_fields, :credential_lease_ref),
+      capability_negotiation_ref: capability_negotiation_ref(lower_request_ref),
+      authority_ref: Map.get(authority_fields, :authority_packet_ref),
+      authority_handoff_ref: Map.get(authority_fields, :authority_handoff_ref),
+      trace_id: map_value(attrs, :trace_id),
+      tenant_ref: map_value(attrs, :tenant_ref) || map_value(attrs, :tenant_id),
+      subject_ref: map_value(attrs, :subject_ref),
+      run_ref: run_ref,
+      evidence_profile_ref: codex_evidence_profile_ref(run_ref),
+      artifact_refs: artifact_refs
+    }
+    |> compact_map()
+  end
+
+  defp codex_connector_manifest_ref, do: "manifest://jido/connectors/#{@connector_id}@local"
+
+  defp capability_negotiation_ref(lower_request_ref) when is_binary(lower_request_ref),
+    do: "cap-neg://#{lower_request_ref}"
+
+  defp capability_negotiation_ref(_lower_request_ref), do: nil
+
+  defp codex_evidence_profile_ref(run_ref),
+    do: "evidence://codex-agent-runtime/#{ref_suffix(run_ref)}"
+
+  defp action_receipt_status_token("completed"), do: "succeeded"
+  defp action_receipt_status_token("stopped"), do: "succeeded"
+  defp action_receipt_status_token(status) when is_binary(status), do: status
+  defp action_receipt_status_token(status) when is_atom(status), do: Atom.to_string(status)
+  defp action_receipt_status_token(_status), do: "failed"
 
   defp digest(value) do
     value

@@ -124,7 +124,9 @@ defmodule Mezzanine.IntegrationBridge.GitHubPrDispatcher do
     envelope = Map.fetch!(dispatch, :governed_lower_envelope)
     lower_receipt = Map.fetch!(dispatch, :governed_lower_receipt)
 
-    %{
+    dispatch
+    |> Map.get(:operation_receipt, %{})
+    |> Map.merge(%{
       capability_id: envelope.capability_id,
       lower_runtime_kind: Atom.to_string(envelope.lower_runtime_kind),
       lower_request_ref: envelope.lower_request_ref,
@@ -137,7 +139,7 @@ defmodule Mezzanine.IntegrationBridge.GitHubPrDispatcher do
       provider_response_ref:
         dispatch |> Map.get(:artifact_refs, []) |> List.wrap() |> List.first(),
       trace_id: envelope.trace_id
-    }
+    })
     |> compact()
   end
 

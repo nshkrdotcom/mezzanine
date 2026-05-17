@@ -136,7 +136,8 @@ defmodule Mezzanine.IntegrationBridge.DirectRunDispatcher do
      result
      |> attach_authority_handoff(authority_handoff)
      |> Map.put(:governed_lower_envelope, envelope)
-     |> Map.put(:governed_lower_receipt, receipt)}
+     |> Map.put(:governed_lower_receipt, receipt)
+     |> Map.put(:operation_receipt, operation_receipt(envelope, receipt, authority_handoff))}
   end
 
   defp attach_governed_receipt({:error, result}, envelope, authority_handoff)
@@ -147,7 +148,8 @@ defmodule Mezzanine.IntegrationBridge.DirectRunDispatcher do
      result
      |> attach_authority_handoff(authority_handoff)
      |> Map.put(:governed_lower_envelope, envelope)
-     |> Map.put(:governed_lower_receipt, receipt)}
+     |> Map.put(:governed_lower_receipt, receipt)
+     |> Map.put(:operation_receipt, operation_receipt(envelope, receipt, authority_handoff))}
   end
 
   defp attach_governed_receipt(other, _envelope, _authority_handoff), do: other
@@ -156,6 +158,49 @@ defmodule Mezzanine.IntegrationBridge.DirectRunDispatcher do
     result
     |> Map.merge(ProviderAuthorityAdmission.result_fields(authority_handoff))
     |> Map.put(:authority_handoff, authority_handoff)
+  end
+
+  defp operation_receipt(%GovernedLowerEnvelope{} = envelope, receipt, authority_handoff) do
+    authority_fields = ProviderAuthorityAdmission.result_fields(authority_handoff)
+
+    %{
+      operation_receipt_ref: receipt.lower_receipt_ref,
+      lower_receipt_ref: receipt.lower_receipt_ref,
+      lower_request_ref: receipt.lower_request_ref,
+      lower_runtime_kind: atom_to_string(receipt.lower_runtime_kind),
+      status: atom_to_string(receipt.status),
+      capability_id: receipt.capability_id,
+      action_id: receipt.action_id,
+      effect_request_ref: receipt.lower_request_ref,
+      connector_ref: receipt.connector_ref,
+      connector_manifest_ref: receipt.connector_manifest_ref,
+      connector_manifest_hash: receipt.connector_manifest_hash,
+      connector_manifest_state: atom_to_string(receipt.connector_manifest_state),
+      capability_negotiation_ref: receipt.capability_negotiation_ref,
+      connector_binding_ref: Map.get(authority_fields, :connector_binding_ref),
+      credential_lease_ref: Map.get(authority_fields, :credential_lease_ref),
+      authority_ref: receipt.authority_ref,
+      authority_decision_hash: receipt.authority_decision_hash,
+      authority_handoff_ref: Map.get(authority_fields, :authority_handoff_ref),
+      trace_id: receipt.trace_id,
+      tenant_ref: receipt.tenant_ref,
+      subject_ref: receipt.subject_ref,
+      run_ref: receipt.run_ref,
+      workflow_ref: receipt.workflow_ref,
+      attempt_ref: receipt.attempt_ref,
+      evidence_profile_ref: receipt.evidence_profile_ref,
+      redaction_profile_ref: receipt.redaction_profile_ref,
+      artifact_refs: receipt.artifact_refs,
+      event_refs: receipt.event_refs,
+      input_ref: receipt.input_ref,
+      input_hash: receipt.input_hash,
+      workspace_ref: receipt.workspace_ref,
+      target_ref: receipt.target_ref,
+      placement_ref: receipt.placement_ref,
+      sandbox_profile_ref: receipt.sandbox_profile_ref,
+      idempotency_key: envelope.idempotency_key
+    }
+    |> compact()
   end
 
   defp merge_dispatch_input(input, extra_input) when is_map(extra_input) do
@@ -169,5 +214,14 @@ defmodule Mezzanine.IntegrationBridge.DirectRunDispatcher do
   defp merge_dispatch_input(_input, extra_input) do
     raise ArgumentError,
           "dispatch input must be a map or keyword list, got: #{inspect(extra_input)}"
+  end
+
+  defp atom_to_string(nil), do: nil
+  defp atom_to_string(value) when is_atom(value), do: Atom.to_string(value)
+
+  defp compact(map) do
+    map
+    |> Enum.reject(fn {_key, value} -> value in [nil, "", [], %{}] end)
+    |> Map.new()
   end
 end

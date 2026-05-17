@@ -86,7 +86,9 @@ defmodule Mezzanine.EvidenceLedger.GitHubPrEvidence do
     lower_receipt =
       Map.get(dispatch, :governed_lower_receipt) || Map.get(dispatch, "governed_lower_receipt")
 
-    %{
+    dispatch
+    |> Map.get(:operation_receipt, Map.get(dispatch, "operation_receipt", %{}))
+    |> Map.merge(%{
       capability_id: field_value(envelope, :capability_id) || Map.get(dispatch, :capability),
       status: field_value(lower_receipt, :status) || Map.get(dispatch, :status, :succeeded),
       lower_runtime_kind: lower_runtime_kind(field_value(envelope, :lower_runtime_kind)),
@@ -99,7 +101,7 @@ defmodule Mezzanine.EvidenceLedger.GitHubPrEvidence do
       capability_negotiation_ref: field_value(envelope, :capability_negotiation_ref),
       provider_response_ref: dispatch |> artifact_refs() |> List.first(),
       trace_id: field_value(envelope, :trace_id)
-    }
+    })
     |> compact()
   end
 

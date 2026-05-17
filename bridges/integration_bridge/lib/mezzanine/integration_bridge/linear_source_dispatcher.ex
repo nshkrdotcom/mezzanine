@@ -364,9 +364,25 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
     |> maybe_put(:credential_redeemed?, Keyword.get(opts, :credential_redeemed?))
     |> maybe_put(:lower_request_ref, lower_request_ref(dispatch))
     |> maybe_put(:lower_receipt_ref, lower_receipt_ref(dispatch))
+    |> maybe_put(:operation_receipt, operation_receipt(dispatch))
+    |> maybe_put(:operation_receipts, operation_receipts([dispatch]))
+    |> maybe_put(:effect_request_ref, operation_receipt_value(dispatch, :effect_request_ref))
+    |> maybe_put(
+      :connector_manifest_ref,
+      operation_receipt_value(dispatch, :connector_manifest_ref)
+    )
+    |> maybe_put(
+      :connector_manifest_hash,
+      operation_receipt_value(dispatch, :connector_manifest_hash)
+    )
+    |> maybe_put(
+      :capability_negotiation_ref,
+      operation_receipt_value(dispatch, :capability_negotiation_ref)
+    )
+    |> maybe_put(:evidence_profile_ref, operation_receipt_value(dispatch, :evidence_profile_ref))
   end
 
-  defp annotate_current_state_provider_effect(result, [first_dispatch | _rest], opts) do
+  defp annotate_current_state_provider_effect(result, [first_dispatch | rest], opts) do
     first_dispatch
     |> annotate_provider_effect(opts)
     |> Map.take([
@@ -375,6 +391,12 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
       :provider_response_received?,
       :lower_request_ref,
       :lower_receipt_ref,
+      :operation_receipt,
+      :effect_request_ref,
+      :connector_manifest_ref,
+      :connector_manifest_hash,
+      :capability_negotiation_ref,
+      :evidence_profile_ref,
       :authority_authorized?,
       :authority_handoff_ref,
       :authority_packet_ref,
@@ -382,6 +404,7 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
       :credential_lease_ref,
       :authority_raw_material_present?
     ])
+    |> Map.put(:operation_receipts, operation_receipts([first_dispatch | rest]))
     |> Map.merge(result)
   end
 
@@ -419,6 +442,22 @@ defmodule Mezzanine.IntegrationBridge.LinearSourceDispatcher do
 
   defp lower_envelope(dispatch) do
     Map.get(dispatch, :governed_lower_envelope) || Map.get(dispatch, "governed_lower_envelope")
+  end
+
+  defp operation_receipts(dispatches) do
+    dispatches
+    |> Enum.map(&operation_receipt/1)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp operation_receipt(dispatch) do
+    Map.get(dispatch, :operation_receipt) || Map.get(dispatch, "operation_receipt")
+  end
+
+  defp operation_receipt_value(dispatch, key) do
+    dispatch
+    |> operation_receipt()
+    |> field_value(key)
   end
 
   defp field_value(%_{} = struct, key), do: struct |> Map.from_struct() |> field_value(key)
