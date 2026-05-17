@@ -98,6 +98,44 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphExecutorTest do
     assert intent.metadata.operation_class == :source_write
   end
 
+  test "activity intents carry relation-specific review and confirmation event refs" do
+    graph =
+      graph!(
+        nodes: [
+          node!("node://review", "role://review", :runtime_operation, 1),
+          node!("node://publication", "role://publication", :source_write, 2)
+        ],
+        dependencies: [
+          dependency!("node://review", "node://publication", :blocks_on_review),
+          dependency!("node://review", "node://publication", :blocks_on_confirmation)
+        ]
+      )
+
+    facts = %{
+      succeeded_node_refs: ["node://review"],
+      reviewed_node_refs: ["node://review"],
+      confirmed_node_refs: ["node://review"],
+      review_event_refs_by_node_ref: %{"node://review" => "event://review/reviewed"},
+      confirmation_event_refs_by_node_ref: %{
+        "node://review" => "event://review/confirmed"
+      }
+    }
+
+    assert {:ok, [intent]} =
+             OperationGraphExecutor.ready_activity_intents(graph, facts, %{
+               workflow_run_ref: "workflow-run://tenant/run-a",
+               operation_context_ref: "operation-context://tenant/request-a",
+               operation_plans_by_node_ref: %{
+                 "node://publication" => "operation-plan://tenant/run-a/publication"
+               }
+             })
+
+    assert intent.predecessor_event_refs == [
+             "event://review/reviewed",
+             "event://review/confirmed"
+           ]
+  end
+
   test "activity intents fail closed when predecessor event refs are absent" do
     graph =
       graph!(

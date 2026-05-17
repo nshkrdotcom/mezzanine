@@ -164,7 +164,7 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphExecutor do
     |> Enum.reject(&(&1.relation == :parallel_allowed))
     |> Enum.filter(&(&1.to_node_ref == node_ref))
     |> Enum.reduce_while({:ok, []}, fn dependency, {:ok, refs} ->
-      case Map.fetch(terminal_event_refs, dependency.from_node_ref) do
+      case predecessor_event_ref(dependency, facts, terminal_event_refs) do
         {:ok, event_ref} when is_binary(event_ref) ->
           {:cont, {:ok, [event_ref | refs]}}
 
@@ -176,9 +176,35 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphExecutor do
       end
     end)
     |> case do
-      {:ok, refs} -> {:ok, Enum.reverse(refs)}
+      {:ok, refs} -> {:ok, refs |> Enum.reverse() |> Enum.uniq()}
       {:error, reason} -> {:error, reason}
     end
+  end
+
+  defp predecessor_event_ref(
+         %{relation: :blocks_on_review, from_node_ref: from_node_ref},
+         facts,
+         _terminal_event_refs
+       ) do
+    event_ref_from(facts, :review_event_refs_by_node_ref, from_node_ref)
+  end
+
+  defp predecessor_event_ref(
+         %{relation: :blocks_on_confirmation, from_node_ref: from_node_ref},
+         facts,
+         _terminal_event_refs
+       ) do
+    event_ref_from(facts, :confirmation_event_refs_by_node_ref, from_node_ref)
+  end
+
+  defp predecessor_event_ref(%{from_node_ref: from_node_ref}, _facts, terminal_event_refs) do
+    Map.fetch(terminal_event_refs, from_node_ref)
+  end
+
+  defp event_ref_from(facts, event_map_key, node_ref) do
+    facts
+    |> Map.get(event_map_key, %{})
+    |> Map.fetch(node_ref)
   end
 
   defp operation_plan_ref(plans_by_node, node_ref) do
