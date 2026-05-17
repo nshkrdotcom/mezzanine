@@ -235,6 +235,47 @@ defmodule Mezzanine.IntegrationBridgeTest do
     end
   end
 
+  test "resolved-plan authority admission uses manifest and binding refs without provider family" do
+    assert {:ok, handoff} =
+             ProviderAuthorityAdmission.authorize_resolved_plan_dispatch(
+               valid_resolved_plan_authority_attrs()
+             )
+
+    assert handoff.binding_ref == "binding://tenant/source-primary"
+    assert handoff.manifest_ref == "manifest://ticket/v1"
+    assert handoff.operation_ref == "operation://ticket/search"
+    assert handoff.operation_class == :source_read
+    assert handoff.credential_scope_ref == "credential-scope://tenant/ticket"
+    assert handoff.credential_lease_ref == "credential-lease://tenant/ticket"
+    refute Map.has_key?(handoff, :provider_family)
+    refute Map.has_key?(handoff, :provider_account_ref)
+    assert handoff.raw_material_present? == false
+  end
+
+  test "resolved-plan authority admission rejects raw credential material" do
+    assert {:error, {:forbidden_authority_material, forbidden}} =
+             ProviderAuthorityAdmission.authorize_resolved_plan_dispatch(
+               valid_resolved_plan_authority_attrs()
+               |> Map.put(:raw_secret, "phase4_secret")
+               |> Map.put("LINEAR_API_KEY", "phase4_env_secret")
+             )
+
+    assert :raw_secret in forbidden
+    assert :linear_api_key in forbidden
+  end
+
+  test "resolved-plan authority admission reports missing generic refs" do
+    assert {:error, {:missing_required_authority_refs, missing}} =
+             valid_resolved_plan_authority_attrs()
+             |> Map.delete(:binding_ref)
+             |> Map.delete(:manifest_ref)
+             |> ProviderAuthorityAdmission.authorize_resolved_plan_dispatch()
+
+    assert :binding_ref in missing
+    assert :manifest_ref in missing
+    refute :provider_family in missing
+  end
+
   test "provider authority admission ignores raw credential options when building handoff attrs" do
     invocation = authorized_invocation()
 
@@ -3784,6 +3825,28 @@ defmodule Mezzanine.IntegrationBridgeTest do
       operation_policy_ref: "operation-policy://linear/linear.issues.list",
       policy_revision_ref: "policy-revision://phase53",
       idempotency_key: "idem-phase53"
+    }
+  end
+
+  defp valid_resolved_plan_authority_attrs do
+    %{
+      system_authorization_ref: "system-authority://tenant/idem-phase4",
+      authority_packet_ref: "authority-packet://tenant/request-a",
+      authority_decision_ref: "authority-decision://tenant/request-a",
+      tenant_ref: "tenant://tenant",
+      installation_ref: "installation://tenant/product/install",
+      binding_ref: "binding://tenant/source-primary",
+      manifest_ref: "manifest://ticket/v1",
+      operation_ref: "operation://ticket/search",
+      operation_class: :source_read,
+      adapter_ref: "adapter://ticket/search",
+      credential_scope_ref: "credential-scope://tenant/ticket",
+      credential_lease_ref: "credential-lease://tenant/ticket",
+      target_ref: "target://tenant/case-1",
+      operation_policy_ref: "operation-policy://tenant/source-read",
+      policy_revision_ref: "policy-revision://tenant/rev-1",
+      idempotency_key: "idem-phase4",
+      trace_id: "trace-phase4"
     }
   end
 

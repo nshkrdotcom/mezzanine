@@ -33,6 +33,26 @@ defmodule Mezzanine.IntegrationBridge.ProviderAuthorityAdmission do
     :idempotency_key
   ]
 
+  @generic_required_refs [
+    :system_authorization_ref,
+    :authority_packet_ref,
+    :authority_decision_ref,
+    :tenant_ref,
+    :installation_ref,
+    :binding_ref,
+    :manifest_ref,
+    :operation_ref,
+    :operation_class,
+    :adapter_ref,
+    :credential_scope_ref,
+    :credential_lease_ref,
+    :target_ref,
+    :operation_policy_ref,
+    :policy_revision_ref,
+    :idempotency_key,
+    :trace_id
+  ]
+
   @forbidden_material [
     :api_key,
     :access_token,
@@ -91,6 +111,15 @@ defmodule Mezzanine.IntegrationBridge.ProviderAuthorityAdmission do
     |> then(& &1.(attrs))
   end
 
+  @spec authorize_resolved_plan_dispatch(map() | keyword(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  def authorize_resolved_plan_dispatch(attrs, opts \\ [])
+      when (is_map(attrs) or is_list(attrs)) and is_list(opts) do
+    opts
+    |> Keyword.get(:generic_authority_admission_fun, &local_authorize_resolved_plan_dispatch/1)
+    |> then(& &1.(attrs))
+  end
+
   @spec result_fields(map() | nil) :: map()
   def result_fields(nil), do: %{}
   def result_fields(handoff) when is_map(handoff) and map_size(handoff) == 0, do: %{}
@@ -102,6 +131,11 @@ defmodule Mezzanine.IntegrationBridge.ProviderAuthorityAdmission do
       authority_packet_ref: value(handoff, :authority_packet_ref),
       connector_binding_ref: value(handoff, :connector_binding_ref),
       credential_lease_ref: value(handoff, :credential_lease_ref),
+      binding_ref: value(handoff, :binding_ref),
+      manifest_ref: value(handoff, :manifest_ref),
+      operation_ref: value(handoff, :operation_ref),
+      operation_class: value(handoff, :operation_class),
+      credential_scope_ref: value(handoff, :credential_scope_ref),
       authority_raw_material_present?: truthy?(value(handoff, :raw_material_present?))
     }
     |> compact()
@@ -118,6 +152,11 @@ defmodule Mezzanine.IntegrationBridge.ProviderAuthorityAdmission do
       "authority_packet_ref" => value(handoff, :authority_packet_ref),
       "connector_binding_ref" => value(handoff, :connector_binding_ref),
       "credential_lease_ref" => value(handoff, :credential_lease_ref),
+      "binding_ref" => value(handoff, :binding_ref),
+      "manifest_ref" => value(handoff, :manifest_ref),
+      "operation_ref" => value(handoff, :operation_ref),
+      "operation_class" => value(handoff, :operation_class),
+      "credential_scope_ref" => value(handoff, :credential_scope_ref),
       "raw_material_present?" => truthy?(value(handoff, :raw_material_present?))
     }
     |> compact()
@@ -141,6 +180,21 @@ defmodule Mezzanine.IntegrationBridge.ProviderAuthorityAdmission do
       [] ->
         case missing_required(attrs) do
           [] -> {:ok, redacted_handoff(attrs)}
+          missing -> {:error, {:missing_required_authority_refs, missing}}
+        end
+
+      forbidden ->
+        {:error, {:forbidden_authority_material, forbidden}}
+    end
+  end
+
+  defp local_authorize_resolved_plan_dispatch(attrs) do
+    attrs = normalize(attrs)
+
+    case forbidden_material_present(attrs) do
+      [] ->
+        case missing_generic_required(attrs) do
+          [] -> {:ok, redacted_generic_handoff(attrs)}
           missing -> {:error, {:missing_required_authority_refs, missing}}
         end
 
@@ -298,6 +352,10 @@ defmodule Mezzanine.IntegrationBridge.ProviderAuthorityAdmission do
     Enum.reject(@required_refs, &present?(Map.get(attrs, &1)))
   end
 
+  defp missing_generic_required(attrs) do
+    Enum.reject(@generic_required_refs, &present?(Map.get(attrs, &1)))
+  end
+
   defp forbidden_material_present(attrs) do
     attrs
     |> Map.keys()
@@ -324,6 +382,16 @@ defmodule Mezzanine.IntegrationBridge.ProviderAuthorityAdmission do
     |> Map.put(:raw_material_present?, false)
   end
 
+  defp redacted_generic_handoff(attrs) do
+    attrs
+    |> Map.take(@generic_required_refs ++ [:lane_policy_ref, :confirmation_policy_ref])
+    |> Map.put(
+      :handoff_ref,
+      "workflow-authority-handoff://#{Map.fetch!(attrs, :idempotency_key)}"
+    )
+    |> Map.put(:raw_material_present?, false)
+  end
+
   defp normalize(attrs) when is_map(attrs) do
     Map.new(attrs, fn {key, value} -> {normalize_key(key), value} end)
   end
@@ -332,7 +400,7 @@ defmodule Mezzanine.IntegrationBridge.ProviderAuthorityAdmission do
 
   defp normalize_key(key) when is_binary(key) do
     Enum.find(
-      @required_refs ++ @forbidden_material ++ [:trace_id, :authority_decision_ref],
+      @required_refs ++ @generic_required_refs ++ @forbidden_material,
       key,
       fn
         candidate -> Atom.to_string(candidate) == key
