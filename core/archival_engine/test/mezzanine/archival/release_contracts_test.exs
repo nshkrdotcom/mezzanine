@@ -246,7 +246,7 @@ defmodule Mezzanine.Archival.ReleaseContractsTest do
 
   defp audit_inclusion_proof do
     AuditInclusionProof.new(%{
-      proof_type: "linear_checkpoint",
+      proof_type: "sequential_checkpoint",
       audit_fact_id: "audit-fact-restore-join",
       installation_id: "inst-1",
       trace_id: "trace:m12:060",

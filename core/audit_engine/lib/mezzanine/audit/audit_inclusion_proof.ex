@@ -10,7 +10,7 @@ defmodule Mezzanine.Audit.AuditInclusionProof do
 
   alias Mezzanine.Audit.AuditFact
 
-  @proof_types ["linear_checkpoint", "merkle_tree"]
+  @proof_types ["sequential_checkpoint", "merkle_tree"]
   @sibling_sides ["left", "right"]
   @default_algorithm "sha256:erlang-term-canonical-v1"
   @required_fields [
@@ -74,7 +74,7 @@ defmodule Mezzanine.Audit.AuditInclusionProof do
     attrs = normalize_attrs(attrs)
 
     %{
-      proof_type: map_value(attrs, :proof_type) || "linear_checkpoint",
+      proof_type: map_value(attrs, :proof_type) || "sequential_checkpoint",
       audit_fact_id: fact.id,
       installation_id: fact.installation_id,
       trace_id: fact.trace_id,
@@ -163,9 +163,9 @@ defmodule Mezzanine.Audit.AuditInclusionProof do
   @spec payload_hash(map()) :: String.t()
   def payload_hash(payload) when is_map(payload), do: digest(payload)
 
-  @spec linear_checkpoint?(t()) :: boolean()
-  def linear_checkpoint?(%__MODULE__{proof_type: "linear_checkpoint"}), do: true
-  def linear_checkpoint?(%__MODULE__{}), do: false
+  @spec sequential_checkpoint?(t()) :: boolean()
+  def sequential_checkpoint?(%__MODULE__{proof_type: "sequential_checkpoint"}), do: true
+  def sequential_checkpoint?(%__MODULE__{}), do: false
 
   @spec merkle_tree?(t()) :: boolean()
   def merkle_tree?(%__MODULE__{proof_type: "merkle_tree"}), do: true

@@ -1,4 +1,4 @@
-defmodule Mezzanine.WorkflowRuntime.DeterministicCodexReceipt do
+defmodule Mezzanine.WorkflowRuntime.ProviderAdapters.CodexCli.DeterministicReceipt do
   @moduledoc """
   Deterministic Codex-shaped receipt activity for Phase 9.
 
@@ -8,7 +8,7 @@ defmodule Mezzanine.WorkflowRuntime.DeterministicCodexReceipt do
   rate-limit cases without calling a provider, connector, or network client.
   """
 
-  @activity_version "Mezzanine.DeterministicCodexReceiptActivity.v1"
+  @activity_version "Mezzanine.DeterministicReceiptActivity.v1"
   @fixture_schema "mezzanine.codex.receipts.phase9.v1"
   @forbidden_live_fields [
     :provider_adapter,
@@ -437,7 +437,7 @@ defmodule Mezzanine.WorkflowRuntime.DeterministicCodexReceipt do
   defp present?(value), do: not is_nil(value)
 end
 
-defmodule Mezzanine.Activities.DeterministicCodexReceipt do
+defmodule Mezzanine.Activities.ProviderAdapters.CodexCli.DeterministicReceipt do
   @moduledoc "Temporal activity wrapper for deterministic Phase 9 Codex receipt fixtures."
 
   use Temporalex.Activity,
@@ -445,8 +445,8 @@ defmodule Mezzanine.Activities.DeterministicCodexReceipt do
     start_to_close_timeout: 10_000,
     retry_policy: [max_attempts: 1]
 
-  alias Mezzanine.WorkflowRuntime.DeterministicCodexReceipt
+  alias Mezzanine.WorkflowRuntime.ProviderAdapters.CodexCli.DeterministicReceipt
 
   @impl Temporalex.Activity
-  def perform(input), do: DeterministicCodexReceipt.run_activity(input)
+  def perform(input), do: DeterministicReceipt.run_activity(input)
 end

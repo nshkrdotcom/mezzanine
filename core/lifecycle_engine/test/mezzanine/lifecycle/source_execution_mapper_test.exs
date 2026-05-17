@@ -5,10 +5,10 @@ defmodule Mezzanine.Lifecycle.SourceExecutionMapperTest do
   alias Mezzanine.WorkflowExecutionLifecycleInput
 
   test "canonicalizes admitted Linear source payloads" do
-    payload = SourceExecutionMapper.canonical_linear_source_payload(source())
+    payload = SourceExecutionMapper.canonical_source_payload(source())
 
     assert payload.provider == "linear"
-    assert payload.source_kind == "linear_issue"
+    assert payload.source_kind == "source_item"
     assert payload.source_binding_ref == "linear-primary"
     assert payload.source_ref == "linear://issue/LIN-101"
     assert payload.external_ref == "LIN-101"
@@ -149,7 +149,7 @@ defmodule Mezzanine.Lifecycle.SourceExecutionMapperTest do
         installation_id: "inst-1",
         installation_revision: 7,
         subject_id: "subject-1",
-        subject_kind: "linear_coding_ticket",
+        subject_kind: "work_item",
         source_binding_id: "linear-primary",
         provider: "linear",
         external_ref: "LIN-101",

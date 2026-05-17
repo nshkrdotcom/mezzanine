@@ -1,7 +1,7 @@
-defmodule Mezzanine.EvidenceLedger.GitHubPrEvidenceTest do
+defmodule Mezzanine.EvidenceLedger.ProviderAdapters.GitHub.PrEvidenceTest do
   use ExUnit.Case, async: true
 
-  alias Mezzanine.EvidenceLedger.GitHubPrEvidence
+  alias Mezzanine.EvidenceLedger.ProviderAdapters.GitHub.PrEvidence, as: GitHubPrEvidence
   alias Mezzanine.EvidenceLedger.Store
   alias Mezzanine.EvidenceLedger.Store.Memory
 

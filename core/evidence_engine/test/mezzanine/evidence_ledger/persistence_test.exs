@@ -7,7 +7,7 @@ defmodule Mezzanine.EvidenceLedger.PersistenceTest do
   alias Mezzanine.Objects.SubjectRecord
 
   test "collect persists evidence linked back to subject and execution truth" do
-    assert {:ok, subject} = ingest_subject("linear:ticket:evidence-collect")
+    assert {:ok, subject} = ingest_subject("source:item:evidence-collect")
     assert {:ok, execution} = dispatch_execution(subject, "collect")
 
     assert {:ok, evidence} =
@@ -35,7 +35,7 @@ defmodule Mezzanine.EvidenceLedger.PersistenceTest do
   end
 
   test "verify promotes pending evidence into verified state and emits audit" do
-    assert {:ok, subject} = ingest_subject("linear:ticket:evidence-verify")
+    assert {:ok, subject} = ingest_subject("source:item:evidence-verify")
     assert {:ok, execution} = dispatch_execution(subject, "verify")
 
     assert {:ok, evidence} =
@@ -71,7 +71,7 @@ defmodule Mezzanine.EvidenceLedger.PersistenceTest do
   end
 
   test "completeness bookkeeping stays incomplete until all required evidence is present" do
-    assert {:ok, subject} = ingest_subject("linear:ticket:evidence-summary")
+    assert {:ok, subject} = ingest_subject("source:item:evidence-summary")
     assert {:ok, execution} = dispatch_execution(subject, "summary")
 
     assert :incomplete ==
@@ -118,11 +118,15 @@ defmodule Mezzanine.EvidenceLedger.PersistenceTest do
     SubjectRecord.ingest(%{
       installation_id: "inst-1",
       source_ref: source_ref,
-      subject_kind: "linear_coding_ticket",
+      subject_kind: "work_item",
       lifecycle_state: "queued",
-      schema_ref: "mezzanine.subject.linear_coding_ticket.payload.v1",
+      schema_ref: "mezzanine.subject.work_item.payload.v1",
       schema_version: 1,
-      payload: %{},
+      payload: %{
+        "identifier" => source_ref,
+        "source_kind" => "source",
+        "title" => "Evidence subject"
+      },
       trace_id: "trace-subject-#{source_ref}",
       causation_id: "cause-subject-#{source_ref}",
       actor_ref: %{kind: :intake}

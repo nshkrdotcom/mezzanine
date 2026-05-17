@@ -439,7 +439,7 @@ defmodule Mezzanine.M1M2Runtime.WorkflowLowerGateway do
       binding[:capability],
       List.first(List.wrap(dispatch[:requested_capability_ids])),
       List.first(List.wrap(binding[:requested_capability_ids])),
-      "codex.session.turn"
+      "runtime.operation.invoke"
     ])
   end
 

@@ -1,14 +1,14 @@
-defmodule Mezzanine.WorkflowRuntime.DeterministicCodexReceiptTest do
+defmodule Mezzanine.WorkflowRuntime.ProviderAdapters.CodexCli.DeterministicReceiptTest do
   use ExUnit.Case, async: true
 
-  alias Mezzanine.WorkflowRuntime.DeterministicCodexReceipt
+  alias Mezzanine.WorkflowRuntime.ProviderAdapters.CodexCli.DeterministicReceipt
 
   @fixture_path "test/fixtures/codex_receipts/phase9_deterministic_receipts.json"
 
   test "declares deterministic Codex receipt activity contract and no-live-IO posture" do
-    contract = DeterministicCodexReceipt.contract()
+    contract = DeterministicReceipt.contract()
 
-    assert contract.activity_version == "Mezzanine.DeterministicCodexReceiptActivity.v1"
+    assert contract.activity_version == "Mezzanine.DeterministicReceiptActivity.v1"
     assert contract.workflow_runtime_owner == :mezzanine
     assert contract.lower_runtime_shape == :codex
     assert contract.allowed_input_sources == [:local_fixture, :temporal_state_file]
@@ -24,9 +24,9 @@ defmodule Mezzanine.WorkflowRuntime.DeterministicCodexReceiptTest do
     state_db = temporal_state_fixture!()
 
     assert {:ok, result} =
-             DeterministicCodexReceipt.run_activity(activity_attrs(state_db))
+             DeterministicReceipt.run_activity(activity_attrs(state_db))
 
-    assert result.contract_name == "Mezzanine.DeterministicCodexReceiptActivity.v1"
+    assert result.contract_name == "Mezzanine.DeterministicReceiptActivity.v1"
     assert result.owner_repo == :mezzanine
     assert result.io_policy.live_external_io_allowed? == false
     assert result.io_policy.allowed_input_sources == [:local_fixture, :temporal_state_file]
@@ -75,7 +75,9 @@ defmodule Mezzanine.WorkflowRuntime.DeterministicCodexReceiptTest do
     state_db = temporal_state_fixture!()
 
     assert {:ok, result} =
-             Mezzanine.Activities.DeterministicCodexReceipt.perform(activity_attrs(state_db))
+             Mezzanine.Activities.ProviderAdapters.CodexCli.DeterministicReceipt.perform(
+               activity_attrs(state_db)
+             )
 
     assert result.activity == :deterministic_codex_receipt
     assert result.workflow_effect_state == "deterministic_receipts_mapped"
@@ -86,7 +88,7 @@ defmodule Mezzanine.WorkflowRuntime.DeterministicCodexReceiptTest do
     state_db = temporal_state_fixture!()
 
     assert {:ok, result} =
-             DeterministicCodexReceipt.run_activity(activity_attrs(state_db))
+             DeterministicReceipt.run_activity(activity_attrs(state_db))
 
     assert result.token_dedupe.accepted_count == 2
     assert result.token_dedupe.duplicate_count == 1
@@ -110,13 +112,13 @@ defmodule Mezzanine.WorkflowRuntime.DeterministicCodexReceiptTest do
              state_db
              |> activity_attrs()
              |> Map.put(:provider_adapter, FakeProvider)
-             |> DeterministicCodexReceipt.run_activity()
+             |> DeterministicReceipt.run_activity()
 
     assert {:error, {:non_local_fixture_path, "https://example.invalid/fixture.json"}} =
              state_db
              |> activity_attrs()
              |> Map.put(:fixture_path, "https://example.invalid/fixture.json")
-             |> DeterministicCodexReceipt.run_activity()
+             |> DeterministicReceipt.run_activity()
   end
 
   defp activity_attrs(state_db) do

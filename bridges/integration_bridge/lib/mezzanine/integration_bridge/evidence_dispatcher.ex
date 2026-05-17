@@ -3,7 +3,7 @@ defmodule Mezzanine.IntegrationBridge.EvidenceDispatcher do
   Binding-driven evidence collection dispatch for AppKit evidence roles.
   """
 
-  alias Mezzanine.IntegrationBridge.GitHubPrEvidenceRuntime
+  alias Mezzanine.IntegrationBridge.ProviderAdapters
 
   @spec collect_evidence(term(), map(), map() | keyword() | nil, keyword()) ::
           {:ok, map()} | {:error, term()}
@@ -34,7 +34,7 @@ defmodule Mezzanine.IntegrationBridge.EvidenceDispatcher do
   defp normalize_binding(%{} = binding), do: {:ok, Map.new(binding)}
   defp normalize_binding(_binding), do: {:error, :invalid_evidence_binding}
 
-  defp evidence_adapter(binding, allowed_operations, opts) do
+  defp evidence_adapter(binding, _allowed_operations, opts) do
     cond do
       adapter = Keyword.get(opts, :evidence_adapter) ->
         {:ok, adapter}
@@ -42,28 +42,12 @@ defmodule Mezzanine.IntegrationBridge.EvidenceDispatcher do
       adapter = value(binding, :adapter_module) ->
         {:ok, adapter}
 
-      github_pr_evidence_binding?(binding, allowed_operations) ->
-        {:ok, GitHubPrEvidenceRuntime}
+      adapter_ref = value(binding, :adapter_ref) ->
+        ProviderAdapters.resolve(adapter_ref, :evidence)
 
       true ->
         {:error, :evidence_adapter_not_configured}
     end
-  end
-
-  defp github_pr_evidence_binding?(binding, allowed_operations) do
-    adapter_ref = value(binding, :adapter_ref) || value(binding, :connector_ref)
-    manifest_ref = value(binding, :manifest_ref)
-    evidence_kind = value(binding, :evidence_kind)
-
-    adapter_ref in [:github, "github", "jido/connectors/github"] or
-      manifest_ref == "manifest://jido/connectors/github@local" or
-      evidence_kind in [
-        :proposed_change_evidence,
-        "proposed_change_evidence",
-        :github_pr_evidence,
-        "github_pr_evidence"
-      ] or
-      "github.pr.fetch" in allowed_operations
   end
 
   defp evidence_opts(binding, allowed_operations, opts) do

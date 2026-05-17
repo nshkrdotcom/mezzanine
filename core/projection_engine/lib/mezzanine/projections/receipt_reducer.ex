@@ -404,7 +404,7 @@ defmodule Mezzanine.Projections.ReceiptReducer do
       incident_bundles: incident_bundle_projections(lower_receipt),
       retry_receipts: retry_receipt_projections(lower_receipt),
       acceptance: acceptance_projection(lower_receipt),
-      github_pr: github_pr_projection(lower_receipt),
+      provider_evidence: provider_evidence_projection(lower_receipt),
       diagnostics: %{
         missing_required_evidence: missing_required_evidence,
         review_blocking?: missing_required_evidence != []
@@ -599,11 +599,8 @@ defmodule Mezzanine.Projections.ReceiptReducer do
     |> maybe_put("claim_refs", string_list_or_nil(map_value(acceptance, :claim_refs)))
   end
 
-  defp github_pr_projection(lower_receipt) do
-    source =
-      map_value(lower_receipt, :github_pr_evidence) ||
-        map_value(lower_receipt, :github_pr) ||
-        %{}
+  defp provider_evidence_projection(lower_receipt) do
+    source = map_value(lower_receipt, :provider_evidence) || %{}
 
     %{}
     |> maybe_put("provider", string_or_nil(map_value(source, :provider)))
@@ -1097,7 +1094,7 @@ defmodule Mezzanine.Projections.ReceiptReducer do
   defp evidence_ref(attrs, lower_receipt) do
     value(attrs, :evidence_ref) ||
       lower_receipt
-      |> map_value(:github_pr_evidence)
+      |> map_value(:provider_evidence)
       |> map_value(:evidence_ref)
       |> string_or_nil()
   end

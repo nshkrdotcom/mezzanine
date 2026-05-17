@@ -1,4 +1,4 @@
-defmodule Mezzanine.IntegrationBridge.GitHubPrEvidenceRuntime do
+defmodule Mezzanine.IntegrationBridge.ProviderAdapters.GitHub.PrEvidenceRuntime do
   @moduledoc """
   Lower-owned GitHub PR evidence runtime for product live examples.
 
@@ -10,9 +10,9 @@ defmodule Mezzanine.IntegrationBridge.GitHubPrEvidenceRuntime do
   alias Jido.Integration.V2
   alias Jido.Integration.V2.Connectors.GitHub
   alias Jido.Integration.V2.Connectors.GitHub.InstallBinding
-  alias Mezzanine.EvidenceLedger.GitHubPrEvidence
-  alias Mezzanine.IntegrationBridge
+  alias Mezzanine.EvidenceLedger.ProviderAdapters.GitHub.PrEvidence, as: GitHubPrEvidence
   alias Mezzanine.IntegrationBridge.AuthorizedInvocation
+  alias Mezzanine.IntegrationBridge.ProviderAdapters.GitHub.PrDispatcher
   alias Mezzanine.IntegrationBridge.ProviderAuthorityAdmission
 
   @connector_id "github"
@@ -54,14 +54,14 @@ defmodule Mezzanine.IntegrationBridge.GitHubPrEvidenceRuntime do
          invocation <- authorized_invocation(attrs, allowed_operations),
          dispatch_opts <- dispatch_opts(attrs, connection_id, opts, allowed_operations),
          {:ok, pr_dispatch} <-
-           IntegrationBridge.fetch_github_pr(
+           PrDispatcher.fetch_pr(
              invocation,
              %{repo: repo, pull_number: pull_number},
              dispatch_opts
            ),
          {:ok, head_sha} <- head_sha(attrs, pr_dispatch),
          {:ok, %{github_feedback_sweep: sweep}} <-
-           IntegrationBridge.sweep_github_pr_feedback(
+           PrDispatcher.feedback_sweep(
              invocation,
              %{repo: repo, pull_number: pull_number, ref: head_sha},
              dispatch_opts
@@ -191,7 +191,7 @@ defmodule Mezzanine.IntegrationBridge.GitHubPrEvidenceRuntime do
     dispatch_opts = dispatch_opts(attrs, connection_id, opts, capabilities)
 
     with {:ok, result} <-
-           IntegrationBridge.list_github_prs(
+           PrDispatcher.list_prs(
              invocation,
              %{repo: repo, state: "all", per_page: 1, page: 1},
              dispatch_opts

@@ -1,4 +1,4 @@
-defmodule Mezzanine.EvidenceLedger.GitHubPrEvidence do
+defmodule Mezzanine.EvidenceLedger.ProviderAdapters.GitHub.PrEvidence do
   @moduledoc """
   Materializes public-safe GitHub PR evidence from governed lower dispatches.
 

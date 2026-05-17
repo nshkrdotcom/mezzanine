@@ -1,9 +1,7 @@
 defmodule Mezzanine.AgentRuntime.Support do
   @moduledoc false
 
-  @forbidden_keys MapSet.new(~w[
-    codex_session_id github_issue_id github_issue_number github_pr_id github_pr_number
-    issue_id issue_number linear_issue_id linear_issue_number model_id pr_id pr_number
+  @forbidden_exact_keys MapSet.new(~w[
     prompt raw_prompt raw_provider_body raw_provider_payload tool_call workspace_path
   ])
 
@@ -66,10 +64,20 @@ defmodule Mezzanine.AgentRuntime.Support do
 
   defp forbidden_key?(key) when is_atom(key), do: forbidden_key?(Atom.to_string(key))
 
-  defp forbidden_key?(key) when is_binary(key),
-    do: MapSet.member?(@forbidden_keys, String.downcase(key))
+  defp forbidden_key?(key) when is_binary(key) do
+    normalized = String.downcase(key)
+    parts = String.split(normalized, "_")
+
+    MapSet.member?(@forbidden_exact_keys, normalized) or static_selector_parts?(parts)
+  end
 
   defp forbidden_key?(_key), do: false
+
+  defp static_selector_parts?(parts) do
+    ("pr" in parts and Enum.any?(parts, &(&1 in ["id", "number"]))) or
+      ("issue" in parts and Enum.any?(parts, &(&1 in ["id", "number"]))) or
+      ("model" in parts and "id" in parts)
+  end
 
   defp absolute_path?(value) when is_binary(value) do
     Enum.any?(@absolute_path_prefixes, &String.starts_with?(value, &1)) or

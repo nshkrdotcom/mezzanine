@@ -66,7 +66,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     :execution_id,
     :expected_installation_revision,
     :failure,
-    :github_pr_evidence,
+    :provider_evidence,
     :governed_lower_envelope,
     :id,
     :installation_id,
@@ -74,7 +74,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     :intent_id,
     :incident_bundles,
     :last_activity_at,
-    :last_codex_timestamp,
+    :last_runtime_timestamp,
     :last_event_at,
     :last_receipt_ref,
     :last_runtime_event_at,
@@ -535,7 +535,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
           result_ref: evidence_ref
         }
 
-        {:ok, maybe_attach_github_pr_evidence(result, attrs)}
+        {:ok, maybe_attach_provider_evidence(result, attrs)}
 
       missing ->
         {:error, {:missing_required_fields, missing}}
@@ -958,7 +958,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
   defp latest_runtime_activity(attrs) do
     [
       {:last_runtime_event_at, "last_runtime_event_at"},
-      {:last_codex_timestamp, "last_codex_timestamp"},
+      {:last_runtime_timestamp, "last_runtime_timestamp"},
       {:last_event_at, "last_event_at"},
       {:last_activity_at, "last_activity_at"},
       {:started_at, "started_at"}
@@ -1419,14 +1419,14 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     get_in(publication, [:source_publication_receipt, :source_publication_receipt_ref])
   end
 
-  defp maybe_attach_github_pr_evidence(result, attrs) do
-    case Map.get(attrs, :github_pr_evidence) || Map.get(attrs, "github_pr_evidence") do
+  defp maybe_attach_provider_evidence(result, attrs) do
+    case Map.get(attrs, :provider_evidence) || Map.get(attrs, "provider_evidence") do
       %{} = evidence ->
         result
-        |> Map.put(:evidence_kind, Map.get(evidence, :evidence_kind, "github_pr"))
+        |> Map.put(:evidence_kind, Map.get(evidence, :evidence_kind, "provider_evidence"))
         |> Map.put(:content_ref, Map.get(evidence, :content_ref))
         |> Map.put(:evidence_metadata, Map.get(evidence, :metadata, %{}))
-        |> Map.put(:github_pr_evidence, evidence)
+        |> Map.put(:provider_evidence, evidence)
         |> Map.put(:result_ref, Map.get(evidence, :evidence_ref, result.result_ref))
 
       _other ->

@@ -1,4 +1,4 @@
-defmodule Mezzanine.IntegrationBridge.LinearGraphQLToolExecutor do
+defmodule Mezzanine.IntegrationBridge.ProviderAdapters.Linear.GraphQLToolExecutor do
   @moduledoc """
   Lower-owned adapter for Linear GraphQL dynamic tools.
 

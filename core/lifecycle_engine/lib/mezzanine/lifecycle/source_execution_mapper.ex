@@ -30,11 +30,11 @@ defmodule Mezzanine.Lifecycle.SourceExecutionMapper do
     :capability
   ]
 
-  @spec canonical_linear_source_payload(map() | struct()) :: map()
-  def canonical_linear_source_payload(source) when is_map(source) do
+  @spec canonical_source_payload(map() | struct()) :: map()
+  def canonical_source_payload(source) when is_map(source) do
     %{
-      provider: value(source, :provider, "linear"),
-      source_kind: value(source, :source_kind, "linear_issue"),
+      provider: value(source, :provider),
+      source_kind: value(source, :source_kind, "source_item"),
       source_binding_ref: required_string!(source, :source_binding_id),
       source_ref: source_ref(source),
       external_ref: required_string!(source, :external_ref),
@@ -335,7 +335,7 @@ defmodule Mezzanine.Lifecycle.SourceExecutionMapper do
     %{
       "source_binding_ref" => required_string!(source, :source_binding_id),
       "source_ref" => source_ref(source),
-      "source_kind" => value(source, :source_kind, "linear_issue"),
+      "source_kind" => value(source, :source_kind, "source_item"),
       "provider" => value(source, :provider, "linear"),
       "provider_external_ref" => required_string!(source, :external_ref),
       "provider_revision" => value(source, :provider_revision),
@@ -346,7 +346,7 @@ defmodule Mezzanine.Lifecycle.SourceExecutionMapper do
         "operation" => value(source, :operation, "execute")
       },
       "actor_ref" => required!(source, :actor_ref),
-      "source_payload" => canonical_linear_source_payload(source)
+      "source_payload" => canonical_source_payload(source)
     }
     |> compact()
   end
@@ -354,7 +354,7 @@ defmodule Mezzanine.Lifecycle.SourceExecutionMapper do
   defp subject_ref(source) do
     %{
       "id" => required_string!(source, :subject_id),
-      "subject_kind" => value(source, :subject_kind, "linear_coding_ticket"),
+      "subject_kind" => value(source, :subject_kind, "work_item"),
       "source_ref" => source_ref(source),
       "source_binding_ref" => required_string!(source, :source_binding_id)
     }

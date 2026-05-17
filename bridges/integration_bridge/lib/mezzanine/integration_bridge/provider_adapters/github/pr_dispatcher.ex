@@ -1,4 +1,4 @@
-defmodule Mezzanine.IntegrationBridge.GitHubPrDispatcher do
+defmodule Mezzanine.IntegrationBridge.ProviderAdapters.GitHub.PrDispatcher do
   @moduledoc """
   Governed GitHub PR/review/status dispatcher.
 

@@ -239,7 +239,7 @@ defmodule Mezzanine.Audit.PersistenceTest do
                release_manifest_ref: "phase5-v7-hardening"
              })
 
-    assert proof.proof_type == "linear_checkpoint"
+    assert proof.proof_type == "sequential_checkpoint"
     assert proof.audit_fact_id == fact.id
     assert proof.installation_id == fact.installation_id
     assert proof.trace_id == fact.trace_id
@@ -253,7 +253,7 @@ defmodule Mezzanine.Audit.PersistenceTest do
     assert proof.payload_hash == AuditInclusionProof.payload_hash(fact.payload)
     assert proof.root_hash == nil
     assert proof.sibling_path == []
-    assert AuditInclusionProof.linear_checkpoint?(proof)
+    assert AuditInclusionProof.sequential_checkpoint?(proof)
     refute AuditInclusionProof.merkle_tree?(proof)
   end
 
@@ -441,7 +441,7 @@ defmodule Mezzanine.Audit.PersistenceTest do
 
   defp valid_inclusion_proof_attrs do
     %{
-      proof_type: "linear_checkpoint",
+      proof_type: "sequential_checkpoint",
       audit_fact_id: "audit-fact-fields",
       installation_id: "inst-fields",
       trace_id: "trace-fields",

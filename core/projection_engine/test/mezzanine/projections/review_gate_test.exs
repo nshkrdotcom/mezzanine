@@ -126,7 +126,7 @@ defmodule Mezzanine.Projections.ReviewGateTest do
   end
 
   defp review_fixture(suffix) do
-    source_ref = "linear:ticket:review-gate-#{suffix}-#{System.unique_integer([:positive])}"
+    source_ref = "source:item:review-gate-#{suffix}-#{System.unique_integer([:positive])}"
 
     {:ok, subject} =
       SubjectRecord.ingest(%{
@@ -139,11 +139,11 @@ defmodule Mezzanine.Projections.ReviewGateTest do
         provider_revision: "1",
         source_state: "Review",
         state_mapping: %{"Review" => "awaiting_review"},
-        subject_kind: "linear_coding_ticket",
+        subject_kind: "work_item",
         lifecycle_state: "awaiting_review",
         status: "active",
         title: "Review gate #{suffix}",
-        schema_ref: "mezzanine.subject.linear_coding_ticket.payload.v1",
+        schema_ref: "mezzanine.subject.work_item.payload.v1",
         schema_version: 1,
         payload: %{},
         trace_id: "trace-review-subject-#{suffix}",

@@ -11,7 +11,7 @@ defmodule Mezzanine.OperatorCommandsTest do
   alias Mezzanine.OperatorCommands
 
   test "pause and resume record workflow signal refs without mutating Oban saga jobs" do
-    assert {:ok, subject} = ingest_subject("linear:ticket:pause")
+    assert {:ok, subject} = ingest_subject("source:item:pause")
     assert {:ok, pending_execution} = dispatch_execution(subject, "pause-pending")
     assert {:ok, accepted_execution} = accepted_execution(subject, "pause-accepted")
 
@@ -81,7 +81,7 @@ defmodule Mezzanine.OperatorCommandsTest do
   end
 
   test "cancel locally cancels declared local executions and signals workflow-owned executions" do
-    assert {:ok, subject} = ingest_subject("linear:ticket:cancel")
+    assert {:ok, subject} = ingest_subject("source:item:cancel")
     assert {:ok, pending_execution} = dispatch_execution(subject, "cancel-pending")
     assert {:ok, accepted_execution} = accepted_execution(subject, "cancel-accepted")
 
@@ -139,7 +139,7 @@ defmodule Mezzanine.OperatorCommandsTest do
   end
 
   test "cancel rejects cross-tenant operator context before subject mutation" do
-    assert {:ok, subject} = ingest_subject("linear:ticket:cancel-tenant-denied")
+    assert {:ok, subject} = ingest_subject("source:item:cancel-tenant-denied")
 
     assert {:error, :cross_tenant_operator_command_denied} =
              OperatorCommands.cancel(subject.id,
@@ -175,11 +175,15 @@ defmodule Mezzanine.OperatorCommandsTest do
     SubjectRecord.ingest(%{
       installation_id: "inst-1",
       source_ref: source_ref,
-      subject_kind: "linear_coding_ticket",
+      subject_kind: "work_item",
       lifecycle_state: "queued",
-      schema_ref: SubjectPayloadSchema.default_schema_ref!("linear_coding_ticket"),
-      schema_version: SubjectPayloadSchema.default_schema_version!("linear_coding_ticket"),
-      payload: %{},
+      schema_ref: SubjectPayloadSchema.default_schema_ref!("work_item"),
+      schema_version: SubjectPayloadSchema.default_schema_version!("work_item"),
+      payload: %{
+        "identifier" => source_ref,
+        "source_kind" => "source",
+        "title" => "Operator subject"
+      },
       trace_id: "trace-ingest-#{source_ref}",
       causation_id: "cause-ingest-#{source_ref}",
       actor_ref: %{kind: :intake}

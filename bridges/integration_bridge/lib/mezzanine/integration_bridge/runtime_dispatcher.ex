@@ -3,7 +3,7 @@ defmodule Mezzanine.IntegrationBridge.RuntimeDispatcher do
   Binding-driven runtime operation dispatch for AppKit runtime roles.
   """
 
-  alias Mezzanine.IntegrationBridge.CodexAgentRuntime
+  alias Mezzanine.IntegrationBridge.ProviderAdapters
 
   @spec invoke_runtime_operation(
           term(),
@@ -67,7 +67,7 @@ defmodule Mezzanine.IntegrationBridge.RuntimeDispatcher do
   defp normalize_binding(%{} = binding), do: {:ok, Map.new(binding)}
   defp normalize_binding(_binding), do: {:error, :invalid_runtime_binding}
 
-  defp runtime_adapter(binding, allowed_operations, opts) do
+  defp runtime_adapter(binding, _allowed_operations, opts) do
     cond do
       adapter = Keyword.get(opts, :runtime_adapter) || Keyword.get(opts, :agent_loop_runtime) ->
         {:ok, adapter}
@@ -75,21 +75,12 @@ defmodule Mezzanine.IntegrationBridge.RuntimeDispatcher do
       adapter = value(binding, :adapter_module) ->
         {:ok, adapter}
 
-      codex_runtime_binding?(binding, allowed_operations) ->
-        {:ok, CodexAgentRuntime}
+      adapter_ref = value(binding, :adapter_ref) ->
+        ProviderAdapters.resolve(adapter_ref, :runtime)
 
       true ->
         {:error, :runtime_adapter_not_configured}
     end
-  end
-
-  defp codex_runtime_binding?(binding, allowed_operations) do
-    adapter_ref = value(binding, :adapter_ref) || value(binding, :connector_ref)
-    manifest_ref = value(binding, :manifest_ref)
-
-    adapter_ref in [:codex_cli, "codex_cli", "jido/connectors/codex_cli"] or
-      manifest_ref == "manifest://jido/connectors/codex_cli@local" or
-      "codex.session.turn" in allowed_operations
   end
 
   defp runtime_opts(binding, allowed_operations, opts) do

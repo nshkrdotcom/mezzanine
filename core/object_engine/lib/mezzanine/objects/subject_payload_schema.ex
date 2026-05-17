@@ -15,9 +15,9 @@ defmodule Mezzanine.Objects.SubjectPayloadSchema do
           required(:payload_schema) => payload_schema()
         }
 
-  @linear_coding_ticket_schema %{
-    subject_kind: "linear_coding_ticket",
-    schema_ref: "mezzanine.subject.linear_coding_ticket.payload.v1",
+  @work_item_schema %{
+    subject_kind: "work_item",
+    schema_ref: "mezzanine.subject.work_item.payload.v1",
     schema_version: 1,
     payload_schema: %{
       "identifier" => :string,
@@ -46,7 +46,7 @@ defmodule Mezzanine.Objects.SubjectPayloadSchema do
     }
   }
 
-  @schemas [@linear_coding_ticket_schema, @expense_request_schema, @invoice_request_schema]
+  @schemas [@work_item_schema, @expense_request_schema, @invoice_request_schema]
   @schema_index Map.new(@schemas, fn schema ->
                   {{schema.subject_kind, schema.schema_ref, schema.schema_version}, schema}
                 end)

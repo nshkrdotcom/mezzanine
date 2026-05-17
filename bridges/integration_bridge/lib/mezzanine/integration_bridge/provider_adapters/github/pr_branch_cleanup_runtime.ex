@@ -1,4 +1,4 @@
-defmodule Mezzanine.IntegrationBridge.GitHubPrBranchCleanupRuntime do
+defmodule Mezzanine.IntegrationBridge.ProviderAdapters.GitHub.PrBranchCleanupRuntime do
   @moduledoc """
   Lower-owned GitHub PR branch cleanup runtime.
 
@@ -10,8 +10,8 @@ defmodule Mezzanine.IntegrationBridge.GitHubPrBranchCleanupRuntime do
   alias Jido.Integration.V2
   alias Jido.Integration.V2.Connectors.GitHub
   alias Jido.Integration.V2.Connectors.GitHub.InstallBinding
-  alias Mezzanine.IntegrationBridge
   alias Mezzanine.IntegrationBridge.AuthorizedInvocation
+  alias Mezzanine.IntegrationBridge.ProviderAdapters.GitHub.PrDispatcher
   alias Mezzanine.IntegrationBridge.ProviderAuthorityAdmission
 
   @connector_id "github"
@@ -43,7 +43,7 @@ defmodule Mezzanine.IntegrationBridge.GitHubPrBranchCleanupRuntime do
          invocation <- authorized_invocation(attrs, allowed_operations),
          dispatch_opts <- dispatch_opts(attrs, connection_id, opts, allowed_operations),
          {:ok, list_dispatch} <-
-           IntegrationBridge.list_github_prs(invocation, list_attrs(repo, branch), dispatch_opts),
+           PrDispatcher.list_prs(invocation, list_attrs(repo, branch), dispatch_opts),
          pull_requests <- matching_pull_requests(list_dispatch, attrs, branch),
          {:ok, close_dispatches} <-
            close_pull_requests(invocation, repo, branch, pull_requests, attrs, dispatch_opts) do
@@ -198,13 +198,13 @@ defmodule Mezzanine.IntegrationBridge.GitHubPrBranchCleanupRuntime do
       number = pull_number(pull_request)
 
       with {:ok, comment_dispatch} <-
-             IntegrationBridge.create_github_comment(
+             PrDispatcher.create_comment(
                invocation,
                %{repo: repo, issue_number: number, body: closing_comment(attrs, branch)},
                dispatch_opts
              ),
            {:ok, update_dispatch} <-
-             IntegrationBridge.update_github_pr(
+             PrDispatcher.update_pr(
                invocation,
                %{repo: repo, pull_number: number, state: "closed"},
                dispatch_opts

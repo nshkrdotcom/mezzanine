@@ -108,7 +108,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
          retry_receipts: attrs.lower_receipt.retry_receipts,
          incident_bundles: attrs.lower_receipt.incident_bundles,
          acceptance: attrs.lower_receipt.acceptance,
-         github_pr_evidence: attrs.lower_receipt.github_pr_evidence,
+         provider_evidence: attrs.lower_receipt.provider_evidence,
          lineage_event_contract: attrs.lineage_event_contract,
          emit_lineage_outbox?: attrs.emit_lineage_outbox?,
          operation_context_ref: attrs.operation_context_ref,
@@ -327,7 +327,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
                      scenario_refs: ["stacklab://scenario/local-single-node"],
                      claim_refs: ["claim://sample-app/local-run"]
                    },
-                   github_pr_evidence: %{
+                   provider_evidence: %{
                      provider: "github",
                      evidence_ref: "evidence://github-pr/nshkrdotcom/sample-app/95",
                      content_ref: "github-pr://nshkrdotcom/sample-app/95"
@@ -364,7 +364,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
              "stacklab://scenario/local-single-node"
            ]
 
-    assert persisted.lower_receipt.github_pr_evidence.provider == "github"
+    assert persisted.lower_receipt.provider_evidence.provider == "github"
     assert persisted.projection_result.projection_name == "operator_subject_runtime"
     assert persisted.projection_result.lower_receipt_ref == "lower-receipt-095"
     assert persisted.projection_result.lineage_event_contract == :full_execution
@@ -471,9 +471,9 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
       lifecycle_attrs()
       |> Map.merge(%{
         lower_receipt_ref: "lower-receipt-097",
-        github_pr_evidence: %{
+        provider_evidence: %{
           evidence_ref: "evidence://github-pr/nshkrdotcom/sample-app/17",
-          evidence_kind: "github_pr",
+          evidence_kind: "provider_evidence",
           content_ref: "github-pr://nshkrdotcom/sample-app/17",
           metadata: %{
             "authority_refs" => ["authority-decision://github"],
@@ -484,11 +484,11 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
 
     assert {:ok, evidence} = ExecutionLifecycleWorkflow.materialize_evidence_activity(attrs)
 
-    assert evidence.evidence_kind == "github_pr"
+    assert evidence.evidence_kind == "provider_evidence"
     assert evidence.content_ref == "github-pr://nshkrdotcom/sample-app/17"
     assert evidence.result_ref == "evidence://github-pr/nshkrdotcom/sample-app/17"
 
-    assert evidence.github_pr_evidence.metadata["authority_refs"] == [
+    assert evidence.provider_evidence.metadata["authority_refs"] == [
              "authority-decision://github"
            ]
   end

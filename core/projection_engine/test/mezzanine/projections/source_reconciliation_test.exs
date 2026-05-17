@@ -153,7 +153,7 @@ defmodule Mezzanine.Projections.SourceReconciliationTest do
 
   defp reconciliation_fixture(suffix) do
     source_ref =
-      "linear:ticket:source-reconciliation-#{suffix}-#{System.unique_integer([:positive])}"
+      "source:item:source-reconciliation-#{suffix}-#{System.unique_integer([:positive])}"
 
     {:ok, subject} =
       SubjectRecord.ingest(%{
@@ -165,11 +165,11 @@ defmodule Mezzanine.Projections.SourceReconciliationTest do
         provider_external_ref: "LIN-#{System.unique_integer([:positive])}",
         provider_revision: "1",
         source_state: "In Progress",
-        subject_kind: "linear_coding_ticket",
+        subject_kind: "work_item",
         lifecycle_state: "running",
         status: "active",
         title: "Source reconciliation #{suffix}",
-        schema_ref: "mezzanine.subject.linear_coding_ticket.payload.v1",
+        schema_ref: "mezzanine.subject.work_item.payload.v1",
         schema_version: 1,
         payload: %{},
         trace_id: "trace-subject-reconcile-#{suffix}",

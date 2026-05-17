@@ -1,4 +1,4 @@
-defmodule Mezzanine.IntegrationBridge.CodexAgentRuntime do
+defmodule Mezzanine.IntegrationBridge.ProviderAdapters.CodexCli.AgentRuntime do
   @moduledoc """
   Lower-owned Codex agent runtime for AppKit AgentIntake.
 

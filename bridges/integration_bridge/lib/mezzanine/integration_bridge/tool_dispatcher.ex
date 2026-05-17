@@ -4,7 +4,7 @@ defmodule Mezzanine.IntegrationBridge.ToolDispatcher do
   """
 
   alias Mezzanine.IntegrationBridge.AuthorizedInvocation
-  alias Mezzanine.IntegrationBridge.LinearGraphQLToolExecutor
+  alias Mezzanine.IntegrationBridge.ProviderAdapters
 
   @spec invoke_runtime_tool(
           AuthorizedInvocation.t(),
@@ -33,9 +33,10 @@ defmodule Mezzanine.IntegrationBridge.ToolDispatcher do
              arguments,
              opts
            ),
-         {:ok, tool_name} <- tool_name(binding, tool_role_ref, operation_role_ref) do
+         {:ok, adapter} <- tool_adapter(binding, opts),
+         {:ok, tool_name} <- tool_name(binding, tool_role_ref) do
       invocation
-      |> LinearGraphQLToolExecutor.execute_dynamic_tool(
+      |> adapter.execute_dynamic_tool(
         tool_name,
         arguments,
         runtime_tool_opts(binding, allowed_operations, opts)
@@ -68,26 +69,28 @@ defmodule Mezzanine.IntegrationBridge.ToolDispatcher do
   defp normalize_binding(%{} = binding), do: {:ok, Map.new(binding)}
   defp normalize_binding(_binding), do: {:error, :invalid_tool_binding}
 
-  defp tool_name(binding, tool_role_ref, operation_role_ref) do
+  defp tool_adapter(binding, opts) do
     cond do
-      name = value(binding, :tool_name) ->
-        {:ok, to_string(name)}
+      adapter = Keyword.get(opts, :tool_adapter) ->
+        {:ok, adapter}
 
-      linear_graphql_binding?(binding, operation_role_ref) ->
-        {:ok, "linear_graphql"}
+      adapter = value(binding, :adapter_module) ->
+        {:ok, adapter}
+
+      adapter_ref = value(binding, :adapter_ref) ->
+        ProviderAdapters.resolve(adapter_ref, :tool)
 
       true ->
-        {:error, {:unsupported_runtime_tool_binding, tool_role_ref}}
+        {:error, :tool_adapter_not_configured}
     end
   end
 
-  defp linear_graphql_binding?(binding, operation_role_ref) do
-    adapter_ref = value(binding, :adapter_ref) || value(binding, :connector_ref)
-    operation_ref = value(binding, :operation_ref) || value(binding, :operation)
-
-    adapter_ref in [:linear, "linear", "jido/connectors/linear"] or
-      operation_ref == "linear.graphql.execute" or
-      operation_role_ref in [:execute_query, "execute_query", :"linear.graphql.execute"]
+  defp tool_name(binding, tool_role_ref) do
+    if name = value(binding, :tool_name) do
+      {:ok, to_string(name)}
+    else
+      {:error, {:unsupported_runtime_tool_binding, tool_role_ref}}
+    end
   end
 
   defp runtime_tool_opts(binding, allowed_operations, opts) do

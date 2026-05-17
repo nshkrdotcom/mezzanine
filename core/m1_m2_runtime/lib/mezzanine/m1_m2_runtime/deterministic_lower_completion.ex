@@ -138,7 +138,10 @@ defmodule Mezzanine.M1M2Runtime.DeterministicLowerCompletion do
         |> Map.put_new("actor_ref", actor)
         |> Map.put_new("resource_ref", "work-object://#{subject_id}")
         |> Map.put_new("capability", capability_id)
-        |> Map.put_new("requested_capability_ids", [capability_id, "linear.comments.update"])
+        |> Map.put_new(
+          "requested_capability_ids",
+          requested_capability_ids(binding, dispatch, capability_id)
+        )
         |> Map.put_new("requested_action_ids", [capability_id])
         |> Map.put_new("installation_revision", 1)
         |> Map.put_new("workspace_mutability", "read_write")
@@ -191,20 +194,21 @@ defmodule Mezzanine.M1M2Runtime.DeterministicLowerCompletion do
       runtime_profile_kind: runtime_profile_kind(binding, dispatch, runtime_profile),
       run_ref: string_value(binding, "run_id") || execution.id,
       workflow_ref: string_value(dispatch, "workflow_id") || "workflow://#{execution.id}",
-      connector_ref: "jido/connectors/codex_cli",
-      connector_manifest_ref: "manifest://jido/connectors/codex_cli@deterministic",
-      connector_manifest_hash:
-        sha256_ref("jido/connectors/codex_cli:#{capability_id}:deterministic"),
+      connector_ref:
+        lower_ref(dispatch, binding, "connector_ref", "connector://runtime/deterministic"),
+      connector_manifest_ref:
+        lower_ref(dispatch, binding, "connector_manifest_ref", "manifest://runtime/deterministic"),
+      connector_manifest_hash: connector_manifest_hash(binding, dispatch, capability_id),
       connector_manifest_state: :active,
       capability_negotiation_ref: "cap-neg://#{encoded}/#{capability_id}",
       policy_bundle_ref: refs.policy_bundle_ref,
       policy_bundle_hash: sha256_ref(refs.policy_bundle_ref),
       cedar_schema_ref: refs.cedar_schema_ref,
       cedar_schema_hash: sha256_ref(refs.cedar_schema_ref),
-      script_ref: "script://codex/session-turn/deterministic",
-      script_hash: sha256_ref("script://codex/session-turn/deterministic"),
+      script_ref: lower_ref(dispatch, binding, "script_ref", "script://runtime/deterministic"),
+      script_hash: script_hash(binding, dispatch),
       script_api_version: "v1",
-      declared_actions: [capability_id, "linear.comments.update", "github.pr.evidence"],
+      declared_actions: declared_action_ids(binding, dispatch, capability_id),
       package_refs: package_refs(binding, dispatch),
       resource_scope_refs: resource_scope_refs(subject_id, binding, dispatch),
       workspace_ref: workspace_ref(subject_id, binding, dispatch),
@@ -239,6 +243,7 @@ defmodule Mezzanine.M1M2Runtime.DeterministicLowerCompletion do
 
   defp persist_terminal_receipt(execution, accepted, facts, lower_receipt, attrs) do
     dispatch = normalize_map(execution.dispatch_envelope || %{})
+    binding = normalize_map(execution.binding_snapshot || %{})
 
     routing_facts =
       accepted
@@ -246,7 +251,7 @@ defmodule Mezzanine.M1M2Runtime.DeterministicLowerCompletion do
       |> normalize_map()
       |> Map.merge(facts)
       |> Map.merge(%{
-        "required_evidence" => ["github_pr", "codex_session", "source_workpad"],
+        "required_evidence" => required_evidence(binding, dispatch),
         "review_required" => review_required?(execution),
         "actor_ref" => actor_ref(attrs),
         "artifact_refs" => lower_receipt["artifact_refs"],
@@ -320,15 +325,15 @@ defmodule Mezzanine.M1M2Runtime.DeterministicLowerCompletion do
       first_string(list_value(dispatch, "requested_capability_ids")) ||
       first_string(list_value(binding, "requested_capability_ids")) ||
       string_value(runtime_profile, "capability_id") ||
-      "codex.session.turn"
+      "runtime.operation.invoke"
   end
 
   defp lower_runtime_kind(binding, dispatch, runtime_profile) do
     case string_value(dispatch, "lower_runtime_kind") ||
            string_value(binding, "lower_runtime_kind") ||
            string_value(runtime_profile, "lower_runtime_kind") do
-      nil -> :codex_session
-      "codex_session" -> :codex_session
+      nil -> :deterministic_fixture
+      "deterministic_fixture" -> :deterministic_fixture
       value -> value
     end
   end
@@ -363,7 +368,7 @@ defmodule Mezzanine.M1M2Runtime.DeterministicLowerCompletion do
           dispatch,
           binding,
           "evidence_profile_ref",
-          "evidence://runtime/github-pr-plus-workpad"
+          "evidence://runtime/provider-evidence-plus-workpad"
         ),
       redaction_profile_ref:
         lower_ref(dispatch, binding, "redaction_profile_ref", "redaction://runtime/default")
@@ -372,6 +377,52 @@ defmodule Mezzanine.M1M2Runtime.DeterministicLowerCompletion do
 
   defp lower_ref(dispatch, binding, key, default) do
     string_value(dispatch, key) || string_value(binding, key) || default
+  end
+
+  defp connector_manifest_hash(binding, dispatch, capability_id) do
+    string_value(dispatch, "connector_manifest_hash") ||
+      string_value(binding, "connector_manifest_hash") ||
+      sha256_ref(
+        "#{lower_ref(dispatch, binding, "connector_manifest_ref", "manifest://runtime/deterministic")}:#{capability_id}"
+      )
+  end
+
+  defp script_hash(binding, dispatch) do
+    string_value(dispatch, "script_hash") ||
+      string_value(binding, "script_hash") ||
+      sha256_ref(lower_ref(dispatch, binding, "script_ref", "script://runtime/deterministic"))
+  end
+
+  defp requested_capability_ids(binding, dispatch, capability_id) do
+    [
+      list_value(dispatch, "requested_capability_ids"),
+      list_value(binding, "requested_capability_ids"),
+      [capability_id]
+    ]
+    |> Enum.flat_map(&List.wrap/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+  end
+
+  defp declared_action_ids(binding, dispatch, capability_id) do
+    [
+      list_value(dispatch, "declared_actions"),
+      list_value(binding, "declared_actions"),
+      list_value(dispatch, "requested_action_ids"),
+      list_value(binding, "requested_action_ids"),
+      requested_capability_ids(binding, dispatch, capability_id)
+    ]
+    |> Enum.flat_map(&List.wrap/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+  end
+
+  defp required_evidence(binding, dispatch) do
+    first_non_empty_list([
+      list_value(dispatch, "required_evidence"),
+      list_value(binding, "required_evidence"),
+      ["provider_evidence", "source_workpad"]
+    ])
   end
 
   defp package_refs(binding, dispatch) do
@@ -383,11 +434,14 @@ defmodule Mezzanine.M1M2Runtime.DeterministicLowerCompletion do
   end
 
   defp resource_scope_refs(subject_id, binding, dispatch) do
-    first_non_empty_list([
+    [
+      ["workspace://work_object/#{subject_id}"],
       list_value(dispatch, "resource_scope_refs"),
-      list_value(binding, "resource_scope_refs"),
-      ["workspace://work_object/#{subject_id}", "source_binding://linear_primary"]
-    ])
+      list_value(binding, "resource_scope_refs")
+    ]
+    |> Enum.flat_map(&List.wrap/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
   end
 
   defp workspace_ref(subject_id, binding, dispatch) do

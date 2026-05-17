@@ -22,7 +22,7 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
   alias Mezzanine.Substrate.ResultEnvelope
 
   @required_evidence [
-    "github_pr",
+    "provider_evidence",
     "diff",
     "commit",
     "ci",
@@ -192,7 +192,7 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
              "claim_refs" => ["claim://sample-app/local-run"]
            }
 
-    assert projection.payload["github_pr"] == %{
+    assert projection.payload["provider_evidence"] == %{
              "content_ref" => "github-pr://nshkrdotcom/sample-app/42",
              "evidence_ref" => "evidence://github-pr/nshkrdotcom/sample-app/42",
              "feedback" => %{"rework_required?" => true},
@@ -233,7 +233,7 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
              }
            ] = projection.payload["source_bindings"]
 
-    assert String.starts_with?(source_ref, "linear:")
+    assert String.starts_with?(source_ref, "source:item:")
     assert projection.payload["diagnostics"]["missing_required_evidence"] == []
     assert projection.payload["diagnostics"]["review_blocking?"] == false
     refute String.contains?(inspect(projection.payload), "should-drop")
@@ -330,7 +330,7 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
     refute Map.has_key?(projection_fields, :github_pr)
     refute Map.has_key?(projection_fields, :linear_comment)
     refute Map.has_key?(projection_fields, :codex_session)
-    refute Map.has_key?(summary_fields, :github_pr_evidence)
+    refute Map.has_key?(summary_fields, :provider_evidence)
     refute Map.has_key?(operation_fields, :linear_comment_id)
 
     for fields <- [projection_fields, summary_fields, operation_fields] do
@@ -890,10 +890,10 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
     attrs =
       success_attrs(subject, execution,
         review_required?: true,
-        required_evidence: ["github_pr", "codex_session", "source_workpad"],
+        required_evidence: ["provider_evidence", "codex_session", "source_workpad"],
         evidence_refs: [
           %{
-            kind: "github_pr",
+            kind: "provider_evidence",
             content_ref: "lower-artifact://github-pr/1",
             collector_ref: "github"
           }
@@ -905,7 +905,7 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
     assert reduced.execution.dispatch_state == :failed
     assert reduced.subject.lifecycle_state == "blocked"
     assert reduced.subject.block_reason == "missing_required_evidence"
-    assert Enum.map(reduced.evidence, & &1.evidence_kind) == ["github_pr"]
+    assert Enum.map(reduced.evidence, & &1.evidence_kind) == ["provider_evidence"]
 
     assert {:ok, projection} =
              ProjectionRow.row_by_key("inst-1", "operator_subject_runtime", subject.id)
@@ -925,9 +925,13 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
     attrs =
       success_attrs(subject, execution,
         review_required?: true,
-        required_evidence: ["github_pr"],
+        required_evidence: ["provider_evidence"],
         evidence_refs: [
-          %{kind: "github_pr", content_ref: "artifact://github_pr", collector_ref: "fixture"}
+          %{
+            kind: "provider_evidence",
+            content_ref: "artifact://github_pr",
+            collector_ref: "fixture"
+          }
         ]
       )
 
@@ -940,11 +944,11 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
     assert {:ok, projection} =
              ProjectionRow.row_by_key("inst-1", "operator_subject_runtime", subject.id)
 
-    assert projection.payload["diagnostics"]["missing_required_evidence"] == ["github_pr"]
+    assert projection.payload["diagnostics"]["missing_required_evidence"] == ["provider_evidence"]
   end
 
   defp receipt_fixture(suffix) do
-    source_ref = "linear:ticket:receipt-reducer-#{suffix}-#{System.unique_integer([:positive])}"
+    source_ref = "source:item:receipt-reducer-#{suffix}-#{System.unique_integer([:positive])}"
 
     {:ok, subject} =
       SubjectRecord.ingest(%{
@@ -957,11 +961,11 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
         provider_revision: "1",
         source_state: "In Progress",
         state_mapping: %{"In Progress" => "submitted"},
-        subject_kind: "linear_coding_ticket",
+        subject_kind: "work_item",
         lifecycle_state: "running",
         status: "active",
         title: "Receipt reducer #{suffix}",
-        schema_ref: "mezzanine.subject.linear_coding_ticket.payload.v1",
+        schema_ref: "mezzanine.subject.work_item.payload.v1",
         schema_version: 1,
         payload: %{},
         trace_id: "trace-subject-#{suffix}",
@@ -1151,7 +1155,7 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
           "scenario_refs" => ["stacklab://scenario/local-single-node"],
           "claim_refs" => ["claim://sample-app/local-run"]
         },
-        "github_pr_evidence" => %{
+        "provider_evidence" => %{
           "provider" => "github",
           "evidence_ref" => "evidence://github-pr/nshkrdotcom/sample-app/42",
           "content_ref" => "github-pr://nshkrdotcom/sample-app/42",

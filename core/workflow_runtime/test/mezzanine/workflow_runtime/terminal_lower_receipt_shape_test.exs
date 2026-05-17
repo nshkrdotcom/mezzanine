@@ -109,10 +109,10 @@ defmodule Mezzanine.WorkflowRuntime.TerminalLowerReceiptShapeTest do
     %{
       provider_object_refs: ["provider-object://shared"],
       evidence_artifact_refs: [
-        %{kind: "github_pr", content_ref: "artifact://github-pr/shared"}
+        %{kind: "provider_evidence", content_ref: "artifact://github-pr/shared"}
       ],
       artifact_refs: [
-        %{kind: "github_pr", content_ref: "artifact://github-pr/shared"}
+        %{kind: "provider_evidence", content_ref: "artifact://github-pr/shared"}
       ],
       token_totals: %{input: 10, output: 5},
       token_dedupe: %{accepted_count: 1},
@@ -143,7 +143,7 @@ defmodule Mezzanine.WorkflowRuntime.TerminalLowerReceiptShapeTest do
       capability_negotiations: [%{capability_negotiation_ref: "cap-neg://shared"}],
       incident_bundles: [%{incident_ref: "incident://shared"}],
       acceptance: %{scenario_refs: ["scenario://shared"]},
-      github_pr_evidence: %{evidence_ref: "evidence://github-pr/shared"},
+      provider_evidence: %{evidence_ref: "evidence://github-pr/shared"},
       source_publication: %{status: "published"},
       workpad_refs: ["workpad://shared"]
     }

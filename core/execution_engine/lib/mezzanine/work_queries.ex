@@ -407,7 +407,7 @@ defmodule Mezzanine.WorkQueries do
       memory_context: memory_context_projection(execution),
       authority: authority_projection(execution),
       source_publication: source_publication_projection(execution),
-      github_pr: github_pr_projection(execution),
+      provider_evidence: provider_evidence_projection(execution),
       acceptance: acceptance_projection(execution),
       available_actions: [],
       queue: %{
@@ -603,7 +603,7 @@ defmodule Mezzanine.WorkQueries do
           "governance" => governance_projection(execution),
           "memory_context" => memory_context_projection(execution),
           "acceptance" => acceptance_projection(execution),
-          "github_pr" => github_pr_projection(execution),
+          "provider_evidence" => provider_evidence_projection(execution),
           "source_publication" => source_publication_projection(execution)
         }
         |> compact_map()
@@ -679,8 +679,8 @@ defmodule Mezzanine.WorkQueries do
     execution |> lower_receipt_map() |> map_value(:source_publication) || %{}
   end
 
-  defp github_pr_projection(execution) do
-    execution |> lower_receipt_map() |> map_value(:github_pr_evidence) || %{}
+  defp provider_evidence_projection(execution) do
+    execution |> lower_receipt_map() |> map_value(:provider_evidence) || %{}
   end
 
   defp acceptance_projection(execution) do

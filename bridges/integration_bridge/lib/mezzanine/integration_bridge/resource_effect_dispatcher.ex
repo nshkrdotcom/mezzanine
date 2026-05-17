@@ -3,7 +3,7 @@ defmodule Mezzanine.IntegrationBridge.ResourceEffectDispatcher do
   Binding-driven resource-effect dispatch for AppKit effect roles.
   """
 
-  alias Mezzanine.IntegrationBridge.GitHubPrBranchCleanupRuntime
+  alias Mezzanine.IntegrationBridge.ProviderAdapters
 
   @spec invoke_resource_effect(term(), map(), map() | keyword() | nil, keyword()) ::
           {:ok, map()} | {:error, term()}
@@ -42,7 +42,7 @@ defmodule Mezzanine.IntegrationBridge.ResourceEffectDispatcher do
   defp normalize_binding(%{} = binding), do: {:ok, Map.new(binding)}
   defp normalize_binding(_binding), do: {:error, :invalid_resource_effect_binding}
 
-  defp resource_effect_adapter(binding, allowed_operations, opts) do
+  defp resource_effect_adapter(binding, _allowed_operations, opts) do
     cond do
       adapter = Keyword.get(opts, :resource_effect_adapter) ->
         {:ok, adapter}
@@ -50,28 +50,12 @@ defmodule Mezzanine.IntegrationBridge.ResourceEffectDispatcher do
       adapter = value(binding, :adapter_module) ->
         {:ok, adapter}
 
-      github_pr_cleanup_binding?(binding, allowed_operations) ->
-        {:ok, GitHubPrBranchCleanupRuntime}
+      adapter_ref = value(binding, :adapter_ref) ->
+        ProviderAdapters.resolve(adapter_ref, :resource_effect)
 
       true ->
         {:error, :resource_effect_adapter_not_configured}
     end
-  end
-
-  defp github_pr_cleanup_binding?(binding, allowed_operations) do
-    adapter_ref = value(binding, :adapter_ref) || value(binding, :connector_ref)
-    manifest_ref = value(binding, :manifest_ref)
-    effect_kind = value(binding, :effect_kind)
-
-    adapter_ref in [:github, "github", "jido/connectors/github"] or
-      manifest_ref == "manifest://jido/connectors/github@local" or
-      effect_kind in [
-        :proposed_change_cleanup,
-        "proposed_change_cleanup",
-        :github_pr_branch_cleanup,
-        "github_pr_branch_cleanup"
-      ] or
-      "github.pr.update" in allowed_operations
   end
 
   defp resource_effect_opts(binding, allowed_operations, opts) do

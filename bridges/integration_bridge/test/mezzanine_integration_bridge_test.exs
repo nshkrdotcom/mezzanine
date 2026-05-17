@@ -9,9 +9,19 @@ defmodule Mezzanine.IntegrationBridgeTest do
   alias Mezzanine.Audit.{ExecutionLineage, ExecutionLineageStore, Repo}
   alias Mezzanine.IntegrationBridge
   alias Mezzanine.IntegrationBridge.AuthorizedInvocation
-  alias Mezzanine.IntegrationBridge.CodexAgentRuntime
-  alias Mezzanine.IntegrationBridge.GitHubPrBranchCleanupRuntime
-  alias Mezzanine.IntegrationBridge.GitHubPrEvidenceRuntime
+  alias Mezzanine.IntegrationBridge.ProviderAdapters.CodexCli.AgentRuntime, as: CodexAgentRuntime
+
+  alias Mezzanine.IntegrationBridge.ProviderAdapters.GitHub.PrBranchCleanupRuntime,
+    as: GitHubPrBranchCleanupRuntime
+
+  alias Mezzanine.IntegrationBridge.ProviderAdapters.GitHub.PrDispatcher, as: GitHubPrDispatcher
+
+  alias Mezzanine.IntegrationBridge.ProviderAdapters.GitHub.PrEvidenceRuntime,
+    as: GitHubPrEvidenceRuntime
+
+  alias Mezzanine.IntegrationBridge.ProviderAdapters.Linear.GraphQLToolExecutor,
+    as: LinearGraphQLToolExecutor
+
   alias Mezzanine.IntegrationBridge.ProviderAuthorityAdmission
   alias Mezzanine.Intent.{EffectIntent, ReadIntent, RunIntent}
 
@@ -403,7 +413,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
     end
 
     assert {:ok, result} =
-             IntegrationBridge.execute_dynamic_tool(
+             LinearGraphQLToolExecutor.execute_dynamic_tool(
                invocation,
                "linear_graphql",
                %{
@@ -452,6 +462,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
     tool_binding = %{
       tool_binding_ref: "tool-binding://extravaganza/issue-graphql-tool",
       adapter_ref: :linear,
+      adapter_module: LinearGraphQLToolExecutor,
       operation_ref: "linear.graphql.execute",
       tool_name: "linear_graphql",
       allowed_operations: ["linear.graphql.execute"]
@@ -494,7 +505,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
     end
 
     assert {:ok, result} =
-             IntegrationBridge.execute_dynamic_tool(
+             LinearGraphQLToolExecutor.execute_dynamic_tool(
                invocation,
                "linear_graphql",
                "query Viewer { viewer { id } }",
@@ -525,7 +536,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
     end
 
     assert {:ok, result} =
-             IntegrationBridge.execute_dynamic_tool(
+             LinearGraphQLToolExecutor.execute_dynamic_tool(
                invocation,
                "linear_graphql",
                %{
@@ -571,7 +582,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
     end
 
     assert {:ok, result} =
-             IntegrationBridge.execute_dynamic_tool(
+             LinearGraphQLToolExecutor.execute_dynamic_tool(
                invocation,
                "linear_graphql",
                "query Viewer { viewer { id } }",
@@ -601,7 +612,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
     end
 
     assert {:ok, result} =
-             IntegrationBridge.execute_dynamic_tool(invocation, "not_a_real_tool", %{},
+             LinearGraphQLToolExecutor.execute_dynamic_tool(invocation, "not_a_real_tool", %{},
                invoke_fun: invoke_fun
              )
 
@@ -853,6 +864,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
     runtime_binding = %{
       runtime_binding_ref: "runtime-binding://extravaganza/coding-agent-runtime",
       adapter_ref: :codex_cli,
+      adapter_module: CodexAgentRuntime,
       manifest_ref: "manifest://jido/connectors/codex_cli@local",
       operation_ref: "codex.session.turn",
       allowed_operations: ["codex.session.turn"]
@@ -896,6 +908,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
     runtime_binding = %{
       runtime_binding_ref: "runtime-binding://extravaganza/coding-agent-runtime",
       adapter_ref: :codex_cli,
+      adapter_module: CodexAgentRuntime,
       manifest_ref: "manifest://jido/connectors/codex_cli@local",
       operation_ref: "codex.session.turn",
       allowed_operations: ["codex.session.turn"]
@@ -2958,7 +2971,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
     end
 
     assert {:ok, result} =
-             IntegrationBridge.create_github_pr(
+             GitHubPrDispatcher.create_pr(
                invocation,
                %{
                  repo: "nshkrdotcom/sample-app",
@@ -3026,7 +3039,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
     end
 
     assert {:ok, %{github_feedback_sweep: sweep}} =
-             IntegrationBridge.sweep_github_pr_feedback(
+             GitHubPrDispatcher.feedback_sweep(
                invocation,
                %{repo: "nshkrdotcom/sample-app", pull_number: 17, ref: "head-sha"},
                invoke_fun: invoke_fun
@@ -3146,6 +3159,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
     binding = %{
       binding_ref: "evidence-binding://test/github-pr",
       evidence_kind: :github_pr_evidence,
+      adapter_module: GitHubPrEvidenceRuntime,
       connector_ref: "jido/connectors/github",
       manifest_ref: "manifest://jido/connectors/github@local",
       operation_refs: %{
@@ -3317,6 +3331,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
     binding = %{
       binding_ref: "resource-effect-binding://test/github-pr-cleanup",
       effect_kind: :github_pr_branch_cleanup,
+      adapter_module: GitHubPrBranchCleanupRuntime,
       connector_ref: "jido/connectors/github",
       manifest_ref: "manifest://jido/connectors/github@local",
       operation_group_ref: "operation-group://test/github-pr-cleanup",
@@ -3387,7 +3402,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
     end
 
     assert {:ok, result} =
-             IntegrationBridge.cleanup_github_branch(
+             GitHubPrDispatcher.cleanup_branch(
                invocation,
                %{repo: "nshkrdotcom/sample-app", ref: "heads/phase-7"},
                invoke_fun: invoke_fun
