@@ -3397,12 +3397,14 @@ defmodule Mezzanine.Pack.Builder do
     Map.new(graphs, fn %OperationGraph{} = graph ->
       roles = Enum.map(graph.roles, &compile_operation_role(&1, bindings_by_ref))
 
+      compiled_dependencies = compile_operation_dependencies(graph, roles)
+
       compiled = %CompiledOperationGraph{
         graph_ref: graph.graph_ref,
         workflow_ref: graph.workflow_ref,
         roles: roles,
         roles_by_ref: Map.new(roles, &{&1.role_ref, &1}),
-        dependencies: Enum.map(graph.dependencies, &compile_operation_dependency/1),
+        dependencies: compiled_dependencies,
         joins: graph.joins,
         metadata: graph.metadata
       }
@@ -3442,6 +3444,54 @@ defmodule Mezzanine.Pack.Builder do
       confirmation_policy_ref: dependency.confirmation_policy_ref,
       metadata: dependency.metadata
     }
+  end
+
+  @spec compile_operation_dependencies(OperationGraph.t(), [CompiledOperationRole.t()]) :: [
+          CompiledOperationDependency.t()
+        ]
+  defp compile_operation_dependencies(%OperationGraph{dependencies: []}, roles) do
+    roles
+    |> Enum.sort_by(&{&1.projection_order_key, &1.role_ref})
+    |> inferred_default_dependencies()
+  end
+
+  defp compile_operation_dependencies(%OperationGraph{} = graph, _roles) do
+    Enum.map(graph.dependencies, &compile_operation_dependency/1)
+  end
+
+  defp inferred_default_dependencies(roles) do
+    roles
+    |> Enum.with_index()
+    |> Enum.flat_map(fn {from_role, index} ->
+      roles
+      |> Enum.drop(index + 1)
+      |> Enum.map(&inferred_default_dependency(from_role, &1))
+    end)
+  end
+
+  defp inferred_default_dependency(from_role, to_role) do
+    relation =
+      if read_only_operation_role?(from_role) and read_only_operation_role?(to_role) do
+        :parallel_allowed
+      else
+        :blocks_on_success
+      end
+
+    %CompiledOperationDependency{
+      from_role: from_role.role_ref,
+      to_role: to_role.role_ref,
+      relation: relation,
+      completion_policy: from_role.completion_policy,
+      failure_policy: from_role.failure_policy,
+      metadata: %{
+        "inferred" => true,
+        "inference_policy" => "empty_graph_conservative_projection_order"
+      }
+    }
+  end
+
+  defp read_only_operation_role?(role) do
+    role.operation_class in [:source_read, :evidence_collection]
   end
 
   @spec build_decision_event_index([DecisionSpec.t()]) ::

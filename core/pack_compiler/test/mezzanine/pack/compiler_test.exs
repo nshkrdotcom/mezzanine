@@ -403,6 +403,39 @@ defmodule Mezzanine.Pack.CompilerTest do
            ]
   end
 
+  test "infers conservative default operation graph dependencies when no edges are authored" do
+    manifest = generic_binding_manifest_with_workflow_graph()
+
+    [graph] = manifest.operation_graph_specs
+    manifest = %{manifest | operation_graph_specs: [%{graph | dependencies: []}]}
+
+    assert {:ok, compiled} = Compiler.compile(manifest)
+
+    graph = compiled.compiled_operation_graphs_by_ref["document_review_graph"]
+
+    inferred =
+      Map.new(graph.dependencies, fn dependency ->
+        {{dependency.from_role, dependency.to_role}, dependency}
+      end)
+
+    assert inferred[{"document_intake", "review_evidence"}].relation == :parallel_allowed
+
+    assert inferred[{"document_intake", "deterministic_review"}].relation ==
+             :blocks_on_success
+
+    assert inferred[{"deterministic_review", "review_publication"}].relation ==
+             :blocks_on_success
+
+    assert inferred[{"review_publication", "review_state_effect"}].relation ==
+             :blocks_on_success
+
+    assert inferred[{"review_evidence", "review_publication"}].completion_policy == :optional
+    assert inferred[{"review_evidence", "review_publication"}].failure_policy == :degrade
+
+    assert Enum.all?(graph.dependencies, &(&1.metadata["inferred"] == true))
+    assert length(graph.dependencies) == 10
+  end
+
   test "rejects workflow graphs that bypass binding operation roles" do
     manifest = generic_binding_manifest_with_workflow_graph()
 
