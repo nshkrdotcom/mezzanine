@@ -1,6 +1,7 @@
 defmodule Mezzanine.Projections.OperationReceiptSummary do
   @moduledoc "Generic operation-list summary used by subject runtime projections."
 
+  alias Mezzanine.Projections.EnvelopeAccessSummary
   alias Mezzanine.Substrate.{OperationReceipt, ResultEnvelope}
 
   @enforce_keys [
@@ -17,6 +18,7 @@ defmodule Mezzanine.Projections.OperationReceiptSummary do
                 :operation_class,
                 :started_at,
                 :completed_at,
+                :result_access,
                 :result_schema_ref,
                 lineage_event_refs: [],
                 provider_object_refs: %{},
@@ -40,6 +42,7 @@ defmodule Mezzanine.Projections.OperationReceiptSummary do
       operation_class: metadata_value(metadata, :operation_class),
       started_at: receipt.started_at,
       completed_at: receipt.completed_at,
+      result_access: result_access(receipt.result),
       result_schema_ref: result_schema_ref(receipt.result),
       lineage_event_refs: receipt.lineage_event_refs,
       provider_object_refs: metadata_value(metadata, :provider_object_refs) || %{},
@@ -58,6 +61,9 @@ defmodule Mezzanine.Projections.OperationReceiptSummary do
   defp result_ref(%ResultEnvelope{} = result), do: result.result_ref
   defp result_ref(%{} = result), do: metadata_value(result, :result_ref)
   defp result_ref(_result), do: nil
+
+  defp result_access(%ResultEnvelope{} = result), do: EnvelopeAccessSummary.from_result(result)
+  defp result_access(_result), do: nil
 
   defp result_schema_ref(%ResultEnvelope{} = result), do: result.schema_ref
   defp result_schema_ref(%{} = result), do: metadata_value(result, :schema_ref)

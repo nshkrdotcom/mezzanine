@@ -6,10 +6,11 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
   alias Mezzanine.EvidenceLedger.EvidenceRecord
   alias Mezzanine.Execution.ExecutionRecord
   alias Mezzanine.Objects.SubjectRecord
-  alias Mezzanine.Projections.{ProjectionRow, ReceiptReducer}
+  alias Mezzanine.Projections.{EnvelopeAccessSummary, ProjectionRow, ReceiptReducer}
   alias Mezzanine.Projections.SubjectRuntimeProjection
   alias Mezzanine.Substrate.OperationGroupReceipt
   alias Mezzanine.Substrate.OperationReceipt
+  alias Mezzanine.Substrate.PayloadEnvelope
   alias Mezzanine.Substrate.ResultEnvelope
 
   @required_evidence [
@@ -271,6 +272,155 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
     refute Map.has_key?(operation_fields, :linear_comment_id)
   end
 
+  test "projects result envelope storage access without materializing stored bodies" do
+    inline =
+      operation_receipt({:runtime, :runtime_operation},
+        receipt_ref: "receipt://result/inline",
+        result_attrs: %{
+          result_ref: "result://runtime/inline",
+          storage_mode: :inline,
+          schema_ref: "schema://result/runtime",
+          redaction_ref: "redaction://result/inline-redacted",
+          data: %{summary: "safe redacted result"},
+          metadata: %{
+            projection_readback: :inline_redacted,
+            content_owner_ref: "owner://operation/inline",
+            raw_boundary_payload: "should-not-project"
+          }
+        }
+      )
+
+    stored =
+      operation_receipt({:evidence, :evidence_operation},
+        receipt_ref: "receipt://result/content-addressed",
+        result_attrs: %{
+          result_ref: "result://evidence/content-addressed",
+          storage_mode: :content_addressed,
+          schema_ref: "schema://result/evidence",
+          redaction_ref: "redaction://result/ref-only",
+          content_ref: "content://result/evidence/1",
+          content_hash: "sha256:#{String.duplicate("a", 64)}",
+          byte_size: 4096,
+          store_ref: "content-store://mezzanine/default",
+          data: %{stored_body: "should-not-project"},
+          retention_refs: ["retention://run/1"],
+          metadata: %{
+            content_owner_ref: "owner://operation/evidence",
+            read_scope_ref: "read-scope://projection/runtime",
+            raw_boundary_payload: "should-not-project"
+          }
+        }
+      )
+
+    streamed =
+      operation_receipt({:tool, :tool_operation},
+        receipt_ref: "receipt://result/stream",
+        result_attrs: %{
+          result_ref: "result://tool/stream",
+          storage_mode: :stream,
+          schema_ref: "schema://result/tool",
+          redaction_ref: "redaction://result/ref-only",
+          stream_ref: "stream://tool/result/1",
+          store_ref: "stream-store://mezzanine/default",
+          data: %{stream_body: "should-not-project"},
+          retention_refs: ["retention://stream/1"],
+          metadata: %{
+            content_owner_ref: "owner://operation/tool",
+            projection_readback: :inline_redacted,
+            raw_boundary_payload: "should-not-project"
+          }
+        }
+      )
+
+    assert {:ok, reduced} = ReceiptReducer.reduce([inline, stored, streamed])
+    [inline_summary, stored_summary, streamed_summary] = reduced.projection.operations
+
+    assert %EnvelopeAccessSummary{
+             envelope_kind: :result,
+             envelope_ref: "result://runtime/inline",
+             storage_mode: :inline,
+             readback_mode: :inline_redacted,
+             data: %{summary: "safe redacted result"},
+             metadata: %{content_owner_ref: "owner://operation/inline"}
+           } = inline_summary.result_access
+
+    assert %EnvelopeAccessSummary{
+             storage_mode: :content_addressed,
+             readback_mode: :content_store_ref,
+             data: nil,
+             content_ref: "content://result/evidence/1",
+             content_hash: "sha256:" <> _hash,
+             byte_size: 4096,
+             store_ref: "content-store://mezzanine/default",
+             retention_refs: ["retention://run/1"],
+             metadata: %{
+               content_owner_ref: "owner://operation/evidence",
+               read_scope_ref: "read-scope://projection/runtime"
+             }
+           } = stored_summary.result_access
+
+    assert %EnvelopeAccessSummary{
+             storage_mode: :stream,
+             readback_mode: :stream_ref,
+             data: nil,
+             stream_ref: "stream://tool/result/1",
+             store_ref: "stream-store://mezzanine/default",
+             retention_refs: ["retention://stream/1"],
+             metadata: %{
+               content_owner_ref: "owner://operation/tool",
+               projection_readback: :inline_redacted
+             }
+           } = streamed_summary.result_access
+
+    assert reduced.lower_receipt_summary.operations == reduced.projection.operations
+    refute String.contains?(inspect(reduced.projection), "should-not-project")
+    refute String.contains?(inspect(reduced.projection), "stored_body")
+    refute String.contains?(inspect(reduced.projection), "stream_body")
+    refute String.contains?(inspect(reduced.projection), "raw_boundary_payload")
+  end
+
+  test "payload envelope access summary follows the same redacted readback contract" do
+    {:ok, inline_payload} =
+      PayloadEnvelope.new(%{
+        payload_ref: "payload://request/inline",
+        storage_mode: :inline,
+        schema_ref: "schema://payload/request",
+        redaction_ref: "redaction://payload/inline-redacted",
+        data: %{instructions: "safe redacted payload"},
+        metadata: %{projection_readback: :inline_redacted}
+      })
+
+    {:ok, stored_payload} =
+      PayloadEnvelope.new(%{
+        payload_ref: "payload://request/content-addressed",
+        storage_mode: :content_addressed,
+        schema_ref: "schema://payload/request",
+        redaction_ref: "redaction://payload/ref-only",
+        content_ref: "content://payload/request/1",
+        content_hash: "sha256:#{String.duplicate("b", 64)}",
+        byte_size: 8192,
+        store_ref: "content-store://mezzanine/default",
+        data: %{request_body: "should-not-project"},
+        retention_refs: ["retention://payload/1"]
+      })
+
+    assert %EnvelopeAccessSummary{
+             envelope_kind: :payload,
+             envelope_ref: "payload://request/inline",
+             readback_mode: :inline_redacted,
+             data: %{instructions: "safe redacted payload"}
+           } = EnvelopeAccessSummary.from_payload(inline_payload)
+
+    assert %EnvelopeAccessSummary{
+             envelope_kind: :payload,
+             envelope_ref: "payload://request/content-addressed",
+             readback_mode: :content_store_ref,
+             data: nil,
+             content_ref: "content://payload/request/1",
+             retention_refs: ["retention://payload/1"]
+           } = EnvelopeAccessSummary.from_payload(stored_payload)
+  end
+
   test "reduces generic operation group receipts with child operation statuses" do
     success =
       operation_receipt({:resource_effect, :resource_effect},
@@ -476,15 +626,10 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
       Keyword.get(opts, :receipt_ref, "receipt://#{operation_role}/#{operation_class}")
 
     status = Keyword.get(opts, :status, :succeeded)
+    result_attrs = Keyword.get(opts, :result_attrs, result_attrs(operation_role, operation_class))
 
     {:ok, result} =
-      ResultEnvelope.new(%{
-        result_ref: "result://#{operation_role}/#{operation_class}",
-        storage_mode: :inline,
-        schema_ref: "schema://result/#{operation_role}",
-        redaction_ref: "redaction://result/ref-only",
-        data: %{result_ref: "result-data://#{operation_role}"}
-      })
+      ResultEnvelope.new(result_attrs)
 
     {:ok, receipt} =
       OperationReceipt.new(%{
@@ -517,6 +662,16 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
       })
 
     receipt
+  end
+
+  defp result_attrs(operation_role, operation_class) do
+    %{
+      result_ref: "result://#{operation_role}/#{operation_class}",
+      storage_mode: :inline,
+      schema_ref: "schema://result/#{operation_role}",
+      redaction_ref: "redaction://result/ref-only",
+      data: %{result_ref: "result-data://#{operation_role}"}
+    }
   end
 
   defp success_attrs(subject, execution, opts) do
