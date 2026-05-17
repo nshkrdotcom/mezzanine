@@ -6,7 +6,7 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
   alias Mezzanine.EvidenceLedger.EvidenceRecord
   alias Mezzanine.Execution.ExecutionRecord
   alias Mezzanine.Objects.SubjectRecord
-  alias Mezzanine.Projections.{EnvelopeAccessSummary, ProjectionRow, ReceiptReducer}
+  alias Mezzanine.Projections.{EnvelopeAccessSummary, ProjectionRow, ReceiptReducer, Store}
   alias Mezzanine.Projections.SubjectRuntimeProjection
   alias Mezzanine.Substrate.OperationGroupReceipt
   alias Mezzanine.Substrate.OperationReceipt
@@ -261,6 +261,60 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
     assert reduced.lower_receipt_summary.provider_object_refs["external_object://publication"] ==
              ["provider-object://publication"]
 
+    expected_lineage_event_kinds =
+      [:command_recorded] ++
+        Enum.flat_map(receipts, fn _receipt ->
+          [:operation_requested, :effect_receipted, :receipt_reduced]
+        end) ++
+        [:projection_updated]
+
+    assert Enum.map(reduced.lineage_events, & &1.event_kind) == expected_lineage_event_kinds
+
+    command_recorded = hd(reduced.lineage_events)
+
+    assert command_recorded.root_event?
+    assert command_recorded.predecessor_event_refs == []
+    assert command_recorded.trace_ref == "trace://tenant-a/run-a"
+    assert command_recorded.trace_level == :core_lineage
+
+    assert command_recorded.metadata_refs == %{
+             operation_context_ref: "operation-context://tenant-a/request-a",
+             subject_ref: "subject://document/1"
+           }
+
+    receipt_reduced_events =
+      Enum.filter(reduced.lineage_events, &(&1.event_kind == :receipt_reduced))
+
+    projection_updated = List.last(reduced.lineage_events)
+
+    assert projection_updated.event_kind == :projection_updated
+    assert projection_updated.projection_visible?
+    assert projection_updated.projection_key == reduced.projection.projection_ref
+    assert projection_updated.merge_semantics == :last_write_by_causal_order
+
+    assert projection_updated.predecessor_event_refs ==
+             Enum.map(receipt_reduced_events, & &1.event_ref)
+
+    assert reduced.lineage_event_outbox.event_count == length(reduced.lineage_events)
+    assert reduced.lineage_event_outbox.record_id == reduced.projection.projection_ref
+
+    assert reduced.lineage_event_outbox.event_refs ==
+             Enum.map(reduced.lineage_events, & &1.event_ref)
+
+    assert {:ok, outbox_record} = Store.fetch_record(reduced.projection.projection_ref)
+    assert outbox_record.projection_ref == reduced.projection.projection_ref
+    assert outbox_record.operation_context_ref == reduced.projection.operation_context_ref
+    assert outbox_record.trace_ref == "trace://tenant-a/run-a"
+    assert length(outbox_record.events) == length(reduced.lineage_events)
+
+    assert Enum.map(outbox_record.events, & &1.sequence) ==
+             Enum.to_list(1..length(reduced.lineage_events))
+
+    assert Enum.all?(outbox_record.events, &(&1.record_id == reduced.projection.projection_ref))
+
+    assert Enum.map(outbox_record.events, & &1.event_ref) ==
+             reduced.lineage_event_outbox.event_refs
+
     projection_fields = Map.from_struct(reduced.projection)
     summary_fields = Map.from_struct(reduced.lower_receipt_summary)
     operation_fields = reduced.projection.operations |> hd() |> Map.from_struct()
@@ -270,6 +324,7 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
     refute Map.has_key?(projection_fields, :codex_session)
     refute Map.has_key?(summary_fields, :github_pr_evidence)
     refute Map.has_key?(operation_fields, :linear_comment_id)
+    refute String.contains?(inspect(reduced.lineage_events), "provider_object_refs")
   end
 
   test "projects result envelope storage access without materializing stored bodies" do
@@ -402,6 +457,28 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
            } = streamed_summary.payload_access
 
     assert reduced.lower_receipt_summary.operations == reduced.projection.operations
+
+    payload_lineage_events =
+      Enum.filter(
+        reduced.lineage_events,
+        &(&1.metadata_refs[:payload_ref] == "payload://tool/stream")
+      )
+
+    assert Enum.map(payload_lineage_events, & &1.event_kind) == [
+             :operation_requested,
+             :effect_receipted,
+             :receipt_reduced
+           ]
+
+    assert Enum.all?(
+             payload_lineage_events,
+             &(&1.metadata_refs[:result_ref] == "result://tool/stream")
+           )
+
+    assert {:ok, outbox_record} = Store.fetch_record(reduced.projection.projection_ref)
+    assert length(outbox_record.events) == length(reduced.lineage_events)
+
+    refute String.contains?(inspect(reduced.lineage_events), "payload_envelope")
     refute String.contains?(inspect(reduced.projection), "should-not-project")
     refute String.contains?(inspect(reduced.projection), "payload_stream_body")
     refute String.contains?(inspect(reduced.projection), "payload_envelope")

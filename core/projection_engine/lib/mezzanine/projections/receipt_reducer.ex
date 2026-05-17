@@ -12,6 +12,7 @@ defmodule Mezzanine.Projections.ReceiptReducer do
   alias Mezzanine.EvidenceLedger.EvidenceRecord
   alias Mezzanine.Execution.ExecutionRecord
   alias Mezzanine.Objects.SubjectRecord
+  alias Mezzanine.Projections.LineageEventOutbox
   alias Mezzanine.Projections.LowerReceiptSummary
   alias Mezzanine.Projections.ProjectionRow
   alias Mezzanine.Projections.SubjectRuntimeProjection
@@ -39,7 +40,9 @@ defmodule Mezzanine.Projections.ReceiptReducer do
           reducer_module: module(),
           projection: SubjectRuntimeProjection.t(),
           lower_receipt_summary: LowerReceiptSummary.t(),
-          operation_dispositions: [OperationDisposition.t()]
+          operation_dispositions: [OperationDisposition.t()],
+          lineage_events: [map()],
+          lineage_event_outbox: map()
         }
 
   @spec reduce(
@@ -52,7 +55,7 @@ defmodule Mezzanine.Projections.ReceiptReducer do
           {:ok, generic_reduce_result() | reduce_result()} | {:error, term()}
   def reduce([%OperationReceipt{} | _rest] = receipts) do
     with {:ok, projection} <- SubjectRuntimeProjection.from_operation_receipts(receipts) do
-      {:ok, generic_reduction(projection, receipts)}
+      generic_reduction(projection, receipts)
     end
   end
 
@@ -108,17 +111,24 @@ defmodule Mezzanine.Projections.ReceiptReducer do
     receipts = Keyword.get(opts, :operation_receipts, [])
 
     with {:ok, projection} <- SubjectRuntimeProjection.from_operation_group(group, receipts) do
-      {:ok, generic_reduction(projection, receipts)}
+      generic_reduction(projection, receipts, Keyword.drop(opts, [:operation_receipts]))
     end
   end
 
-  defp generic_reduction(projection, receipts) do
-    %{
-      reducer_module: __MODULE__,
-      projection: projection,
-      lower_receipt_summary: LowerReceiptSummary.from_projection(projection),
-      operation_dispositions: Enum.map(receipts, &operation_disposition/1)
-    }
+  defp generic_reduction(projection, receipts, opts \\ []) do
+    events = LineageEventOutbox.events_for_projection(projection, receipts)
+
+    with {:ok, outbox} <- LineageEventOutbox.persist(projection, events, opts) do
+      {:ok,
+       %{
+         reducer_module: __MODULE__,
+         projection: projection,
+         lower_receipt_summary: LowerReceiptSummary.from_projection(projection),
+         operation_dispositions: Enum.map(receipts, &operation_disposition/1),
+         lineage_events: events,
+         lineage_event_outbox: outbox
+       }}
+    end
   end
 
   defp operation_disposition(%OperationReceipt{} = receipt) do
