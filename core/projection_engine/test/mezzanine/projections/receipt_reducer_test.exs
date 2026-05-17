@@ -402,6 +402,65 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
     assert reduced.lineage_event_outbox.event_refs == Enum.map(events, & &1.event_ref)
   end
 
+  test "full execution lineage contract persists through postgres outbox adapter" do
+    receipts =
+      Enum.map(@operation_roles, fn role ->
+        operation_receipt(role,
+          metadata: %{
+            connector_manifest_ref: "manifest://#{elem(role, 0)}/v1",
+            credential_lease_ref: "credential-lease://tenant-a/#{elem(role, 0)}",
+            effect_request_ref: "effect-request://#{elem(role, 0)}",
+            evidence_ref: "evidence://#{elem(role, 0)}"
+          }
+        )
+      end)
+
+    store_opts = [profile: :integration_postgres, migration_proof: :present]
+
+    assert {:ok, reduced} =
+             ReceiptReducer.reduce(
+               receipts,
+               store_opts ++ [lineage_event_contract: :full_execution, review_state: :opened]
+             )
+
+    assert {:ok, outbox_record} =
+             Store.fetch_record(reduced.projection.projection_ref, store_opts)
+
+    assert outbox_record.projection_ref == reduced.projection.projection_ref
+    assert outbox_record.operation_context_ref == reduced.projection.operation_context_ref
+    assert outbox_record.subject_ref == reduced.projection.subject_ref
+    assert outbox_record.trace_ref == "trace://tenant-a/run-a"
+    assert length(outbox_record.events) == length(reduced.lineage_events)
+
+    assert Enum.map(outbox_record.events, & &1.event_ref) ==
+             reduced.lineage_event_outbox.event_refs
+
+    assert Enum.map(outbox_record.events, & &1.sequence) ==
+             Enum.to_list(1..length(outbox_record.events))
+
+    assert Enum.map(outbox_record.events, & &1.event_kind) ==
+             Enum.map(reduced.lineage_events, & &1.event_kind)
+
+    assert Enum.any?(outbox_record.events, &(&1.event_kind == :jido_manifest_resolved))
+    assert Enum.any?(outbox_record.events, &(&1.event_kind == :credential_lease_materialized))
+    assert Enum.any?(outbox_record.events, &(&1.event_kind == :effect_requested))
+    assert Enum.any?(outbox_record.events, &(&1.event_kind == :replay_exported))
+
+    assert {:ok, second_reduction} =
+             ReceiptReducer.reduce(
+               receipts,
+               store_opts ++ [lineage_event_contract: :full_execution, review_state: :opened]
+             )
+
+    assert {:ok, reset_record} =
+             Store.fetch_record(second_reduction.projection.projection_ref, store_opts)
+
+    assert length(reset_record.events) == length(second_reduction.lineage_events)
+
+    assert Enum.map(reset_record.events, & &1.sequence) ==
+             Enum.to_list(1..length(reset_record.events))
+  end
+
   test "full execution lineage contract emits review skipped when no review opens" do
     receipts = [operation_receipt(hd(@operation_roles))]
 
