@@ -54,8 +54,9 @@ defmodule Mezzanine.ConfigRegistry.BindingRegistry do
          {:ok, compiled_binding} <-
            CompiledBinding.by_set_ref(active.binding_set_id, request.binding_ref),
          :ok <- ensure_expected_kind(compiled_binding, request.binding_kind),
-         {:ok, dependencies} <- BindingManifestDependency.by_binding(compiled_binding.id) do
-      {:ok, resolution(active, binding_set, compiled_binding, dependencies)}
+         {:ok, dependencies, operation_dependency} <-
+           fetch_dependencies(compiled_binding, request) do
+      {:ok, resolution(active, binding_set, compiled_binding, dependencies, operation_dependency)}
     end
   end
 
@@ -273,6 +274,8 @@ defmodule Mezzanine.ConfigRegistry.BindingRegistry do
          identifier!(binding.credential_binding_ref, :credential_binding_ref),
        runtime_family: runtime_family(binding),
        operation_refs: operation_refs(binding),
+       policy_refs: policy_refs(binding),
+       checksum: binding_checksum(binding),
        binding_payload: dump_struct(binding),
        metadata: dump_value(Map.get(binding, :metadata, %{}))
      }}
@@ -312,7 +315,8 @@ defmodule Mezzanine.ConfigRegistry.BindingRegistry do
          %ActiveBindingSet{} = active,
          %BindingSet{} = binding_set,
          %CompiledBinding{} = compiled_binding,
-         dependencies
+         dependencies,
+         operation_dependency
        ) do
     descriptor = %{
       binding_ref: compiled_binding.binding_ref,
@@ -320,6 +324,8 @@ defmodule Mezzanine.ConfigRegistry.BindingRegistry do
       connector_ref: compiled_binding.connector_ref,
       manifest_ref: compiled_binding.manifest_ref,
       operation_refs: compiled_binding.operation_refs,
+      policy_refs: compiled_binding.policy_refs,
+      checksum: compiled_binding.checksum,
       credential_binding_ref: compiled_binding.credential_binding_ref,
       runtime_family: compiled_binding.runtime_family,
       binding_epoch: active.binding_epoch,
@@ -332,9 +338,28 @@ defmodule Mezzanine.ConfigRegistry.BindingRegistry do
       binding_set: binding_set,
       compiled_binding: compiled_binding,
       manifest_dependencies: Enum.sort_by(dependencies, & &1.operation_role),
+      operation_dependency: operation_dependency,
       descriptor: descriptor,
       binding_epoch: active.binding_epoch
     }
+  end
+
+  defp fetch_dependencies(%CompiledBinding{} = compiled_binding, %{operation_role: nil}) do
+    with {:ok, dependencies} <- BindingManifestDependency.by_binding(compiled_binding.id) do
+      {:ok, dependencies, nil}
+    end
+  end
+
+  defp fetch_dependencies(%CompiledBinding{} = compiled_binding, %{operation_role: operation_role}) do
+    case BindingManifestDependency.by_binding_role(compiled_binding.id, operation_role) do
+      {:ok, dependency} ->
+        {:ok, [dependency], dependency}
+
+      {:error, _not_found} ->
+        {:error,
+         {:missing_binding_operation_role,
+          %{binding_ref: compiled_binding.binding_ref, operation_role: operation_role}}}
+    end
   end
 
   defp ensure_expected_epoch(_active, nil), do: :ok
@@ -377,7 +402,9 @@ defmodule Mezzanine.ConfigRegistry.BindingRegistry do
          {:ok, pack_slug} <- required_attr(attrs, :pack_slug),
          {:ok, binding_ref} <- required_attr(attrs, :binding_ref),
          {:ok, binding_kind} <- optional_binding_kind(attr(attrs, :binding_kind)),
-         {:ok, expected_epoch} <- optional_positive_integer(attr(attrs, :expected_binding_epoch)) do
+         {:ok, expected_epoch} <- optional_positive_integer(attr(attrs, :expected_binding_epoch)),
+         {:ok, operation_role} <-
+           optional_identifier(attr(attrs, :operation_role), :operation_role) do
       {:ok,
        %{
          tenant_id: tenant_id,
@@ -385,7 +412,8 @@ defmodule Mezzanine.ConfigRegistry.BindingRegistry do
          pack_slug: pack_slug,
          binding_ref: binding_ref,
          binding_kind: binding_kind,
-         expected_binding_epoch: expected_epoch
+         expected_binding_epoch: expected_epoch,
+         operation_role: operation_role
        }}
     end
   end
@@ -460,6 +488,15 @@ defmodule Mezzanine.ConfigRegistry.BindingRegistry do
 
   defp optional_binding_kind(value), do: {:error, {:invalid_binding_kind, value}}
 
+  defp optional_identifier(nil, _key), do: {:ok, nil}
+
+  defp optional_identifier(value, key) do
+    {:ok, identifier!(value, key)}
+  rescue
+    error in ArgumentError ->
+      {:error, {:invalid_binding_registry_attr, key, Exception.message(error)}}
+  end
+
   defp identifier!(value, _key) when is_atom(value), do: Atom.to_string(value)
 
   defp identifier!(value, key) when is_binary(value) do
@@ -478,6 +515,44 @@ defmodule Mezzanine.ConfigRegistry.BindingRegistry do
     |> Map.new(fn {role, operation_ref} ->
       {identifier!(role, :operation_role), identifier!(operation_ref, :operation_ref)}
     end)
+  end
+
+  defp policy_refs(binding) do
+    binding
+    |> Map.from_struct()
+    |> Map.drop([:__struct__, :metadata])
+    |> Enum.reduce(metadata_policy_refs(Map.get(binding, :metadata, %{})), fn {field, value},
+                                                                              refs ->
+      if policy_ref_field?(field) do
+        refs ++ List.wrap(value)
+      else
+        refs
+      end
+    end)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.map(&identifier!(&1, :policy_ref))
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  defp policy_ref_field?(field) do
+    field_name = Atom.to_string(field)
+    String.ends_with?(field_name, "_policy_ref") or String.ends_with?(field_name, "_profile_ref")
+  end
+
+  defp metadata_policy_refs(metadata) when is_map(metadata) do
+    metadata
+    |> Map.get(:policy_refs, Map.get(metadata, "policy_refs", []))
+    |> List.wrap()
+  end
+
+  defp metadata_policy_refs(_metadata), do: []
+
+  defp binding_checksum(binding) do
+    payload = dump_struct(binding)
+    digest = :crypto.hash(:sha256, :erlang.term_to_binary(payload))
+
+    "sha256:" <> Base.encode16(digest, case: :lower)
   end
 
   defp runtime_family(%{runtime_family: value}) when not is_nil(value),
@@ -565,6 +640,7 @@ defmodule Mezzanine.ConfigRegistry.BindingRegistry do
             "manifest_ref" => dependency.manifest_ref,
             "credential_scope_ref" => dependency.credential_scope_ref,
             "required_runtime_family" => dependency.required_runtime_family,
+            "manifest_digest" => dependency.manifest_digest,
             "required_scopes" => dependency.required_scopes
           }
         end)

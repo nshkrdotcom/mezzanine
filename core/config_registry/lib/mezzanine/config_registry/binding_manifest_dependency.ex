@@ -30,6 +30,11 @@ defmodule Mezzanine.ConfigRegistry.BindingManifestDependency do
     define(:get, action: :read)
     define(:by_set, action: :by_set, args: [:binding_set_id])
     define(:by_binding, action: :by_binding, args: [:compiled_binding_id])
+
+    define(:by_binding_role,
+      action: :by_binding_role,
+      args: [:compiled_binding_id, :operation_role]
+    )
   end
 
   actions do
@@ -63,6 +68,19 @@ defmodule Mezzanine.ConfigRegistry.BindingManifestDependency do
     read :by_binding do
       argument(:compiled_binding_id, :uuid, allow_nil?: false)
       filter(expr(compiled_binding_id == ^arg(:compiled_binding_id)))
+    end
+
+    read :by_binding_role do
+      argument(:compiled_binding_id, :uuid, allow_nil?: false)
+      argument(:operation_role, :string, allow_nil?: false)
+      get?(true)
+
+      filter(
+        expr(
+          compiled_binding_id == ^arg(:compiled_binding_id) and
+            operation_role == ^arg(:operation_role)
+        )
+      )
     end
   end
 

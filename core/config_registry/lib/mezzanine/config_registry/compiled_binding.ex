@@ -41,6 +41,8 @@ defmodule Mezzanine.ConfigRegistry.CompiledBinding do
         :credential_binding_ref,
         :runtime_family,
         :operation_refs,
+        :policy_refs,
+        :checksum,
         :binding_payload,
         :metadata
       ])
@@ -100,6 +102,17 @@ defmodule Mezzanine.ConfigRegistry.CompiledBinding do
     attribute :operation_refs, :map do
       allow_nil?(false)
       default(%{})
+      public?(true)
+    end
+
+    attribute :policy_refs, {:array, :string} do
+      allow_nil?(false)
+      default([])
+      public?(true)
+    end
+
+    attribute :checksum, :string do
+      allow_nil?(false)
       public?(true)
     end
 

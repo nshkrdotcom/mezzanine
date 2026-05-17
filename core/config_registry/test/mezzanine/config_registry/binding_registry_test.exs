@@ -50,14 +50,73 @@ defmodule Mezzanine.ConfigRegistry.BindingRegistryTest do
     assert %CompiledBinding{} = resolution.compiled_binding
     assert resolution.compiled_binding.connector_ref == "ticket_connector"
     assert resolution.compiled_binding.manifest_ref == "ticket_manifest_v1"
-    assert resolution.compiled_binding.operation_refs == %{"read" => "search_cases"}
 
-    assert [%BindingManifestDependency{} = dependency] = resolution.manifest_dependencies
+    assert resolution.compiled_binding.operation_refs == %{
+             "preview" => "preview_cases",
+             "read" => "search_cases"
+           }
+
+    assert resolution.compiled_binding.policy_refs == [
+             "source_authority_policy",
+             "ticket_projection_profile",
+             "ticket_retry_policy"
+           ]
+
+    assert String.starts_with?(resolution.compiled_binding.checksum, "sha256:")
+    assert String.length(resolution.compiled_binding.checksum) == 71
+
+    assert [
+             %BindingManifestDependency{} = preview_dependency,
+             %BindingManifestDependency{} = dependency
+           ] = resolution.manifest_dependencies
+
+    assert preview_dependency.operation_role == "preview"
+    assert preview_dependency.operation_ref == "preview_cases"
     assert dependency.operation_role == "read"
     assert dependency.operation_ref == "search_cases"
     assert dependency.operation_class == "source_read"
     assert dependency.required_scopes == ["tickets.read"]
     assert dependency.credential_scope_ref == "ticket_credentials"
+  end
+
+  test "operation-role lookup returns only the dependency targeted for dispatch" do
+    installation = activate_fixture_installation!("tenant-role-lookup")
+
+    assert {:ok, resolution} =
+             MezzanineConfigRegistry.resolve_active_binding(
+               tenant_id: installation.tenant_id,
+               environment: installation.environment,
+               pack_slug: installation.pack_slug,
+               binding_ref: "case_source_primary",
+               binding_kind: :source,
+               operation_role: :preview
+             )
+
+    assert [%BindingManifestDependency{} = dependency] = resolution.manifest_dependencies
+    assert resolution.operation_dependency.id == dependency.id
+    assert dependency.operation_role == "preview"
+    assert dependency.operation_ref == "preview_cases"
+    assert dependency.operation_class == "source_preview"
+    assert dependency.required_scopes == ["tickets.preview"]
+    assert resolution.descriptor.policy_refs == resolution.compiled_binding.policy_refs
+    assert resolution.descriptor.checksum == resolution.compiled_binding.checksum
+  end
+
+  test "missing operation-role lookup fails closed before dispatch" do
+    installation = activate_fixture_installation!("tenant-role-missing")
+
+    assert {:error, {:missing_binding_operation_role, missing}} =
+             MezzanineConfigRegistry.resolve_active_binding(
+               tenant_id: installation.tenant_id,
+               environment: installation.environment,
+               pack_slug: installation.pack_slug,
+               binding_ref: "case_source_primary",
+               binding_kind: :source,
+               operation_role: :archive
+             )
+
+    assert missing.binding_ref == "case_source_primary"
+    assert missing.operation_role == "archive"
   end
 
   test "binding updates allocate a new epoch and stale epoch lookup fails closed" do
@@ -205,11 +264,14 @@ defmodule Mezzanine.ConfigRegistry.BindingRegistryTest do
           subject_kind: :case_file,
           connector_ref: :ticket_connector,
           manifest_ref: :ticket_manifest_v1,
-          operation_refs: %{read: :search_cases},
+          operation_refs: %{preview: :preview_cases, read: :search_cases},
           credential_binding_ref: :ticket_credentials,
+          projection_profile_ref: :ticket_projection_profile,
+          retry_policy_ref: :ticket_retry_policy,
           metadata: %{
-            operation_classes: %{read: :source_read},
-            required_scopes: %{read: ["tickets.read"]},
+            "operation_classes" => %{"preview" => :source_preview, "read" => :source_read},
+            "required_scopes" => %{"preview" => ["tickets.preview"], "read" => ["tickets.read"]},
+            policy_refs: [:source_authority_policy],
             manifest_digest: "sha256:ticket_manifest_fixture"
           }
         },
