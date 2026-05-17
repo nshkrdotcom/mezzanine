@@ -54,9 +54,7 @@ defmodule Mezzanine.Projections.ReceiptReducer do
         ) ::
           {:ok, generic_reduce_result() | reduce_result()} | {:error, term()}
   def reduce([%OperationReceipt{} | _rest] = receipts) do
-    with {:ok, projection} <- SubjectRuntimeProjection.from_operation_receipts(receipts) do
-      generic_reduction(projection, receipts)
-    end
+    reduce(receipts, [])
   end
 
   def reduce(%OperationReceipt{} = receipt), do: reduce([receipt])
@@ -105,8 +103,14 @@ defmodule Mezzanine.Projections.ReceiptReducer do
     end
   end
 
-  @spec reduce(OperationGroupReceipt.t(), keyword()) ::
+  @spec reduce([OperationReceipt.t()] | OperationGroupReceipt.t(), keyword()) ::
           {:ok, generic_reduce_result()} | {:error, term()}
+  def reduce([%OperationReceipt{} | _rest] = receipts, opts) when is_list(opts) do
+    with {:ok, projection} <- SubjectRuntimeProjection.from_operation_receipts(receipts, opts) do
+      generic_reduction(projection, receipts, opts)
+    end
+  end
+
   def reduce(%OperationGroupReceipt{} = group, opts) when is_list(opts) do
     receipts = Keyword.get(opts, :operation_receipts, [])
 
@@ -115,10 +119,18 @@ defmodule Mezzanine.Projections.ReceiptReducer do
     end
   end
 
-  defp generic_reduction(projection, receipts, opts \\ []) do
-    events = LineageEventOutbox.events_for_projection(projection, receipts)
+  defp generic_reduction(projection, receipts, opts) do
+    events = LineageEventOutbox.events_for_projection(projection, receipts, opts)
 
-    with {:ok, outbox} <- LineageEventOutbox.persist(projection, events, opts) do
+    store_opts =
+      Keyword.drop(opts, [
+        :lineage_event_contract,
+        :review_state,
+        :operation_context_ref,
+        :subject_ref
+      ])
+
+    with {:ok, outbox} <- LineageEventOutbox.persist(projection, events, store_opts) do
       {:ok,
        %{
          reducer_module: __MODULE__,

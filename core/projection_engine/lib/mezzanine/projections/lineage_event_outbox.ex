@@ -16,8 +16,20 @@ defmodule Mezzanine.Projections.LineageEventOutbox do
 
   @spec events_for_projection(SubjectRuntimeProjection.t(), [OperationReceipt.t()]) ::
           [lineage_event()]
-  def events_for_projection(%SubjectRuntimeProjection{} = projection, receipts)
-      when is_list(receipts) do
+  def events_for_projection(projection, receipts),
+    do: events_for_projection(projection, receipts, [])
+
+  @spec events_for_projection(SubjectRuntimeProjection.t(), [OperationReceipt.t()], keyword()) ::
+          [lineage_event()]
+  def events_for_projection(%SubjectRuntimeProjection{} = projection, receipts, opts)
+      when is_list(receipts) and is_list(opts) do
+    case Keyword.get(opts, :lineage_event_contract, :projection_reducer) do
+      :full_execution -> full_execution_events(projection, receipts, opts)
+      _contract -> projection_reducer_events(projection, receipts)
+    end
+  end
+
+  defp projection_reducer_events(projection, receipts) do
     command = command_recorded_event(projection, receipts)
 
     operation_events =
@@ -35,6 +47,31 @@ defmodule Mezzanine.Projections.LineageEventOutbox do
       )
 
     [command | operation_events] ++ [projection_event]
+  end
+
+  defp full_execution_events(projection, receipts, opts) do
+    command = command_recorded_event(projection, receipts)
+    workflow = workflow_started_event(projection, receipts, command.event_ref)
+
+    operation_events =
+      receipts
+      |> Enum.sort_by(& &1.receipt_ref)
+      |> Enum.with_index(1)
+      |> Enum.flat_map(&operation_execution_lineage_events(projection, &1, workflow.event_ref))
+
+    review =
+      review_event(projection, receipts, operation_terminal_event_refs(operation_events), opts)
+
+    projection_event =
+      execution_projection_updated_event(
+        projection,
+        receipts,
+        operation_terminal_event_refs(operation_events) ++ [review.event_ref]
+      )
+
+    replay = replay_exported_event(projection, receipts, projection_event.event_ref)
+
+    [command, workflow] ++ operation_events ++ [review, projection_event, replay]
   end
 
   @spec persist(SubjectRuntimeProjection.t(), [lineage_event()], keyword()) ::
@@ -133,6 +170,167 @@ defmodule Mezzanine.Projections.LineageEventOutbox do
     [operation_requested, effect_receipted, receipt_reduced]
   end
 
+  defp operation_execution_lineage_events(
+         projection,
+         {%OperationReceipt{} = receipt, index},
+         workflow_event_ref
+       ) do
+    base_order = index * 100
+
+    operation_requested =
+      event(
+        projection,
+        :operation_requested,
+        base_order,
+        predecessor_event_refs: [workflow_event_ref],
+        operation_receipt: receipt,
+        metadata_refs: operation_metadata_refs(receipt)
+      )
+
+    manifest =
+      event(
+        projection,
+        :jido_manifest_resolved,
+        base_order + 1,
+        predecessor_event_refs: [operation_requested.event_ref],
+        operation_receipt: receipt,
+        metadata_refs: operation_metadata_refs(receipt)
+      )
+
+    credential =
+      event(
+        projection,
+        :credential_lease_materialized,
+        base_order + 2,
+        predecessor_event_refs: [manifest.event_ref],
+        operation_receipt: receipt,
+        metadata_refs: operation_metadata_refs(receipt)
+      )
+
+    effect_requested =
+      event(
+        projection,
+        :effect_requested,
+        base_order + 3,
+        predecessor_event_refs: [credential.event_ref],
+        operation_receipt: receipt,
+        metadata_refs: operation_metadata_refs(receipt)
+      )
+
+    effect_receipted =
+      event(
+        projection,
+        :effect_receipted,
+        base_order + 4,
+        predecessor_event_refs: [effect_requested.event_ref],
+        operation_receipt: receipt,
+        occurred_at: completed_at(receipt),
+        metadata_refs: operation_metadata_refs(receipt)
+      )
+
+    receipt_reduced =
+      event(
+        projection,
+        :receipt_reduced,
+        base_order + 5,
+        predecessor_event_refs: [effect_receipted.event_ref],
+        operation_receipt: receipt,
+        occurred_at: completed_at(receipt) + 1,
+        metadata_refs:
+          operation_metadata_refs(receipt)
+          |> Map.put(:lineage_event_refs, receipt.lineage_event_refs)
+      )
+
+    events = [
+      operation_requested,
+      manifest,
+      credential,
+      effect_requested,
+      effect_receipted,
+      receipt_reduced
+    ]
+
+    if evidence_operation?(receipt) do
+      events ++
+        [evidence_attached_event(projection, receipt, receipt_reduced.event_ref, base_order + 6)]
+    else
+      events
+    end
+  end
+
+  defp workflow_started_event(projection, receipts, command_event_ref) do
+    event(
+      projection,
+      :workflow_started,
+      2,
+      predecessor_event_refs: [command_event_ref],
+      occurred_at: first_started_at(receipts),
+      metadata_refs: %{
+        operation_context_ref: projection.operation_context_ref,
+        subject_ref: projection.subject_ref,
+        workflow_ref: "workflow://#{projection.operation_context_ref}"
+      }
+    )
+  end
+
+  defp evidence_attached_event(projection, receipt, receipt_reduced_event_ref, causal_order) do
+    event(
+      projection,
+      :evidence_attached,
+      causal_order,
+      predecessor_event_refs: [receipt_reduced_event_ref],
+      operation_receipt: receipt,
+      occurred_at: completed_at(receipt) + 2,
+      metadata_refs: evidence_metadata_refs(receipt)
+    )
+  end
+
+  defp review_event(projection, receipts, predecessor_event_refs, opts) do
+    event(
+      projection,
+      review_event_kind(Keyword.get(opts, :review_state, :skipped)),
+      9_000,
+      predecessor_event_refs: predecessor_event_refs,
+      occurred_at: last_completed_at(receipts) + 3,
+      metadata_refs: %{
+        operation_context_ref: projection.operation_context_ref,
+        subject_ref: projection.subject_ref,
+        review_ref: "review://#{projection.operation_context_ref}"
+      }
+    )
+  end
+
+  defp execution_projection_updated_event(projection, receipts, predecessor_event_refs) do
+    event(
+      projection,
+      :projection_updated,
+      10_000,
+      predecessor_event_refs: predecessor_event_refs,
+      projection_visible?: true,
+      projection_key: projection.projection_ref,
+      occurred_at: last_completed_at(receipts) + 4,
+      metadata_refs: %{
+        projection_ref: projection.projection_ref,
+        operation_context_ref: projection.operation_context_ref,
+        lower_receipt_summary_ref: "lower-receipt-summary://#{projection.operation_context_ref}"
+      }
+    )
+  end
+
+  defp replay_exported_event(projection, receipts, projection_event_ref) do
+    event(
+      projection,
+      :replay_exported,
+      10_001,
+      predecessor_event_refs: [projection_event_ref],
+      occurred_at: last_completed_at(receipts) + 5,
+      metadata_refs: %{
+        projection_ref: projection.projection_ref,
+        replay_export_ref: "replay-export://#{projection.projection_ref}"
+      }
+    )
+  end
+
   defp projection_updated_event(projection, receipts, operation_events, causal_order) do
     predecessors =
       operation_events
@@ -181,15 +379,44 @@ defmodule Mezzanine.Projections.LineageEventOutbox do
   end
 
   defp operation_metadata_refs(%OperationReceipt{} = receipt) do
+    metadata = receipt.metadata || %{}
+
     %{
       receipt_ref: receipt.receipt_ref,
       operation_context_ref: receipt.operation_context_ref,
       operation_plan_ref: receipt.operation_plan_ref,
       result_ref: result_ref(receipt.result),
-      payload_ref: payload_ref(receipt.metadata || %{})
+      payload_ref: payload_ref(metadata),
+      connector_manifest_ref: metadata_value(metadata, :connector_manifest_ref),
+      credential_lease_ref: metadata_value(metadata, :credential_lease_ref),
+      effect_request_ref: metadata_value(metadata, :effect_request_ref),
+      evidence_ref: metadata_value(metadata, :evidence_ref)
     }
     |> Enum.reject(fn {_key, value} -> is_nil(value) end)
     |> Map.new()
+  end
+
+  defp evidence_metadata_refs(%OperationReceipt{} = receipt) do
+    metadata_refs = operation_metadata_refs(receipt)
+
+    case metadata_value(receipt.metadata || %{}, :evidence_ref) do
+      nil -> metadata_refs
+      evidence_ref -> Map.put(metadata_refs, :evidence_ref, evidence_ref)
+    end
+  end
+
+  defp operation_terminal_event_refs(events) do
+    events
+    |> Enum.filter(&(&1.event_kind in [:receipt_reduced, :evidence_attached]))
+    |> Enum.map(& &1.event_ref)
+  end
+
+  defp review_event_kind(:opened), do: :review_opened
+  defp review_event_kind("opened"), do: :review_opened
+  defp review_event_kind(_state), do: :review_skipped
+
+  defp evidence_operation?(%OperationReceipt{} = receipt) do
+    metadata_value(receipt.metadata || %{}, :operation_role) == :evidence
   end
 
   defp event_ref(projection, nil, kind, causal_order) do

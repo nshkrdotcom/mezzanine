@@ -6,7 +6,15 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
   alias Mezzanine.EvidenceLedger.EvidenceRecord
   alias Mezzanine.Execution.ExecutionRecord
   alias Mezzanine.Objects.SubjectRecord
-  alias Mezzanine.Projections.{EnvelopeAccessSummary, ProjectionRow, ReceiptReducer, Store}
+
+  alias Mezzanine.Projections.{
+    EnvelopeAccessSummary,
+    LineageEventOutbox,
+    ProjectionRow,
+    ReceiptReducer,
+    Store
+  }
+
   alias Mezzanine.Projections.SubjectRuntimeProjection
   alias Mezzanine.Substrate.OperationGroupReceipt
   alias Mezzanine.Substrate.OperationReceipt
@@ -325,6 +333,87 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
     refute Map.has_key?(summary_fields, :github_pr_evidence)
     refute Map.has_key?(operation_fields, :linear_comment_id)
     refute String.contains?(inspect(reduced.lineage_events), "provider_object_refs")
+  end
+
+  test "full execution lineage contract covers workflow runtime evidence review and replay events" do
+    receipts =
+      Enum.map(@operation_roles, fn role ->
+        operation_receipt(role,
+          metadata: %{
+            connector_manifest_ref: "manifest://#{elem(role, 0)}/v1",
+            credential_lease_ref: "credential-lease://tenant-a/#{elem(role, 0)}",
+            effect_request_ref: "effect-request://#{elem(role, 0)}",
+            evidence_ref: "evidence://#{elem(role, 0)}"
+          }
+        )
+      end)
+
+    assert {:ok, reduced} =
+             ReceiptReducer.reduce(receipts,
+               lineage_event_contract: :full_execution,
+               review_state: :opened
+             )
+
+    events = reduced.lineage_events
+    event_kinds = Enum.map(events, & &1.event_kind)
+
+    required_kinds = [
+      :command_recorded,
+      :workflow_started,
+      :operation_requested,
+      :jido_manifest_resolved,
+      :credential_lease_materialized,
+      :effect_requested,
+      :effect_receipted,
+      :receipt_reduced,
+      :evidence_attached,
+      :review_opened,
+      :projection_updated,
+      :replay_exported
+    ]
+
+    assert MapSet.subset?(MapSet.new(required_kinds), MapSet.new(event_kinds))
+    assert Enum.count(event_kinds, &(&1 == :jido_manifest_resolved)) == length(receipts)
+    assert Enum.count(event_kinds, &(&1 == :credential_lease_materialized)) == length(receipts)
+    assert Enum.count(event_kinds, &(&1 == :effect_requested)) == length(receipts)
+    assert Enum.count(event_kinds, &(&1 == :receipt_reduced)) == length(receipts)
+
+    event_refs = MapSet.new(Enum.map(events, & &1.event_ref))
+
+    assert Enum.all?(events, fn event ->
+             event.root_event? or
+               (event.predecessor_event_refs != [] and
+                  Enum.all?(event.predecessor_event_refs, &MapSet.member?(event_refs, &1)))
+           end)
+
+    evidence_attached = Enum.find(events, &(&1.event_kind == :evidence_attached))
+    assert evidence_attached.metadata_refs.evidence_ref == "evidence://evidence"
+
+    review_opened = Enum.find(events, &(&1.event_kind == :review_opened))
+    assert review_opened.predecessor_event_refs != []
+
+    projection_updated = Enum.find(events, &(&1.event_kind == :projection_updated))
+    assert review_opened.event_ref in projection_updated.predecessor_event_refs
+    assert projection_updated.projection_visible?
+
+    replay_exported = List.last(events)
+    assert replay_exported.event_kind == :replay_exported
+    assert replay_exported.predecessor_event_refs == [projection_updated.event_ref]
+    assert reduced.lineage_event_outbox.event_refs == Enum.map(events, & &1.event_ref)
+  end
+
+  test "full execution lineage contract emits review skipped when no review opens" do
+    receipts = [operation_receipt(hd(@operation_roles))]
+
+    assert {:ok, projection} = SubjectRuntimeProjection.from_operation_receipts(receipts)
+
+    events =
+      LineageEventOutbox.events_for_projection(projection, receipts,
+        lineage_event_contract: :full_execution
+      )
+
+    assert :review_skipped in Enum.map(events, & &1.event_kind)
+    refute :review_opened in Enum.map(events, & &1.event_kind)
   end
 
   test "projects result envelope storage access without materializing stored bodies" do
