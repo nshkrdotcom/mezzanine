@@ -61,26 +61,28 @@ Primary functions:
 - `invoke_run_intent/2`
 - `dispatch_effect/2`
 - `dispatch_read/2`
-- `fetch_linear_candidates/3`
-- `refresh_linear_issue/4`
-- `publish_linear_source/3`
-- `update_linear_issue_state/3`
-- `create_github_pr/3`
-- `fetch_github_pr/3`
-- `list_github_prs/3`
-- `update_github_pr/3`
-- `list_github_pr_reviews/3`
-- `list_github_pr_review_comments/3`
-- `create_github_pr_review/3`
-- `create_github_pr_review_comment/3`
-- `fetch_github_combined_status/3`
-- `list_github_check_runs/3`
-- `sweep_github_pr_feedback/3`
-- `cleanup_github_branch/3`
+- `fetch_source_candidates/4`
+- `refresh_source_item/5`
+- `fetch_source_current_states/5`
+- `normalize_source_page/5`
+- `source_read_allowed_operations/3`
+- `publish_source/5`
+- `source_publication_allowed_operations/4`
+- `invoke_runtime_operation/6`
+- `runtime_operation_allowed_operations/5`
+- `invoke_runtime_tool/6`
+- `runtime_tool_allowed_operations/5`
+- `collect_evidence/4`
+- `evidence_allowed_operations/4`
+- `invoke_resource_effect/4`
+- `resource_effect_allowed_operations/4`
 - `to_audit_attrs/2`
 
 The bridge rejects old intent structs and generic maps for lower effects before
-provider execution. Lower execution is delegated to `Jido.Integration.V2`.
+execution. Generic dispatch functions require role refs plus binding data; any
+provider-specific lower work is resolved from binding data into explicit
+provider-adapter or connector zones. Lower execution is delegated to
+`Jido.Integration.V2`.
 
 ### Workflow Runtime
 
