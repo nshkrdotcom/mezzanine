@@ -273,6 +273,22 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
   end
 
   test "projects result envelope storage access without materializing stored bodies" do
+    {:ok, streamed_payload} =
+      PayloadEnvelope.new(%{
+        payload_ref: "payload://tool/stream",
+        storage_mode: :stream,
+        schema_ref: "schema://payload/tool",
+        redaction_ref: "redaction://payload/ref-only",
+        stream_ref: "stream://tool/payload/1",
+        store_ref: "stream-store://mezzanine/default",
+        data: %{payload_stream_body: "should-not-project"},
+        retention_refs: ["retention://payload-stream/1"],
+        metadata: %{
+          content_owner_ref: "owner://operation/tool",
+          raw_boundary_payload: "should-not-project"
+        }
+      })
+
     inline =
       operation_receipt({:runtime, :runtime_operation},
         receipt_ref: "receipt://result/inline",
@@ -315,6 +331,7 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
     streamed =
       operation_receipt({:tool, :tool_operation},
         receipt_ref: "receipt://result/stream",
+        metadata: %{payload_envelope: streamed_payload},
         result_attrs: %{
           result_ref: "result://tool/stream",
           storage_mode: :stream,
@@ -372,8 +389,22 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
              }
            } = streamed_summary.result_access
 
+    assert %EnvelopeAccessSummary{
+             envelope_kind: :payload,
+             envelope_ref: "payload://tool/stream",
+             storage_mode: :stream,
+             readback_mode: :stream_ref,
+             data: nil,
+             stream_ref: "stream://tool/payload/1",
+             store_ref: "stream-store://mezzanine/default",
+             retention_refs: ["retention://payload-stream/1"],
+             metadata: %{content_owner_ref: "owner://operation/tool"}
+           } = streamed_summary.payload_access
+
     assert reduced.lower_receipt_summary.operations == reduced.projection.operations
     refute String.contains?(inspect(reduced.projection), "should-not-project")
+    refute String.contains?(inspect(reduced.projection), "payload_stream_body")
+    refute String.contains?(inspect(reduced.projection), "payload_envelope")
     refute String.contains?(inspect(reduced.projection), "stored_body")
     refute String.contains?(inspect(reduced.projection), "stream_body")
     refute String.contains?(inspect(reduced.projection), "raw_boundary_payload")
@@ -627,6 +658,7 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
 
     status = Keyword.get(opts, :status, :succeeded)
     result_attrs = Keyword.get(opts, :result_attrs, result_attrs(operation_role, operation_class))
+    extra_metadata = Keyword.get(opts, :metadata, %{})
 
     {:ok, result} =
       ResultEnvelope.new(result_attrs)
@@ -645,20 +677,24 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
           "lineage://#{operation_role}/effect_receipted",
           "lineage://#{operation_role}/receipt_reduced"
         ],
-        metadata: %{
-          operation_role: operation_role,
-          operation_class: operation_class,
-          subject_ref: "subject://document/1",
-          provider_object_refs: %{
-            "external_object://#{operation_role}" => ["provider-object://#{operation_role}"]
-          },
-          provider_facts: [
-            %{fact_ref: "provider-fact://#{operation_role}", fact_kind: :external_object}
-          ],
-          extensions: %{
-            "#{operation_role}_extension" => "extension-ref://#{operation_role}"
-          }
-        }
+        metadata:
+          Map.merge(
+            %{
+              operation_role: operation_role,
+              operation_class: operation_class,
+              subject_ref: "subject://document/1",
+              provider_object_refs: %{
+                "external_object://#{operation_role}" => ["provider-object://#{operation_role}"]
+              },
+              provider_facts: [
+                %{fact_ref: "provider-fact://#{operation_role}", fact_kind: :external_object}
+              ],
+              extensions: %{
+                "#{operation_role}_extension" => "extension-ref://#{operation_role}"
+              }
+            },
+            extra_metadata
+          )
       })
 
     receipt
