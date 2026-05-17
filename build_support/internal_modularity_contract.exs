@@ -4,6 +4,7 @@ defmodule Mezzanine.Build.InternalModularityContract do
   @root Path.expand("..", __DIR__)
 
   @package_specs [
+    %{path: "core/substrate_model", allowed_internal_deps: []},
     %{path: "core/mezzanine_core", allowed_internal_deps: []},
     %{path: "core/ops_model", allowed_internal_deps: []},
     %{path: "core/ops_domain", allowed_internal_deps: ["core/ops_model"]},

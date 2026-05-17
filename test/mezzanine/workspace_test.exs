@@ -7,6 +7,7 @@ defmodule Mezzanine.WorkspaceTest do
   alias Mezzanine.Build.WorkspaceContract
 
   test "declares the neutral package scaffold" do
+    assert "core/substrate_model" in Mezzanine.Workspace.neutral_package_paths()
     assert "core/pack_model" in Mezzanine.Workspace.neutral_package_paths()
     assert "core/pack_compiler" in Mezzanine.Workspace.neutral_package_paths()
     assert "core/barriers" in Mezzanine.Workspace.neutral_package_paths()

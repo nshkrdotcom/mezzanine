@@ -37,6 +37,7 @@ end
       publish_order: [:hex]
     },
     gepa_framework: root_dep.("gepa_framework", "~> 0.1.0"),
+    ground_plane_contracts: dep.("ground_plane", "core/ground_plane_contracts", "~> 0.1.0"),
     ground_plane_persistence_policy: dep.("ground_plane", "core/persistence_policy", "~> 0.1.0"),
     jido_hive_coordination_patterns: dep.("jido_hive", "core/coordination_patterns", "~> 0.1.0"),
     jido_hive_inter_agent_messaging: dep.("jido_hive", "core/inter_agent_messaging", "~> 0.1.0"),

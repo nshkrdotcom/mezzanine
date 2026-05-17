@@ -33,6 +33,7 @@ defmodule Mezzanine.InternalModularityContractTest do
              "core/pack_model",
              "core/projection_engine",
              "core/runtime_scheduler",
+             "core/substrate_model",
              "core/workflow_runtime",
              "core/workspace_build_model"
            ]

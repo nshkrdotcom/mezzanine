@@ -6,6 +6,7 @@ Current structure:
 
 ```text
 build_support/
+core/substrate_model/
 core/pack_model/
 core/pack_compiler/
 core/lifecycle_engine/
@@ -35,7 +36,7 @@ packaging/weld/mezzanine_core/
 
 The current repo layout is intentionally split into three bands:
 
-- projected neutral core packages under `core/pack_*`, `core/lifecycle_engine/`,
+- projected neutral core packages under `core/substrate_model/`, `core/pack_*`, `core/lifecycle_engine/`,
   `core/source_engine/`, `core/workspace_engine/`, `core/*_engine`, and
   `core/config_registry/`
 - kept lower bridges in `bridges/citadel_bridge/` and

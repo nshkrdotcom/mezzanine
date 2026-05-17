@@ -28,6 +28,7 @@ down into lower infrastructure layers like `app_kit`, `citadel`, or
 mezzanine/
   build_support/       # workspace and Weld manifests
   core/mezzanine_core  # projected artifact shell over the neutral rebuild
+  core/substrate_model # pure generic operation, envelope, receipt, and graph DTOs
   core/pack_model      # neutral pack definitions and shared structs
   core/pack_compiler   # neutral pack compilation and validation
   core/lifecycle_engine # durable lifecycle coordinator over explicit execution requests
@@ -186,6 +187,7 @@ flowchart LR
 
 The active buildout in this repo is the neutral core scaffold:
 
+- `core/substrate_model`
 - `core/pack_model`
 - `core/pack_compiler`
 - `core/lifecycle_engine`

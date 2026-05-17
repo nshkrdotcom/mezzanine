@@ -2,6 +2,7 @@
 
 - `./bridges/citadel_bridge/mix.exs`: Substrate-origin Citadel governance bridge for Mezzanine run intents
 - `./bridges/integration_bridge/mix.exs`: Direct jido_integration bridge for Mezzanine intents
+- `./core/substrate_model/mix.exs`: Pure generic operation, envelope, receipt, content-store, and graph DTOs for Mezzanine
 - `./core/archival_engine/mix.exs`: Durable archival manifests and offload contracts for Mezzanine
 - `./core/audit_engine/mix.exs`: Operational trace, lineage, and unified audit contracts for Mezzanine
 - `./core/barriers/mix.exs`: Durable barrier ledger and exact-close primitives for Mezzanine

@@ -18,6 +18,7 @@ defmodule Mezzanine.Build.WeldContract do
     :outer_brain_memory_contracts,
     :outer_brain_token_meter,
     :ai_trace_replay_contracts,
+    :ground_plane_contracts,
     :ground_plane_persistence_policy,
     :gepa_framework,
     :trinity_framework,
@@ -29,11 +30,13 @@ defmodule Mezzanine.Build.WeldContract do
 
   @manifest_dependency_opts %{
     execution_plane: [override: true],
+    ground_plane_contracts: [override: true],
     ground_plane_persistence_policy: [override: true]
   }
 
   @artifact_docs [
     "README.md",
+    "core/substrate_model/README.md",
     "core/mezzanine_core/README.md",
     "core/pack_model/README.md",
     "core/pack_compiler/README.md",
@@ -102,6 +105,7 @@ defmodule Mezzanine.Build.WeldContract do
   def artifact do
     [
       roots: [
+        "core/substrate_model",
         "core/mezzanine_core",
         "core/pack_model",
         "core/pack_compiler",
