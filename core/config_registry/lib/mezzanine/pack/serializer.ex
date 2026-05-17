@@ -12,16 +12,22 @@ defmodule Mezzanine.Pack.Serializer do
     Compiler,
     ContextSourceSpec,
     DecisionSpec,
+    EvidenceBinding,
     EvidenceSpec,
     ExecutionRecipeSpec,
     LifecycleSpec,
     Manifest,
     OperatorActionSpec,
     ProjectionSpec,
+    ResourceEffectBinding,
+    RuntimeBinding,
+    SourceBinding,
     SourceBindingSpec,
     SourceKindSpec,
+    SourcePublicationBinding,
     SourcePublishSpec,
-    SubjectKindSpec
+    SubjectKindSpec,
+    ToolBinding
   }
 
   @format_version 1
@@ -85,6 +91,7 @@ defmodule Mezzanine.Pack.Serializer do
       "profile_slots" => serialize_profile_slots(manifest.profile_slots),
       "subject_kind_specs" => Enum.map(manifest.subject_kind_specs, &serialize_subject_kind/1),
       "source_kind_specs" => Enum.map(manifest.source_kind_specs, &serialize_source_kind/1),
+      "binding_specs" => Enum.map(manifest.binding_specs, &serialize_binding/1),
       "source_binding_specs" =>
         Enum.map(manifest.source_binding_specs, &serialize_source_binding/1),
       "source_publish_specs" =>
@@ -182,6 +189,211 @@ defmodule Mezzanine.Pack.Serializer do
       description: payload["description"],
       adapter_mod: deserialize_module(payload["adapter_mod"])
     }
+  end
+
+  defp serialize_binding(binding) do
+    binding
+    |> serialize_binding_by_kind()
+    |> Map.put("kind", Atom.to_string(binding_kind(binding)))
+  end
+
+  defp serialize_binding_by_kind(%SourceBinding{} = binding) do
+    common_binding_payload(binding)
+    |> Map.merge(%{
+      "source_kind" => serialize_identifier(binding.source_kind),
+      "subject_kind" => serialize_identifier(binding.subject_kind),
+      "adapter_ref" => serialize_nullable_identifier(binding.adapter_ref),
+      "connection_ref" => serialize_nullable_identifier(binding.connection_ref),
+      "candidate_filter_ref" => serialize_nullable_identifier(binding.candidate_filter_ref),
+      "cursor_policy_ref" => serialize_nullable_identifier(binding.cursor_policy_ref),
+      "projection_profile_ref" => serialize_nullable_identifier(binding.projection_profile_ref),
+      "retry_policy_ref" => serialize_nullable_identifier(binding.retry_policy_ref)
+    })
+  end
+
+  defp serialize_binding_by_kind(%SourcePublicationBinding{} = binding) do
+    common_binding_payload(binding)
+    |> Map.merge(%{
+      "source_binding_ref" => serialize_identifier(binding.source_binding_ref),
+      "template_ref" => serialize_identifier(binding.template_ref),
+      "idempotency_scope" => Atom.to_string(binding.idempotency_scope),
+      "publication_profile_ref" => serialize_nullable_identifier(binding.publication_profile_ref),
+      "retry_policy_ref" => serialize_nullable_identifier(binding.retry_policy_ref)
+    })
+  end
+
+  defp serialize_binding_by_kind(%RuntimeBinding{} = binding) do
+    common_binding_payload(binding)
+    |> Map.merge(%{
+      "runtime_family" => Atom.to_string(binding.runtime_family),
+      "session_policy_ref" => serialize_nullable_identifier(binding.session_policy_ref),
+      "tool_catalog_ref" => serialize_nullable_identifier(binding.tool_catalog_ref),
+      "retry_policy_ref" => serialize_nullable_identifier(binding.retry_policy_ref)
+    })
+  end
+
+  defp serialize_binding_by_kind(%ToolBinding{} = binding) do
+    common_binding_payload(binding)
+    |> Map.merge(%{
+      "runtime_binding_ref" => serialize_identifier(binding.runtime_binding_ref),
+      "authorization_class" => serialize_identifier(binding.authorization_class),
+      "tool_schema_ref" => serialize_nullable_identifier(binding.tool_schema_ref),
+      "input_policy_ref" => serialize_nullable_identifier(binding.input_policy_ref),
+      "retry_policy_ref" => serialize_nullable_identifier(binding.retry_policy_ref)
+    })
+  end
+
+  defp serialize_binding_by_kind(%EvidenceBinding{} = binding) do
+    common_binding_payload(binding)
+    |> Map.merge(%{
+      "evidence_kind" => serialize_identifier(binding.evidence_kind),
+      "collection_policy_ref" => serialize_nullable_identifier(binding.collection_policy_ref),
+      "retry_policy_ref" => serialize_nullable_identifier(binding.retry_policy_ref)
+    })
+  end
+
+  defp serialize_binding_by_kind(%ResourceEffectBinding{} = binding) do
+    common_binding_payload(binding)
+    |> Map.merge(%{
+      "effect_kind" => serialize_identifier(binding.effect_kind),
+      "operation_group_ref" => serialize_identifier(binding.operation_group_ref),
+      "confirmation_policy_ref" => serialize_nullable_identifier(binding.confirmation_policy_ref),
+      "retry_policy_ref" => serialize_nullable_identifier(binding.retry_policy_ref)
+    })
+  end
+
+  defp binding_kind(%SourceBinding{}), do: :source
+  defp binding_kind(%SourcePublicationBinding{}), do: :source_publication
+  defp binding_kind(%RuntimeBinding{}), do: :runtime
+  defp binding_kind(%ToolBinding{}), do: :runtime_tool
+  defp binding_kind(%EvidenceBinding{}), do: :evidence
+  defp binding_kind(%ResourceEffectBinding{}), do: :resource_effect
+
+  defp common_binding_payload(binding) do
+    %{
+      "binding_ref" => serialize_identifier(binding.binding_ref),
+      "connector_ref" => serialize_identifier(binding.connector_ref),
+      "manifest_ref" => serialize_identifier(binding.manifest_ref),
+      "operation_refs" => serialize_operation_refs(binding.operation_refs),
+      "credential_binding_ref" => serialize_identifier(binding.credential_binding_ref),
+      "metadata" => serialize_map(Map.get(binding, :metadata, %{}))
+    }
+  end
+
+  defp deserialize_binding(%{"kind" => "source"} = payload) do
+    %SourceBinding{
+      binding_ref: payload["binding_ref"],
+      source_kind: payload["source_kind"],
+      subject_kind: payload["subject_kind"],
+      connector_ref: payload["connector_ref"],
+      manifest_ref: payload["manifest_ref"],
+      operation_refs: deserialize_operation_refs(payload["operation_refs"] || %{}),
+      credential_binding_ref: payload["credential_binding_ref"],
+      adapter_ref: payload["adapter_ref"],
+      connection_ref: payload["connection_ref"],
+      candidate_filter_ref: payload["candidate_filter_ref"],
+      cursor_policy_ref: payload["cursor_policy_ref"],
+      projection_profile_ref: payload["projection_profile_ref"],
+      retry_policy_ref: payload["retry_policy_ref"],
+      metadata: deserialize_map(payload["metadata"] || %{})
+    }
+  end
+
+  defp deserialize_binding(%{"kind" => "source_publication"} = payload) do
+    %SourcePublicationBinding{
+      binding_ref: payload["binding_ref"],
+      source_binding_ref: payload["source_binding_ref"],
+      connector_ref: payload["connector_ref"],
+      manifest_ref: payload["manifest_ref"],
+      operation_refs: deserialize_operation_refs(payload["operation_refs"] || %{}),
+      credential_binding_ref: payload["credential_binding_ref"],
+      template_ref: payload["template_ref"],
+      idempotency_scope:
+        deserialize_atom(payload["idempotency_scope"], [:subject, :execution, :source_event]),
+      publication_profile_ref: payload["publication_profile_ref"],
+      retry_policy_ref: payload["retry_policy_ref"],
+      metadata: deserialize_map(payload["metadata"] || %{})
+    }
+  end
+
+  defp deserialize_binding(%{"kind" => "runtime"} = payload) do
+    %RuntimeBinding{
+      binding_ref: payload["binding_ref"],
+      runtime_family:
+        deserialize_atom(payload["runtime_family"], [
+          :direct,
+          :session,
+          :workflow,
+          :playbook,
+          :scan,
+          :inference
+        ]),
+      connector_ref: payload["connector_ref"],
+      manifest_ref: payload["manifest_ref"],
+      operation_refs: deserialize_operation_refs(payload["operation_refs"] || %{}),
+      credential_binding_ref: payload["credential_binding_ref"],
+      session_policy_ref: payload["session_policy_ref"],
+      tool_catalog_ref: payload["tool_catalog_ref"],
+      retry_policy_ref: payload["retry_policy_ref"],
+      metadata: deserialize_map(payload["metadata"] || %{})
+    }
+  end
+
+  defp deserialize_binding(%{"kind" => "runtime_tool"} = payload) do
+    %ToolBinding{
+      binding_ref: payload["binding_ref"],
+      runtime_binding_ref: payload["runtime_binding_ref"],
+      connector_ref: payload["connector_ref"],
+      manifest_ref: payload["manifest_ref"],
+      operation_refs: deserialize_operation_refs(payload["operation_refs"] || %{}),
+      authorization_class: payload["authorization_class"],
+      credential_binding_ref: payload["credential_binding_ref"],
+      tool_schema_ref: payload["tool_schema_ref"],
+      input_policy_ref: payload["input_policy_ref"],
+      retry_policy_ref: payload["retry_policy_ref"],
+      metadata: deserialize_map(payload["metadata"] || %{})
+    }
+  end
+
+  defp deserialize_binding(%{"kind" => "evidence"} = payload) do
+    %EvidenceBinding{
+      binding_ref: payload["binding_ref"],
+      evidence_kind: payload["evidence_kind"],
+      connector_ref: payload["connector_ref"],
+      manifest_ref: payload["manifest_ref"],
+      operation_refs: deserialize_operation_refs(payload["operation_refs"] || %{}),
+      credential_binding_ref: payload["credential_binding_ref"],
+      collection_policy_ref: payload["collection_policy_ref"],
+      retry_policy_ref: payload["retry_policy_ref"],
+      metadata: deserialize_map(payload["metadata"] || %{})
+    }
+  end
+
+  defp deserialize_binding(%{"kind" => "resource_effect"} = payload) do
+    %ResourceEffectBinding{
+      binding_ref: payload["binding_ref"],
+      effect_kind: payload["effect_kind"],
+      connector_ref: payload["connector_ref"],
+      manifest_ref: payload["manifest_ref"],
+      operation_refs: deserialize_operation_refs(payload["operation_refs"] || %{}),
+      operation_group_ref: payload["operation_group_ref"],
+      credential_binding_ref: payload["credential_binding_ref"],
+      confirmation_policy_ref: payload["confirmation_policy_ref"],
+      retry_policy_ref: payload["retry_policy_ref"],
+      metadata: deserialize_map(payload["metadata"] || %{})
+    }
+  end
+
+  defp serialize_operation_refs(operation_refs) when is_map(operation_refs) do
+    Map.new(operation_refs, fn {role, operation_ref} ->
+      {serialize_identifier(role), serialize_identifier(operation_ref)}
+    end)
+  end
+
+  defp deserialize_operation_refs(operation_refs) when is_map(operation_refs) do
+    Map.new(operation_refs, fn {role, operation_ref} ->
+      {serialize_identifier(role), serialize_identifier(operation_ref)}
+    end)
   end
 
   defp serialize_source_binding(%SourceBindingSpec{} = spec) do
@@ -943,6 +1155,8 @@ defmodule Mezzanine.Pack.Serializer do
         deserialize_manifest_entries(payload, "subject_kind_specs", &deserialize_subject_kind/1),
       source_kind_specs:
         deserialize_manifest_entries(payload, "source_kind_specs", &deserialize_source_kind/1),
+      binding_specs:
+        deserialize_manifest_entries(payload, "binding_specs", &deserialize_binding/1),
       source_binding_specs:
         deserialize_manifest_entries(
           payload,

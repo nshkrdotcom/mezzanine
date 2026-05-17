@@ -6,6 +6,7 @@ defmodule MezzanineConfigRegistry do
   alias Mezzanine.Authoring.Bundle
 
   alias Mezzanine.ConfigRegistry.{
+    BindingRegistry,
     Installation,
     LifecycleHintContract,
     PackRegistration,
@@ -24,6 +25,12 @@ defmodule MezzanineConfigRegistry do
       Mezzanine.ConfigRegistry,
       Mezzanine.ConfigRegistry.PackRegistration,
       Mezzanine.ConfigRegistry.Installation,
+      Mezzanine.ConfigRegistry.BindingRegistry,
+      Mezzanine.ConfigRegistry.BindingSet,
+      Mezzanine.ConfigRegistry.ActiveBindingSet,
+      Mezzanine.ConfigRegistry.CompiledBinding,
+      Mezzanine.ConfigRegistry.BindingManifestDependency,
+      Mezzanine.ConfigRegistry.RunBindingSnapshot,
       Mezzanine.ConfigRegistry.Policy,
       Mezzanine.Authoring.Bundle,
       Mezzanine.Pack.Registry,
@@ -96,6 +103,8 @@ defmodule MezzanineConfigRegistry do
   def activate_installation(%Installation{} = installation, opts \\ []) do
     with :ok <- LifecycleHintContract.validate(installation),
          {:ok, updated_installation} <- Installation.activate_installation(installation),
+         {:ok, _binding_activation} <-
+           BindingRegistry.activate_for_installation(updated_installation, opts),
          :ok <- maybe_write_installation_graph(updated_installation, opts) do
       :ok =
         Registry.reload_installation(
@@ -127,7 +136,11 @@ defmodule MezzanineConfigRegistry do
   @spec reactivate_installation(Installation.t()) :: {:ok, Installation.t()} | {:error, term()}
   def reactivate_installation(%Installation{} = installation) do
     with :ok <- LifecycleHintContract.validate(installation),
-         {:ok, updated_installation} <- Installation.reactivate_installation(installation) do
+         {:ok, updated_installation} <- Installation.reactivate_installation(installation),
+         {:ok, _binding_activation} <-
+           BindingRegistry.activate_for_installation(updated_installation,
+             activation_reason: "installation_reactivation"
+           ) do
       :ok =
         Registry.reload_installation(
           updated_installation.id,
@@ -145,6 +158,11 @@ defmodule MezzanineConfigRegistry do
     with :ok <- LifecycleHintContract.validate(installation, binding_config),
          {:ok, updated_installation} <-
            Installation.update_bindings(installation, %{binding_config: binding_config}),
+         {:ok, _binding_activation} <-
+           BindingRegistry.activate_for_installation(
+             updated_installation,
+             Keyword.put(opts, :activation_reason, "binding_update")
+           ),
          :ok <- maybe_advance_policy_epoch(updated_installation, opts) do
       :ok =
         Registry.reload_installation(
@@ -154,6 +172,29 @@ defmodule MezzanineConfigRegistry do
 
       {:ok, updated_installation}
     end
+  end
+
+  @spec active_binding_set(String.t(), String.t(), String.t()) ::
+          {:ok, Mezzanine.ConfigRegistry.ActiveBindingSet.t()} | {:error, term()}
+  def active_binding_set(tenant_id, environment, pack_slug) do
+    BindingRegistry.active_binding_set(tenant_id, environment, pack_slug)
+  end
+
+  @spec resolve_active_binding(keyword() | map()) :: {:ok, map()} | {:error, term()}
+  def resolve_active_binding(attrs) when is_list(attrs) or is_map(attrs) do
+    BindingRegistry.resolve_active_binding(attrs)
+  end
+
+  @spec capture_run_binding_snapshot(keyword() | map()) ::
+          {:ok, Mezzanine.ConfigRegistry.RunBindingSnapshot.t()} | {:error, term()}
+  def capture_run_binding_snapshot(attrs) when is_list(attrs) or is_map(attrs) do
+    BindingRegistry.capture_run_binding_snapshot(attrs)
+  end
+
+  @spec resolve_run_binding_snapshot(keyword() | map()) ::
+          {:ok, Mezzanine.ConfigRegistry.RunBindingSnapshot.t()} | {:error, term()}
+  def resolve_run_binding_snapshot(attrs) when is_list(attrs) or is_map(attrs) do
+    BindingRegistry.resolve_run_binding_snapshot(attrs)
   end
 
   @spec import_authoring_bundle(map(), keyword()) :: {:ok, map()} | {:error, term()}
