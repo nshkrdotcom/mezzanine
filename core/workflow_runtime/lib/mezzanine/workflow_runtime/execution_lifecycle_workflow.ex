@@ -1086,6 +1086,19 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
         receipt_state: Map.get(attrs, :receipt_state, attrs.terminal_state),
         lower_receipt_ref: attrs.lower_receipt_ref,
         lower_receipt: lower_receipt,
+        terminal_state: Map.get(attrs, :terminal_state),
+        terminal_event_ref: Map.get(attrs, :terminal_event_ref),
+        workflow_id: Map.get(attrs, :workflow_id),
+        workflow_run_id: Map.get(attrs, :workflow_run_id),
+        subject_ref:
+          Map.get(attrs, :subject_ref) || get_in(attrs, [:routing_facts, :subject_ref]),
+        operation_context_ref: operation_context_ref(attrs),
+        operation_plan_ref: operation_plan_ref(attrs),
+        trace_ref: trace_ref(attrs),
+        release_manifest_ref: Map.get(attrs, :release_manifest_ref),
+        lineage_store_opts: lineage_store_opts(attrs),
+        lineage_event_contract: :full_execution,
+        emit_lineage_outbox?: true,
         required_evidence: get_in(attrs, [:routing_facts, :required_evidence]) || [],
         review_required?: get_in(attrs, [:routing_facts, :review_required]),
         actor_ref:
@@ -1462,6 +1475,39 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
       get_in(attrs, [:runtime_modules, key]) ||
       get_in(attrs, [:workflow_runtime_modules, key])
   end
+
+  defp operation_context_ref(attrs) do
+    Map.get(attrs, :operation_context_ref) ||
+      "operation-context://#{Map.get(attrs, :workflow_id) || Map.get(attrs, :lower_receipt_ref)}"
+  end
+
+  defp operation_plan_ref(attrs) do
+    Map.get(attrs, :operation_plan_ref) ||
+      "operation-plan://#{Map.get(attrs, :workflow_id) || Map.get(attrs, :lower_receipt_ref)}"
+  end
+
+  defp trace_ref(attrs) do
+    case Map.get(attrs, :trace_ref) do
+      nil -> "trace://#{Map.fetch!(attrs, :trace_id)}"
+      trace_ref -> trace_ref
+    end
+  end
+
+  defp lineage_store_opts(attrs) do
+    attrs
+    |> Map.get(:lineage_store_opts, [])
+    |> normalize_store_opts()
+    |> maybe_put_store_opt(:profile, Map.get(attrs, :persistence_profile))
+    |> maybe_put_store_opt(:profile, Map.get(attrs, :lineage_store_profile))
+    |> maybe_put_store_opt(:migration_proof, Map.get(attrs, :migration_proof))
+  end
+
+  defp normalize_store_opts(opts) when is_list(opts), do: opts
+  defp normalize_store_opts(%{} = opts), do: Map.to_list(opts)
+  defp normalize_store_opts(_opts), do: []
+
+  defp maybe_put_store_opt(opts, _key, nil), do: opts
+  defp maybe_put_store_opt(opts, key, value), do: Keyword.put_new(opts, key, value)
 
   defp build_authorized_invocation(attrs) do
     module = authorized_invocation_module()

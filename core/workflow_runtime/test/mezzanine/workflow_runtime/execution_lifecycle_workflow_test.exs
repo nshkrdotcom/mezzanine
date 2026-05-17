@@ -103,7 +103,12 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
          retry_receipts: attrs.lower_receipt.retry_receipts,
          incident_bundles: attrs.lower_receipt.incident_bundles,
          acceptance: attrs.lower_receipt.acceptance,
-         github_pr_evidence: attrs.lower_receipt.github_pr_evidence
+         github_pr_evidence: attrs.lower_receipt.github_pr_evidence,
+         lineage_event_contract: attrs.lineage_event_contract,
+         emit_lineage_outbox?: attrs.emit_lineage_outbox?,
+         operation_context_ref: attrs.operation_context_ref,
+         operation_plan_ref: attrs.operation_plan_ref,
+         trace_ref: attrs.trace_ref
        }}
     end
   end
@@ -357,6 +362,11 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     assert persisted.lower_receipt.github_pr_evidence.provider == "github"
     assert persisted.projection_result.projection_name == "operator_subject_runtime"
     assert persisted.projection_result.lower_receipt_ref == "lower-receipt-095"
+    assert persisted.projection_result.lineage_event_contract == :full_execution
+    assert persisted.projection_result.emit_lineage_outbox?
+    assert persisted.projection_result.operation_context_ref == "operation-context://workflow-093"
+    assert persisted.projection_result.operation_plan_ref == "operation-plan://workflow-093"
+    assert persisted.projection_result.trace_ref == "trace://trace-093"
 
     assert persisted.projection_result.governed_lower_envelope.lower_runtime_kind ==
              "codex_session"

@@ -461,6 +461,89 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
              Enum.to_list(1..length(reset_record.events))
   end
 
+  test "legacy terminal receipt reduction emits restart-durable generic lineage outbox" do
+    %{subject: subject, execution: execution} = receipt_fixture("legacy-lineage")
+
+    lower_receipt =
+      success_attrs(subject, execution, review_required?: false)
+      |> Map.fetch!(:lower_receipt)
+      |> Map.put("provider_object_refs", ["linear://issue/LIN-095"])
+
+    store_opts = [profile: :integration_postgres, migration_proof: :present]
+
+    attrs =
+      subject
+      |> success_attrs(execution, review_required?: false)
+      |> Map.merge(%{
+        lower_receipt: lower_receipt,
+        emit_lineage_outbox?: true,
+        lineage_event_contract: :full_execution,
+        lineage_store_opts: store_opts,
+        terminal_state: "completed",
+        terminal_event_ref: "workflow-event-terminal-095",
+        workflow_id: "workflow-legacy-lineage",
+        workflow_run_id: "workflow-run-legacy-lineage",
+        operation_context_ref: "operation-context://workflow-legacy-lineage",
+        operation_plan_ref: "operation-plan://workflow-legacy-lineage",
+        trace_ref: "trace://workflow-legacy-lineage"
+      })
+
+    assert {:ok, reduced} = ReceiptReducer.reduce(attrs)
+
+    assert reduced.lineage_event_contract == :full_execution
+    assert reduced.lineage_event_outbox.record_id == reduced.lineage_projection_ref
+    assert reduced.lineage_event_outbox.event_count == length(reduced.lineage_events)
+
+    assert {:ok, outbox_record} =
+             Store.fetch_record(reduced.lineage_projection_ref, store_opts)
+
+    event_kinds = Enum.map(outbox_record.events, & &1.event_kind)
+
+    required_kinds = [
+      :command_recorded,
+      :workflow_started,
+      :operation_requested,
+      :jido_manifest_resolved,
+      :credential_lease_materialized,
+      :effect_requested,
+      :effect_receipted,
+      :receipt_reduced,
+      :evidence_attached,
+      :review_skipped,
+      :projection_updated,
+      :replay_exported
+    ]
+
+    assert MapSet.subset?(MapSet.new(required_kinds), MapSet.new(event_kinds))
+    assert Enum.count(event_kinds, &(&1 == :operation_requested)) == 3
+    assert Enum.count(event_kinds, &(&1 == :jido_manifest_resolved)) == 3
+    assert Enum.count(event_kinds, &(&1 == :effect_requested)) == 3
+
+    manifest = Enum.find(outbox_record.events, &(&1.event_kind == :jido_manifest_resolved))
+
+    credential =
+      Enum.find(outbox_record.events, &(&1.event_kind == :credential_lease_materialized))
+
+    effect = Enum.find(outbox_record.events, &(&1.event_kind == :effect_requested))
+    evidence = Enum.find(outbox_record.events, &(&1.event_kind == :evidence_attached))
+
+    assert manifest.metadata_refs.connector_manifest_ref ==
+             "manifest://jido/connectors/codex_cli@local"
+
+    assert credential.metadata_refs.credential_lease_ref == "credential://lease/redacted"
+    assert effect.metadata_refs.effect_request_ref == "lower-request://codex/session-turn"
+
+    assert evidence.metadata_refs.evidence_ref ==
+             "evidence://github-pr/nshkrdotcom/sample-app/42"
+
+    assert Enum.map(outbox_record.events, & &1.sequence) ==
+             Enum.to_list(1..length(outbox_record.events))
+
+    refute String.contains?(inspect(outbox_record.events), "api_key")
+    refute String.contains?(inspect(outbox_record.events), "raw_provider_payload")
+    refute String.contains?(inspect(outbox_record.events), "LIN-095")
+  end
+
   test "full execution lineage contract emits review skipped when no review opens" do
     receipts = [operation_receipt(hd(@operation_roles))]
 

@@ -19,6 +19,7 @@ defmodule Mezzanine.Projections.ReceiptReducer do
   alias Mezzanine.Substrate.OperationDisposition
   alias Mezzanine.Substrate.OperationGroupReceipt
   alias Mezzanine.Substrate.OperationReceipt
+  alias Mezzanine.Substrate.ResultEnvelope
 
   @terminal_success_states ["completed", "success", "succeeded"]
   @terminal_cancel_states ["cancelled", "canceled"]
@@ -90,16 +91,20 @@ defmodule Mezzanine.Projections.ReceiptReducer do
              attrs,
              receipt_state
            ),
-         {:ok, audit} <- append_receipt_audit(subject, execution, attrs, receipt_state) do
+         {:ok, audit} <- append_receipt_audit(subject, execution, attrs, receipt_state),
+         {:ok, lineage} <- maybe_emit_lineage_outbox(attrs, receipt_state) do
       {:ok,
-       %{
-         execution: execution,
-         subject: subject,
-         decisions: decisions,
-         evidence: evidence,
-         projection: projection,
-         audit: audit
-       }}
+       Map.merge(
+         %{
+           execution: execution,
+           subject: subject,
+           decisions: decisions,
+           evidence: evidence,
+           projection: projection,
+           audit: audit
+         },
+         lineage
+       )}
     end
   end
 
@@ -844,6 +849,307 @@ defmodule Mezzanine.Projections.ReceiptReducer do
       occurred_at: DateTime.utc_now()
     })
   end
+
+  defp maybe_emit_lineage_outbox(attrs, receipt_state) do
+    if truthy?(value(attrs, :emit_lineage_outbox?)) do
+      with {:ok, receipts} <- operation_receipts_from_terminal_attrs(attrs, receipt_state),
+           {:ok, projection} <-
+             SubjectRuntimeProjection.from_operation_receipts(receipts,
+               operation_context_ref: operation_context_ref(attrs),
+               subject_ref: subject_ref(attrs)
+             ),
+           events <-
+             LineageEventOutbox.events_for_projection(projection, receipts,
+               lineage_event_contract: lineage_event_contract(attrs),
+               review_state: review_state(attrs)
+             ),
+           {:ok, outbox} <-
+             LineageEventOutbox.persist(projection, events, lineage_store_opts(attrs)) do
+        {:ok,
+         %{
+           lineage_event_contract: lineage_event_contract(attrs),
+           lineage_projection_ref: projection.projection_ref,
+           lineage_events: events,
+           lineage_event_outbox: outbox
+         }}
+      end
+    else
+      {:ok, %{}}
+    end
+  end
+
+  defp operation_receipts_from_terminal_attrs(attrs, receipt_state) do
+    attrs
+    |> terminal_operation_specs()
+    |> Enum.reduce_while({:ok, []}, fn spec, {:ok, collected} ->
+      case operation_receipt_from_terminal_attrs(attrs, receipt_state, spec) do
+        {:ok, receipt} -> {:cont, {:ok, [receipt | collected]}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+    |> case do
+      {:ok, receipts} -> {:ok, Enum.reverse(receipts)}
+      error -> error
+    end
+  end
+
+  defp terminal_operation_specs(attrs) do
+    lower_receipt = value(attrs, :lower_receipt) || %{}
+
+    [
+      %{role: :runtime, class: :runtime_operation, suffix: "runtime"}
+    ]
+    |> maybe_append(
+      evidence_ref(attrs, lower_receipt) != nil,
+      %{role: :evidence, class: :evidence_operation, suffix: "evidence"}
+    )
+    |> maybe_append(
+      source_publication_ref(lower_receipt) != nil,
+      %{role: :publication, class: :source_publication, suffix: "publication"}
+    )
+  end
+
+  defp operation_receipt_from_terminal_attrs(attrs, receipt_state, spec) do
+    lower_receipt = value(attrs, :lower_receipt) || %{}
+
+    with {:ok, result} <- terminal_result_envelope(attrs, receipt_state, spec) do
+      OperationReceipt.new(%{
+        receipt_ref: receipt_ref(attrs, spec),
+        operation_context_ref: operation_context_ref(attrs),
+        operation_plan_ref: operation_plan_ref(attrs, spec),
+        trace_ref: trace_ref(attrs),
+        status: operation_status(receipt_state),
+        started_at: terminal_started_at(attrs),
+        completed_at: terminal_completed_at(attrs),
+        result: result,
+        lineage_event_refs: lineage_event_refs(attrs, lower_receipt),
+        metadata: operation_metadata(attrs, lower_receipt, spec)
+      })
+    end
+  end
+
+  defp terminal_result_envelope(attrs, receipt_state, spec) do
+    ResultEnvelope.new(%{
+      result_ref: result_ref(attrs, spec),
+      storage_mode: :inline,
+      schema_ref: "schema://mezzanine/terminal-lower-receipt-result/v1",
+      redaction_ref: "redaction://mezzanine/terminal-lower-receipt-result/ref-only",
+      data:
+        %{
+          lower_receipt_ref: value(attrs, :lower_receipt_ref),
+          receipt_state: receipt_state,
+          terminal_state: value(attrs, :terminal_state),
+          operation_role: spec.role,
+          operation_class: spec.class
+        }
+        |> compact_projection(),
+      metadata: %{source: :terminal_receipt_reducer}
+    })
+  end
+
+  defp operation_metadata(attrs, lower_receipt, spec) do
+    %{
+      operation_role: spec.role,
+      operation_class: spec.class,
+      subject_ref: subject_ref(attrs),
+      connector_manifest_ref: connector_manifest_ref(attrs, lower_receipt),
+      credential_lease_ref: credential_lease_ref(attrs, lower_receipt),
+      effect_request_ref: effect_request_ref(attrs, lower_receipt),
+      evidence_ref: evidence_ref(attrs, lower_receipt),
+      provider_object_refs: provider_object_refs(attrs, lower_receipt),
+      provider_facts: provider_facts(attrs, lower_receipt),
+      extensions: terminal_extensions(attrs, lower_receipt)
+    }
+    |> Enum.reject(fn {_key, value} -> value in [nil, "", [], %{}] end)
+    |> Map.new()
+  end
+
+  defp terminal_extensions(attrs, lower_receipt) do
+    %{
+      workflow_id: value(attrs, :workflow_id),
+      workflow_run_id: value(attrs, :workflow_run_id),
+      terminal_event_ref: value(attrs, :terminal_event_ref),
+      lower_receipt_ref: value(attrs, :lower_receipt_ref),
+      lower_run_ref: map_value(lower_receipt, :run_id) || value(attrs, :lower_run_ref),
+      lower_attempt_ref:
+        map_value(lower_receipt, :attempt_id) || value(attrs, :lower_attempt_ref),
+      lower_event_ref: map_value(lower_receipt, :lower_event_ref),
+      release_manifest_ref: value(attrs, :release_manifest_ref),
+      authority_ref: authority_ref(lower_receipt)
+    }
+    |> Enum.reject(fn {_key, value} -> value in [nil, "", [], %{}] end)
+    |> Map.new()
+  end
+
+  defp operation_context_ref(attrs) do
+    value(attrs, :operation_context_ref) ||
+      "operation-context://#{required!(attrs, :execution_id)}"
+  end
+
+  defp subject_ref(attrs) do
+    value(attrs, :subject_ref) || "subject://#{required!(attrs, :subject_id)}"
+  end
+
+  defp operation_plan_ref(attrs, spec) do
+    value(attrs, :operation_plan_ref) ||
+      "operation-plan://#{required!(attrs, :execution_id)}/#{spec.suffix}"
+  end
+
+  defp trace_ref(attrs) do
+    case value(attrs, :trace_ref) do
+      nil -> "trace://#{required!(attrs, :trace_id)}"
+      trace_ref -> trace_ref
+    end
+  end
+
+  defp receipt_ref(attrs, spec) do
+    "operation-receipt://#{required!(attrs, :receipt_id)}/#{spec.suffix}"
+  end
+
+  defp result_ref(attrs, spec) do
+    value(attrs, :result_ref) ||
+      "operation-result://#{required!(attrs, :receipt_id)}/#{spec.suffix}"
+  end
+
+  defp operation_status(receipt_state) when receipt_state in @terminal_success_states,
+    do: :succeeded
+
+  defp operation_status(receipt_state) when receipt_state in @terminal_cancel_states,
+    do: :cancelled
+
+  defp operation_status(receipt_state) when receipt_state in @terminal_blocked_states,
+    do: :blocked
+
+  defp operation_status(_receipt_state), do: :terminal_failure
+
+  defp terminal_started_at(attrs) do
+    timestamp_value(attrs, :started_at) ||
+      timestamp_value(attrs, :created_at) ||
+      terminal_completed_at(attrs)
+  end
+
+  defp terminal_completed_at(attrs) do
+    timestamp_value(attrs, :completed_at) ||
+      timestamp_value(attrs, :occurred_at) ||
+      DateTime.utc_now()
+  end
+
+  defp timestamp_value(attrs, key) do
+    case value(attrs, key) do
+      %DateTime{} = timestamp -> timestamp
+      _other -> nil
+    end
+  end
+
+  defp lineage_event_contract(attrs) do
+    value(attrs, :lineage_event_contract) || :full_execution
+  end
+
+  defp review_state(attrs) do
+    if truthy?(value(attrs, :review_required?)), do: :opened, else: :skipped
+  end
+
+  defp lineage_store_opts(attrs) do
+    attrs
+    |> value(:lineage_store_opts)
+    |> normalize_store_opts()
+    |> maybe_put_store_opt(:profile, value(attrs, :persistence_profile))
+    |> maybe_put_store_opt(:profile, value(attrs, :lineage_store_profile))
+    |> maybe_put_store_opt(:migration_proof, value(attrs, :migration_proof))
+  end
+
+  defp normalize_store_opts(nil), do: []
+  defp normalize_store_opts(opts) when is_list(opts), do: opts
+  defp normalize_store_opts(%{} = opts), do: Map.to_list(opts)
+
+  defp maybe_put_store_opt(opts, _key, nil), do: opts
+  defp maybe_put_store_opt(opts, key, value), do: Keyword.put_new(opts, key, value)
+
+  defp connector_manifest_ref(attrs, lower_receipt) do
+    value(attrs, :connector_manifest_ref) ||
+      lower_receipt
+      |> map_value(:connector_manifests)
+      |> List.wrap()
+      |> Enum.find_value(&manifest_ref_value/1)
+  end
+
+  defp manifest_ref_value(%{} = manifest),
+    do: string_or_nil(map_value(manifest, :connector_manifest_ref))
+
+  defp manifest_ref_value(value), do: string_or_nil(value)
+
+  defp credential_lease_ref(attrs, lower_receipt) do
+    value(attrs, :credential_lease_ref) ||
+      lower_receipt
+      |> map_value(:credential)
+      |> map_value(:credential_ref)
+      |> string_or_nil()
+  end
+
+  defp effect_request_ref(attrs, lower_receipt) do
+    value(attrs, :effect_request_ref) ||
+      lower_receipt
+      |> map_value(:governed_lower_envelope)
+      |> map_value(:lower_request_ref)
+      |> string_or_nil()
+  end
+
+  defp evidence_ref(attrs, lower_receipt) do
+    value(attrs, :evidence_ref) ||
+      lower_receipt
+      |> map_value(:github_pr_evidence)
+      |> map_value(:evidence_ref)
+      |> string_or_nil()
+  end
+
+  defp source_publication_ref(lower_receipt) do
+    lower_receipt
+    |> map_value(:source_publication)
+    |> map_value(:source_publication_receipt_ref)
+    |> string_or_nil()
+  end
+
+  defp authority_ref(lower_receipt) do
+    lower_receipt
+    |> map_value(:authority_decision)
+    |> map_value(:authority_ref)
+    |> string_or_nil()
+  end
+
+  defp provider_object_refs(_attrs, lower_receipt) do
+    case map_value(lower_receipt, :provider_object_refs) do
+      refs when is_list(refs) ->
+        %{"terminal_provider_objects" => string_list(refs)}
+
+      %{} = refs ->
+        refs
+
+      _other ->
+        %{}
+    end
+  end
+
+  defp provider_facts(_attrs, lower_receipt) do
+    lower_receipt
+    |> map_value(:provider_object_refs)
+    |> string_list()
+    |> Enum.map(fn ref ->
+      %{fact_ref: ref, fact_kind: :external_object_ref}
+    end)
+  end
+
+  defp lineage_event_refs(attrs, lower_receipt) do
+    [
+      value(attrs, :terminal_event_ref),
+      map_value(lower_receipt, :lower_event_ref)
+    ]
+    |> Kernel.++(string_list(value(attrs, :lineage_event_refs)))
+    |> string_list()
+    |> Enum.uniq()
+  end
+
+  defp maybe_append(list, true, item), do: list ++ [item]
+  defp maybe_append(list, false, _item), do: list
 
   defp evidence_specs(attrs) do
     refs_by_kind = refs_by_kind(attrs)
