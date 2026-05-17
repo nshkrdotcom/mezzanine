@@ -157,6 +157,14 @@ defmodule Mezzanine.Projections.SubjectRuntimeProjection do
               ]
 
   @type t :: %__MODULE__{}
+  @operation_role_order %{
+    source: 10,
+    publication: 20,
+    runtime: 30,
+    evidence: 40,
+    tool: 50,
+    resource_effect: 60
+  }
 
   @spec from_operation_receipts([OperationReceipt.t()], keyword()) ::
           {:ok, t()} | {:error, term()}
@@ -164,7 +172,10 @@ defmodule Mezzanine.Projections.SubjectRuntimeProjection do
 
   def from_operation_receipts([%OperationReceipt{} | _rest] = receipts, opts)
       when is_list(opts) do
-    summaries = Enum.map(receipts, &OperationReceiptSummary.from_receipt/1)
+    summaries =
+      receipts
+      |> Enum.map(&OperationReceiptSummary.from_receipt/1)
+      |> Enum.sort_by(&operation_summary_sort_key/1)
 
     operation_context_ref =
       Keyword.get(opts, :operation_context_ref) || operation_context_ref!(summaries)
@@ -273,6 +284,16 @@ defmodule Mezzanine.Projections.SubjectRuntimeProjection do
     Enum.filter(summaries, &(role_atom(&1.operation_role) == role))
   end
 
+  defp operation_summary_sort_key(summary) do
+    role = role_atom(summary.operation_role)
+
+    {
+      Map.get(@operation_role_order, role, 999),
+      stable_sort_value(summary.operation_class),
+      stable_sort_value(summary.receipt_ref)
+    }
+  end
+
   defp role_atom(value) when is_atom(value), do: value
   defp role_atom("source"), do: :source
   defp role_atom("publication"), do: :publication
@@ -289,6 +310,7 @@ defmodule Mezzanine.Projections.SubjectRuntimeProjection do
       |> metadata_value(:provider_facts)
       |> List.wrap()
     end)
+    |> Enum.sort_by(&inspect/1)
   end
 
   defp provider_object_refs(summaries) do
@@ -302,7 +324,9 @@ defmodule Mezzanine.Projections.SubjectRuntimeProjection do
   end
 
   defp extensions(receipts) do
-    Enum.reduce(receipts, %{}, fn receipt, acc ->
+    receipts
+    |> Enum.sort_by(& &1.receipt_ref)
+    |> Enum.reduce(%{}, fn receipt, acc ->
       Map.merge(acc, metadata_value(receipt.metadata || %{}, :extensions) || %{})
     end)
   end
@@ -340,4 +364,9 @@ defmodule Mezzanine.Projections.SubjectRuntimeProjection do
 
   defp present?(value) when is_binary(value), do: String.trim(value) != ""
   defp present?(value), do: not is_nil(value)
+
+  defp stable_sort_value(nil), do: ""
+  defp stable_sort_value(value) when is_atom(value), do: Atom.to_string(value)
+  defp stable_sort_value(value) when is_binary(value), do: value
+  defp stable_sort_value(value), do: inspect(value)
 end

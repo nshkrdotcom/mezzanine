@@ -416,6 +416,22 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
     refute :review_opened in Enum.map(events, & &1.event_kind)
   end
 
+  test "parallel source runtime and evidence receipt permutations reduce to the same projection" do
+    source = operation_receipt({:source, :source_intake})
+    runtime = operation_receipt({:runtime, :runtime_operation})
+    evidence = operation_receipt({:evidence, :evidence_operation})
+
+    assert {:ok, forward} =
+             SubjectRuntimeProjection.from_operation_receipts([source, runtime, evidence])
+
+    assert {:ok, alternate} =
+             SubjectRuntimeProjection.from_operation_receipts([evidence, source, runtime])
+
+    assert forward == alternate
+    assert Enum.map(forward.operations, & &1.operation_role) == [:source, :runtime, :evidence]
+    assert Enum.map(forward.evidence, & &1.operation_role) == [:evidence]
+  end
+
   test "projects result envelope storage access without materializing stored bodies" do
     {:ok, streamed_payload} =
       PayloadEnvelope.new(%{
