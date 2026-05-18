@@ -314,3 +314,37 @@ Expected local contract: `127.0.0.1:7233`, UI `http://127.0.0.1:8233`, namespace
 ## Persistence Documentation
 
 See `docs/persistence.md` for tiers, defaults, adapters, unsupported selections, config examples, restart claims, durability claims, debug sidecar behavior, redaction guarantees, migration or preflight behavior, and no-bypass scope when applicable.
+
+## gn-ten Implementation Guides
+
+Mezzanine is the generalized operational engine layer. It owns lifecycle,
+binding registry, pack compilation, workflow runtime, source admission,
+workspace, evidence, projection, audit, and operator/review reducers for
+product-neutral work.
+
+Read these repo-specific guides before changing public contracts:
+
+- [Generalized Stack Boundary](https://github.com/nshkrdotcom/mezzanine/blob/main/guides/generalized_stack.md)
+- [QC And Operations](https://github.com/nshkrdotcom/mezzanine/blob/main/guides/qc_and_operations.md)
+
+Operational rules:
+
+- Public interfaces are owned by `core/substrate_model`, `core/pack_model`,
+  `core/pack_compiler`, `core/config_registry`, lifecycle/runtime/source/
+  workspace/evidence/projection/operator/review engines, and the explicit
+  AppKit/Citadel/Jido bridge packages.
+- Mezzanine may call Citadel and Jido Integration through bridge contracts. It
+  must not own connector credentials, provider adapters, product copy, or lane
+  execution internals.
+- Provider words may appear in source payloads, binding data, receipts, traces,
+  and adapter-facing facts. Generic engine APIs must use binding refs,
+  operation classes, manifest refs, credential lease refs, and product-neutral
+  subject kinds.
+- GitHub or Linear live-provider checks belong to product or lower-adapter
+  commands. When a Mezzanine path is exercised through such a command, prefix
+  it with `~/scripts/with_bash_secrets`.
+- Local development uses `mix deps.get`, `mix ci`, package-local tests, and the
+  repo-owned `just dev-up` Temporal workflow when Temporal is required.
+- Evidence is emitted through lifecycle/workflow/runtime tests, ConfigRegistry
+  receipts, StackLab proofs, AITrace refs, projection receipts, and product
+  acceptance runs that exercise Mezzanine through AppKit.
