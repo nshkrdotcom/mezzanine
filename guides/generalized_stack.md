@@ -52,6 +52,30 @@ binding config, receipts, or traces. Generic Mezzanine functions must not branch
 on closed provider-family lists. Dispatch should resolve from pack manifests,
 binding sets, authority decisions, credential leases, and connector manifests.
 
+## Extravaganza Cutover Proof
+
+Extravaganza is the current reference product for the Mezzanine generic route.
+The product-facing names stayed stable, but the lower execution path now passes
+through reusable Mezzanine engines and explicit provider-adapter zones.
+
+The live proof covered:
+
+- Linear source candidate discovery, current-state readback, source publication
+  create/update fallback/same-state update, and source GraphQL tool execution;
+- Codex coding-runtime turn execution;
+- GitHub proposed-change evidence collection;
+- GitHub proposed-change cleanup, including safe no-match and disposable
+  destructive cleanup fixtures;
+- aggregate product smoke across all live lanes.
+
+The adapter modules may call provider-specific connector behavior. Generic
+workflow, lifecycle, source, evidence, projection, and scheduler code must route
+through product role refs, operation descriptors, binding refs, authority refs,
+credential lease refs, lower request refs, and receipts. The remaining
+`execute_linear_graphql_tool` implementation is deliberately classified as a
+Linear adapter boundary inside `bridges/integration_bridge`; it is not a
+generic public dispatch API.
+
 ## Migration And Deletion Ownership
 
 Mezzanine cleanup work removes old direct provider dispatch, bridge-root

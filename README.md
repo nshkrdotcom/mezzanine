@@ -95,14 +95,21 @@ The current runtime path is assembled from these neutral surfaces:
   continuation after hook failures.
 
 Recent buildout has made the coding-agent loop observable from above without
-letting products bypass the reusable engines. Mezzanine now projects Codex
-session start and stop receipts, app-server protocol evidence, first-prompt
-evidence, continuation-turn evidence, event-stream evidence, runtime stall
-decisions, token accounting totals, and terminal workspace cleanup into the
-product read models. It also carries Linear candidate team filters, current
-source telemetry, dynamic GraphQL tool execution, state-publication variants,
-publication dry-run denial, GitHub PR evidence runtime, source blocker dispatch
-denial, and source payload readback.
+letting products bypass the reusable engines. Mezzanine now projects coding
+runtime session start and stop receipts, app-server protocol evidence,
+first-prompt evidence, continuation-turn evidence, event-stream evidence,
+runtime stall decisions, token accounting totals, and terminal workspace
+cleanup into the product read models. It also carries issue-tracker candidate
+team filters, current source telemetry, dynamic source-tool execution,
+state-publication variants, publication dry-run denial, proposed-change
+evidence runtime, source blocker dispatch denial, and source payload readback.
+
+The Extravaganza cutover proof exercised these paths through binding-selected
+provider adapters for Linear source/current-state/publication/GraphQL, Codex
+runtime turns, and GitHub evidence/cleanup. Those provider terms are lower
+adapter and receipt facts. The generic Mezzanine path routes by pack, binding,
+authority, credential lease, manifest, and receipt refs rather than by
+provider-named product calls.
 
 That is the core accomplishment of the current repo: Mezzanine has enough
 neutral engines for a product to submit governed coding work, dispatch it
