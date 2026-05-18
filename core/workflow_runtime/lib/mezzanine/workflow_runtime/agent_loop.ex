@@ -35,6 +35,40 @@ defmodule Mezzanine.WorkflowRuntime.AgentLoop do
     :commit_private_memory,
     :advance_turn
   ]
+  @runtime_dispatcher_metadata [
+    :runtime_role_ref,
+    "runtime_role_ref",
+    :operation_role_ref,
+    "operation_role_ref"
+  ]
+  @bridge_intake_metadata [
+    :initial_input_body,
+    "initial_input_body",
+    :initial_input_ref,
+    "initial_input_ref",
+    :initial_input_hash,
+    "initial_input_hash",
+    :initial_input_source_ref,
+    "initial_input_source_ref",
+    :initial_input_rendered?,
+    "initial_input_rendered?",
+    :initial_input_body_redacted?,
+    "initial_input_body_redacted?",
+    :continuation_policy,
+    "continuation_policy",
+    :continuation_input_body,
+    "continuation_input_body",
+    :continuation_input_ref,
+    "continuation_input_ref",
+    :continuation_input_hash,
+    "continuation_input_hash",
+    :continuation_input_source_ref,
+    "continuation_input_source_ref",
+    :continuation_input_rendered?,
+    "continuation_input_rendered?",
+    :continuation_input_body_redacted?,
+    "continuation_input_body_redacted?"
+  ]
 
   @doc "Static M2 contract used by registry, review, and harness tests."
   @spec contract() :: map()
@@ -82,6 +116,15 @@ defmodule Mezzanine.WorkflowRuntime.AgentLoop do
          {:ok, semanticized} <- semanticize_outcome_activity(observed),
          {:ok, memory_checked} <- commit_private_memory_activity(semanticized),
          do: advance_turn_activity(memory_checked)
+  end
+
+  @doc "RuntimeDispatcher adapter entry point for the deterministic AgentLoop."
+  @spec run(term(), keyword()) :: {:ok, AgentLoopProjection.t()} | {:error, term()}
+  def run(input, opts) when is_list(opts) do
+    input
+    |> normalize()
+    |> Map.drop(@runtime_dispatcher_metadata)
+    |> run()
   end
 
   @doc "Initial replay-safe signal state for an AgentLoop run."
@@ -159,7 +202,16 @@ defmodule Mezzanine.WorkflowRuntime.AgentLoop do
   @spec wake_and_pin_activity(term()) :: {:ok, map()} | {:error, term()}
   def wake_and_pin_activity(input) do
     attrs = normalize(input)
-    spec_attrs = Map.drop(attrs, [:fixture_script, :continue_as_new_turn_threshold])
+
+    spec_attrs =
+      Map.drop(
+        attrs,
+        [
+          :fixture_script,
+          :continue_as_new_turn_threshold
+          | @runtime_dispatcher_metadata ++ @bridge_intake_metadata
+        ]
+      )
 
     with {:ok, spec} <- AgentRunSpec.new(spec_attrs) do
       workflow_ref = "workflow://agent-loop/#{ref_suffix(spec.run_ref)}"

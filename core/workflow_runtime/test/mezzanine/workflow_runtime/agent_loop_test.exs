@@ -56,6 +56,22 @@ defmodule Mezzanine.WorkflowRuntime.AgentLoopTest do
     refute String.contains?(inspect(AgentLoopProjection.dump(projection)), "/home/")
   end
 
+  test "runtime dispatcher adapter entry point ignores dispatcher metadata" do
+    attrs =
+      agent_run_spec_attrs()
+      |> Map.put(:runtime_role_ref, :agent_loop_runtime)
+      |> Map.put(:operation_role_ref, :start_run)
+      |> Map.put(:initial_input_ref, "payload://agent-loop/initial")
+      |> Map.put(:initial_input_body, "redacted initial input")
+      |> Map.put(:continuation_policy, %{max_turns: 2})
+
+    assert {:ok, %AgentLoopProjection{} = projection} =
+             AgentLoop.run(attrs, allowed_operations: ["agent.run.start"])
+
+    assert projection.terminal_state == "completed"
+    assert Enum.any?(projection.runtime_events, &(&1.event_kind == "run.terminal"))
+  end
+
   test "Temporal workflow calls explicit activity contracts" do
     assert {:ok, %AgentLoopProjection{} = projection} =
              run_workflow(Mezzanine.Workflows.AgentLoop, agent_run_spec_attrs(),
