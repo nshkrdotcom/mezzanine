@@ -7,6 +7,7 @@ defmodule Mezzanine.IntegrationBridge.SourceDispatcher do
   """
 
   alias Mezzanine.IntegrationBridge.AuthorizedInvocation
+  alias Mezzanine.IntegrationBridge.ProviderAdapters
 
   @type source_role_ref :: atom() | String.t()
 
@@ -152,11 +153,31 @@ defmodule Mezzanine.IntegrationBridge.SourceDispatcher do
     end
   end
 
-  defp source_adapter(_source_binding, opts) do
+  defp source_adapter(source_binding, opts) do
     case Keyword.get(opts, :source_adapter) do
-      nil -> {:ok, Mezzanine.IntegrationBridge.ProviderAdapters.Linear.SourceDispatcher}
-      adapter when is_atom(adapter) -> {:ok, adapter}
-      adapter -> {:error, {:invalid_source_adapter, adapter}}
+      adapter when is_atom(adapter) and not is_nil(adapter) ->
+        {:ok, adapter}
+
+      nil ->
+        resolve_source_adapter(source_binding)
+
+      adapter ->
+        {:error, {:invalid_source_adapter, adapter}}
+    end
+  end
+
+  defp resolve_source_adapter(source_binding) do
+    binding = normalize_map(source_binding)
+
+    cond do
+      adapter = value(binding, :adapter_module) ->
+        {:ok, adapter}
+
+      adapter_ref = value(binding, :adapter_ref) || value(binding, :source_adapter_ref) ->
+        ProviderAdapters.resolve(adapter_ref, :source)
+
+      true ->
+        {:error, :source_adapter_not_configured}
     end
   end
 
@@ -170,4 +191,9 @@ defmodule Mezzanine.IntegrationBridge.SourceDispatcher do
   defp present?(value), do: not is_nil(value)
 
   defp value(map, key), do: Map.get(map, key) || Map.get(map, Atom.to_string(key))
+
+  defp normalize_map(%_{} = struct), do: Map.from_struct(struct)
+  defp normalize_map(%{} = map), do: Map.new(map)
+  defp normalize_map(list) when is_list(list), do: Map.new(list)
+  defp normalize_map(_other), do: %{}
 end

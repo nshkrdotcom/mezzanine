@@ -675,22 +675,75 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert Enum.map(result.operation_receipts, & &1.capability_id) == ["linear.issues.list"]
   end
 
+  test "source dispatch fails closed without adapter ref instead of defaulting to Linear" do
+    invocation = authorized_invocation_allowing(["linear.issues.list"])
+
+    source_binding =
+      source_binding()
+      |> Map.delete(:adapter_ref)
+
+    invoke_fun = fn _capability, _input, _opts ->
+      send(self(), :unexpected_source_dispatch)
+      {:ok, %{}}
+    end
+
+    assert {:error, :source_adapter_not_configured} =
+             IntegrationBridge.fetch_source_candidates(
+               invocation,
+               :issue_tracker,
+               source_binding,
+               invoke_fun: invoke_fun
+             )
+
+    refute_received :unexpected_source_dispatch
+  end
+
+  test "source dispatch fails closed for unknown adapter refs" do
+    invocation = authorized_invocation_allowing(["linear.issues.list"])
+
+    source_binding =
+      source_binding()
+      |> Map.put(:adapter_ref, "unknown-source-adapter")
+
+    invoke_fun = fn _capability, _input, _opts ->
+      send(self(), :unexpected_source_dispatch)
+      {:ok, %{}}
+    end
+
+    assert {:error, {:unsupported_provider_adapter, :source, "unknown-source-adapter"}} =
+             IntegrationBridge.fetch_source_candidates(
+               invocation,
+               :issue_tracker,
+               source_binding,
+               invoke_fun: invoke_fun
+             )
+
+    refute_received :unexpected_source_dispatch
+  end
+
   test "Linear API key credential ingress prepares an authorized invocation and connection opts" do
     api_key = "lin_api_live_secret"
 
     assert {:ok, prepared} =
-             IntegrationBridge.prepare_linear_api_key_invocation(api_key, %{
-               tenant_id: "tenant-linear-live",
-               installation_id: "inst-linear-live",
-               subject_id: "subject-linear-live",
-               execution_id: "exec-linear-live",
-               trace_id: "trace-linear-live",
-               idempotency_key: "idem-linear-live",
-               submission_dedupe_key: "dedupe-linear-live",
-               actor_id: "operator-linear-live",
-               allowed_operations: ["linear.issues.list"],
-               subject: "linear-live-proof"
-             })
+             IntegrationBridge.prepare_credential_invocation(
+               %{
+                 adapter_ref: "linear",
+                 credential_kind: :api_key,
+                 credential_material: api_key
+               },
+               %{
+                 tenant_id: "tenant-linear-live",
+                 installation_id: "inst-linear-live",
+                 subject_id: "subject-linear-live",
+                 execution_id: "exec-linear-live",
+                 trace_id: "trace-linear-live",
+                 idempotency_key: "idem-linear-live",
+                 submission_dedupe_key: "dedupe-linear-live",
+                 actor_id: "operator-linear-live",
+                 allowed_operations: ["linear.issues.list"],
+                 subject: "linear-live-proof"
+               }
+             )
 
     assert %AuthorizedInvocation{} = prepared.authorized_invocation
     assert is_binary(prepared.connection_id)
@@ -737,10 +790,36 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert result.source_intake.operation == "linear.issues.list"
   end
 
+  test "credential ingress fails closed for unsupported adapter refs" do
+    assert {:error, {:unsupported_credential_ingress, "github", :api_key}} =
+             IntegrationBridge.prepare_credential_invocation(
+               %{
+                 adapter_ref: "github",
+                 credential_kind: :api_key,
+                 credential_material: "github-secret"
+               },
+               %{
+                 tenant_id: "tenant-github",
+                 installation_id: "inst-github",
+                 subject_id: "subject-github",
+                 execution_id: "exec-github",
+                 trace_id: "trace-github",
+                 idempotency_key: "idem-github",
+                 submission_dedupe_key: "dedupe-github",
+                 actor_id: "operator-github",
+                 allowed_operations: ["github.pr.fetch"]
+               }
+             )
+  end
+
   test "Linear existing connection ingress prepares authorized invocation without raw credentials" do
     assert {:ok, prepared} =
-             IntegrationBridge.prepare_linear_connection_invocation(
-               "connection-linear-existing",
+             IntegrationBridge.prepare_credential_invocation(
+               %{
+                 adapter_ref: "linear",
+                 credential_kind: :connection,
+                 credential_material: "connection-linear-existing"
+               },
                %{
                  tenant_id: "tenant-linear-existing",
                  installation_id: "inst-linear-existing",
@@ -801,17 +880,24 @@ defmodule Mezzanine.IntegrationBridgeTest do
 
   test "Linear API key credential ingress defaults include workflow-state lookup" do
     assert {:ok, prepared} =
-             IntegrationBridge.prepare_linear_api_key_invocation("lin_api_live_secret", %{
-               tenant_id: "tenant-linear-live-defaults",
-               installation_id: "inst-linear-live-defaults",
-               subject_id: "subject-linear-live-defaults",
-               execution_id: "exec-linear-live-defaults",
-               trace_id: "trace-linear-live-defaults",
-               idempotency_key: "idem-linear-live-defaults",
-               submission_dedupe_key: "dedupe-linear-live-defaults",
-               actor_id: "operator-linear-live-defaults",
-               subject: "linear-live-proof-defaults"
-             })
+             IntegrationBridge.prepare_credential_invocation(
+               %{
+                 adapter_ref: "linear",
+                 credential_kind: :api_key,
+                 credential_material: "lin_api_live_secret"
+               },
+               %{
+                 tenant_id: "tenant-linear-live-defaults",
+                 installation_id: "inst-linear-live-defaults",
+                 subject_id: "subject-linear-live-defaults",
+                 execution_id: "exec-linear-live-defaults",
+                 trace_id: "trace-linear-live-defaults",
+                 idempotency_key: "idem-linear-live-defaults",
+                 submission_dedupe_key: "dedupe-linear-live-defaults",
+                 actor_id: "operator-linear-live-defaults",
+                 subject: "linear-live-proof-defaults"
+               }
+             )
 
     assert "linear.workflow_states.list" in prepared.authorized_invocation.invocation_request.allowed_operations
 
@@ -4325,8 +4411,14 @@ defmodule Mezzanine.IntegrationBridgeTest do
     %{
       source_binding_id: "linear-primary",
       installation_id: "inst-1",
+      compiled_binding_ref: "compiled-binding://inst-1/linear-primary",
+      adapter_ref: "linear",
       provider: "linear",
       connection_ref: "linear-primary",
+      operation_refs: %{
+        fetch_candidates: "linear.issues.list",
+        current_states: "linear.issues.list"
+      },
       candidate_filters: %{project_slug: "ops-automation", assignee: "me"},
       state_mapping: %{
         "submitted" => ["Todo", "Backlog"],

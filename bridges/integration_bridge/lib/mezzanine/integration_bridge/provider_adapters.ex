@@ -11,6 +11,7 @@ defmodule Mezzanine.IntegrationBridge.ProviderAdapters do
   alias Mezzanine.IntegrationBridge.ProviderAdapters.GitHub.PrBranchCleanupRuntime
   alias Mezzanine.IntegrationBridge.ProviderAdapters.GitHub.PrEvidenceRuntime
   alias Mezzanine.IntegrationBridge.ProviderAdapters.Linear.GraphQLToolExecutor
+  alias Mezzanine.IntegrationBridge.ProviderAdapters.Linear.SourceDispatcher
 
   @spec resolve(term(), atom()) :: {:ok, module()} | {:error, term()}
   def resolve(adapter_ref, adapter_kind) when is_atom(adapter_kind) do
@@ -30,6 +31,7 @@ defmodule Mezzanine.IntegrationBridge.ProviderAdapters do
   defp normalize_ref(_ref), do: nil
 
   defp do_resolve("codex_cli", :runtime), do: {:ok, AgentRuntime}
+  defp do_resolve("linear", :source), do: {:ok, SourceDispatcher}
   defp do_resolve("linear", :tool), do: {:ok, GraphQLToolExecutor}
   defp do_resolve("github", :evidence), do: {:ok, PrEvidenceRuntime}
   defp do_resolve("github", :resource_effect), do: {:ok, PrBranchCleanupRuntime}

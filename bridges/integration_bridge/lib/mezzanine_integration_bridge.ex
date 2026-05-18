@@ -5,10 +5,10 @@ defmodule Mezzanine.IntegrationBridge do
 
   alias Mezzanine.IntegrationBridge.{
     AuthorizedInvocation,
+    CredentialIngress,
     DirectRunDispatcher,
     EffectDispatcher,
     EventTranslator,
-    LinearCredentialIngress,
     ReadDispatcher
   }
 
@@ -98,17 +98,11 @@ defmodule Mezzanine.IntegrationBridge do
               to: Mezzanine.IntegrationBridge.SourceDispatcher,
               as: :publication_allowed_operations
 
-  @spec prepare_linear_api_key_invocation(String.t(), map() | keyword(), keyword()) ::
+  @spec prepare_credential_invocation(map() | keyword(), map() | keyword(), keyword()) ::
           {:ok, map()} | {:error, term()}
-  defdelegate prepare_linear_api_key_invocation(api_key, attrs, opts \\ []),
-    to: LinearCredentialIngress,
-    as: :prepare_api_key_invocation
-
-  @spec prepare_linear_connection_invocation(String.t(), map() | keyword(), keyword()) ::
-          {:ok, map()} | {:error, term()}
-  defdelegate prepare_linear_connection_invocation(connection_id, attrs, opts \\ []),
-    to: LinearCredentialIngress,
-    as: :prepare_connection_invocation
+  defdelegate prepare_credential_invocation(credential_request, attrs, opts \\ []),
+    to: CredentialIngress,
+    as: :prepare_invocation
 
   @spec invoke_runtime_operation(
           term(),
