@@ -47,6 +47,8 @@ end
     jido_integration_v2_linear: dep.("jido_integration", "connectors/linear", "~> 0.1.0"),
     jido_integration_v2_runtime_router:
       dep.("jido_integration", "core/runtime_router", "~> 0.1.0"),
+    jido_integration_secrets_provider:
+      dep.("jido_integration", "core/secrets_provider", "~> 0.1.0"),
     outer_brain_context_budget: dep.("outer_brain", "core/context_budget", "~> 0.1.0"),
     outer_brain_memory_contracts: dep.("outer_brain", "core/memory_contracts", "~> 0.1.0"),
     outer_brain_token_meter: dep.("outer_brain", "core/token_meter", "~> 0.1.0"),

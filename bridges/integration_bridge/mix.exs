@@ -59,6 +59,7 @@ defmodule MezzanineIntegrationBridge.MixProject do
       DependencySources.dep(:jido_integration_v2_github, @repo_root),
       DependencySources.dep(:jido_integration_v2_linear, @repo_root),
       DependencySources.dep(:jido_integration_v2_runtime_router, @repo_root),
+      DependencySources.dep(:jido_integration_secrets_provider, @repo_root),
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.40.1", only: :dev, runtime: false}

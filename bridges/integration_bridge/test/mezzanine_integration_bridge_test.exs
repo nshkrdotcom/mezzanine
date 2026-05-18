@@ -729,7 +729,8 @@ defmodule Mezzanine.IntegrationBridgeTest do
                %{
                  adapter_ref: "linear",
                  credential_kind: :api_key,
-                 credential_material: api_key
+                 secret_provider: Jido.Integration.Secrets.EnvProvider,
+                 secret_scope: %{env_var: "LINEAR_API_KEY", secret_key: :api_key}
                },
                %{
                  tenant_id: "tenant-linear-live",
@@ -742,12 +743,15 @@ defmodule Mezzanine.IntegrationBridgeTest do
                  actor_id: "operator-linear-live",
                  allowed_operations: ["linear.issues.list"],
                  subject: "linear-live-proof"
-               }
+               },
+               env: %{"LINEAR_API_KEY" => api_key}
              )
 
     assert %AuthorizedInvocation{} = prepared.authorized_invocation
     assert is_binary(prepared.connection_id)
     assert prepared.connection_id != ""
+    assert prepared.credential_secret_ref.provider_ref == "env://LINEAR_API_KEY"
+    refute inspect(prepared.credential_secret_ref) =~ api_key
 
     assert Keyword.fetch!(prepared.source_opts, :invoke_opts)[:connection_id] ==
              prepared.connection_id
@@ -795,8 +799,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
              IntegrationBridge.prepare_credential_invocation(
                %{
                  adapter_ref: "github",
-                 credential_kind: :api_key,
-                 credential_material: "github-secret"
+                 credential_kind: :api_key
                },
                %{
                  tenant_id: "tenant-github",
@@ -818,7 +821,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
                %{
                  adapter_ref: "linear",
                  credential_kind: :connection,
-                 credential_material: "connection-linear-existing"
+                 connection_id: "connection-linear-existing"
                },
                %{
                  tenant_id: "tenant-linear-existing",
@@ -884,7 +887,8 @@ defmodule Mezzanine.IntegrationBridgeTest do
                %{
                  adapter_ref: "linear",
                  credential_kind: :api_key,
-                 credential_material: "lin_api_live_secret"
+                 secret_provider: Jido.Integration.Secrets.EphemeralProvider,
+                 secret_scope: %{provider_ref: "ephemeral://test", secret_key: :api_key}
                },
                %{
                  tenant_id: "tenant-linear-live-defaults",
@@ -896,7 +900,8 @@ defmodule Mezzanine.IntegrationBridgeTest do
                  submission_dedupe_key: "dedupe-linear-live-defaults",
                  actor_id: "operator-linear-live-defaults",
                  subject: "linear-live-proof-defaults"
-               }
+               },
+               secret_materializer: fn -> %{api_key: "lin_api_live_secret"} end
              )
 
     assert "linear.workflow_states.list" in prepared.authorized_invocation.invocation_request.allowed_operations

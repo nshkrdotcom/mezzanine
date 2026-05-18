@@ -194,6 +194,4 @@ defmodule Mezzanine.IntegrationBridge.SourceDispatcher do
 
   defp normalize_map(%_{} = struct), do: Map.from_struct(struct)
   defp normalize_map(%{} = map), do: Map.new(map)
-  defp normalize_map(list) when is_list(list), do: Map.new(list)
-  defp normalize_map(_other), do: %{}
 end
