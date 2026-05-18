@@ -514,9 +514,13 @@ defmodule Mezzanine.M1M2Runtime.DeterministicLowerCompletion do
   defp map_value(_value, _key), do: nil
 
   defp map_existing_atom_value(map, key) do
-    Map.get(map, String.to_existing_atom(key))
-  rescue
-    ArgumentError -> nil
+    Enum.find_value(map, fn
+      {atom_key, value} when is_atom(atom_key) ->
+        if Atom.to_string(atom_key) == key, do: value
+
+      _entry ->
+        nil
+    end)
   end
 
   defp string_value(map, key) do

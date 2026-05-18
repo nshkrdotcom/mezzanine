@@ -501,8 +501,17 @@ defmodule Mezzanine.WorkflowRuntime.OperationGraphExecutor do
       status when status in [:succeeded, :failed, :degraded, :canceled] ->
         {:ok, status}
 
-      status when status in ["succeeded", "failed", "degraded", "canceled"] ->
-        {:ok, String.to_existing_atom(status)}
+      "succeeded" ->
+        {:ok, :succeeded}
+
+      "failed" ->
+        {:ok, :failed}
+
+      "degraded" ->
+        {:ok, :degraded}
+
+      "canceled" ->
+        {:ok, :canceled}
 
       _missing_or_unknown ->
         {:error, {:missing_required_activity_result_field, :status}}

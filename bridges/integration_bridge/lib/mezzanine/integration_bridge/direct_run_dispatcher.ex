@@ -92,9 +92,12 @@ defmodule Mezzanine.IntegrationBridge.DirectRunDispatcher do
   defp environment_value(value) when is_binary(value) and value != "" do
     value
     |> String.trim()
-    |> String.to_existing_atom()
-  rescue
-    ArgumentError -> value
+    |> case do
+      "dev" -> :dev
+      "test" -> :test
+      "prod" -> :prod
+      other -> other
+    end
   end
 
   defp environment_value(value) when is_atom(value), do: value

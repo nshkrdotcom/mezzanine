@@ -41,6 +41,16 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
 
   @invocation_request_module :"Elixir.Citadel.InvocationRequest.V2"
   @sandbox_rank %{strict: 0, standard: 1, none: 2}
+  @known_atomish_values %{
+    "active" => :active,
+    "stale" => :stale,
+    "refresh_required" => :refresh_required,
+    "invalid" => :invalid,
+    "quarantined" => :quarantined,
+    "strict" => :strict,
+    "standard" => :standard,
+    "none" => :none
+  }
   @dialyzer :no_match
 
   @spec new(map() | keyword() | t()) :: {:ok, t()} | {:error, Exception.t()}
@@ -1136,7 +1146,7 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
     |> String.trim()
     |> case do
       "" -> nil
-      trimmed -> String.to_atom(trimmed)
+      trimmed -> Map.get(@known_atomish_values, trimmed, trimmed)
     end
   end
 

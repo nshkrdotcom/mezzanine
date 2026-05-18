@@ -49,7 +49,9 @@ defmodule Mezzanine.Substrate.Builder do
   defp present?(value), do: not is_nil(value)
 
   defp forbidden_field?(field) when is_atom(field) do
-    field in forbidden_field_atoms()
+    field
+    |> Atom.to_string()
+    |> forbidden_field?()
   end
 
   defp forbidden_field?(field) when is_binary(field) do
@@ -57,11 +59,6 @@ defmodule Mezzanine.Substrate.Builder do
   end
 
   defp forbidden_field?(_field), do: false
-
-  defp forbidden_field_atoms do
-    forbidden_field_strings()
-    |> Enum.map(&String.to_atom/1)
-  end
 
   defp forbidden_field_strings do
     [
