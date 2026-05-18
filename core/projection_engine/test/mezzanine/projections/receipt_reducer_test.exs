@@ -824,6 +824,76 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
     assert reduced.lower_receipt_summary.operation_groups == reduced.projection.operation_groups
   end
 
+  test "reduces destructive GitHub cleanup product readback through generic receipts and lineage" do
+    list =
+      github_cleanup_receipt("github.pr.list", "list",
+        provider_object_refs: %{"github.pull_request_numbers" => ["57"]}
+      )
+
+    comment = github_cleanup_receipt("github.comment.create", "comment")
+    update = github_cleanup_receipt("github.pr.update", "update")
+
+    {:ok, group} =
+      OperationGroupReceipt.new(%{
+        group_receipt_ref: "operation-group-receipt://extravaganza/github-cleanup/product",
+        operation_context_ref: "operation-context://extravaganza/github-cleanup/product",
+        receipt_refs: [list.receipt_ref, comment.receipt_ref, update.receipt_ref],
+        status: :succeeded,
+        metadata: %{
+          group_kind: :resource_effect,
+          subject_ref: "subject://extravaganza/live.github-pr-cleanup",
+          product_operation: "live.github-pr-cleanup",
+          resource_effect_role_ref: "proposed_change_cleanup"
+        }
+      })
+
+    assert {:ok, reduced} =
+             ReceiptReducer.reduce(group,
+               operation_receipts: [update, list, comment],
+               lineage_event_contract: :full_execution,
+               review_state: :skipped
+             )
+
+    assert reduced.reducer_module == ReceiptReducer
+    assert reduced.projection.status == :succeeded
+
+    assert reduced.projection.resource_effects |> Enum.map(& &1.receipt_ref) == [
+             list.receipt_ref,
+             comment.receipt_ref,
+             update.receipt_ref
+           ]
+
+    assert reduced.projection.provider_object_refs["github.pull_request_numbers"] == ["57"]
+    assert reduced.lower_receipt_summary.status == :succeeded
+    assert reduced.lower_receipt_summary.operation_groups == reduced.projection.operation_groups
+
+    event_kinds = Enum.map(reduced.lineage_events, & &1.event_kind)
+
+    for kind <- [
+          :command_recorded,
+          :workflow_started,
+          :operation_requested,
+          :jido_manifest_resolved,
+          :credential_lease_materialized,
+          :effect_requested,
+          :effect_receipted,
+          :receipt_reduced,
+          :review_skipped,
+          :projection_updated,
+          :replay_exported
+        ] do
+      assert kind in event_kinds
+    end
+
+    assert Enum.count(event_kinds, &(&1 == :receipt_reduced)) == 3
+
+    assert reduced.lineage_event_outbox.event_refs ==
+             Enum.map(reduced.lineage_events, & &1.event_ref)
+
+    assert Enum.all?(reduced.operation_dispositions, &(&1.disposition == :accepted))
+    refute String.contains?(inspect(reduced.projection), "raw_provider_payload")
+  end
+
   test "reduces every terminal lower outcome into stable execution and subject states" do
     cases = [
       {"failed", :failed, "failed", nil},
@@ -1035,6 +1105,32 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
       })
 
     receipt
+  end
+
+  defp github_cleanup_receipt(capability_id, suffix, opts \\ []) do
+    provider_object_refs = Keyword.get(opts, :provider_object_refs, %{})
+
+    operation_receipt({:resource_effect, capability_id},
+      receipt_ref: "lower-receipt://github/pr-cleanup/#{suffix}/succeeded",
+      metadata: %{
+        connector_manifest_ref: "manifest://jido/connectors/github@test",
+        credential_lease_ref: "credential-lease://github/primary/#{suffix}",
+        effect_request_ref: "lower-request://github/pr-cleanup/#{suffix}",
+        connector_binding_ref: "connector-binding://github/primary",
+        provider_object_refs: provider_object_refs,
+        provider_facts: [
+          %{
+            fact_ref: "provider-fact://github/pr-cleanup/#{suffix}",
+            fact_kind: :resource_effect,
+            capability_id: capability_id
+          }
+        ],
+        extensions: %{
+          product_operation: "live.github-pr-cleanup",
+          resource_effect_role_ref: "proposed_change_cleanup"
+        }
+      }
+    )
   end
 
   defp result_attrs(operation_role, operation_class) do
