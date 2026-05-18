@@ -35,7 +35,7 @@ defmodule Mezzanine.Substrate.BoundaryProtocolTest do
         ] do
       envelope = Map.fetch!(envelopes, key)
 
-      assert envelope.source == "mezzanine"
+      assert envelope.origin == "mezzanine"
       assert envelope.metadata.transport == "direct-module"
       assert Codec.encode!(envelope) == Envelope.encode!(envelope)
       assert String.starts_with?(Envelope.digest(envelope), "sha256:")
@@ -56,7 +56,7 @@ defmodule Mezzanine.Substrate.BoundaryProtocolTest do
     assert {:error, :boundary_reference_not_serializable} =
              Envelope.new(%{
                id: "boundary://mezzanine/jido/bad-runtime-value",
-               source: "mezzanine",
+               origin: "mezzanine",
                target: "jido_integration",
                operation: "lower.invoke_operation",
                tenant_id: "tenant-a",
