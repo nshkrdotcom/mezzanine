@@ -175,6 +175,7 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
       )
 
     with :ok <- validate_authorized_capability(attrs),
+         :ok <- validate_connector_ref(attrs),
          :ok <- validate_connector_manifest(attrs),
          :ok <- validate_resource_scope_refs(attrs),
          :ok <- validate_sandbox_posture(attrs, execution_governance, opts),
@@ -519,12 +520,18 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
     invocation = context.invocation
     capability_id = context.capability_id
     execution_governance = context.execution_governance
+    execution_envelope = context.execution_envelope
     governance_sandbox = context.governance_sandbox
 
     %{
       lower_runtime_kind:
-        Keyword.get(opts, :lower_runtime_kind, infer_lower_runtime_kind(capability_id)),
-      connector_ref: Keyword.get(opts, :connector_ref, infer_connector_ref(capability_id)),
+        Keyword.get(opts, :lower_runtime_kind) ||
+          normalize_atomish(string_value(execution_envelope, "lower_runtime_kind")) ||
+          :direct_connector,
+      connector_ref:
+        Keyword.get(opts, :connector_ref) ||
+          string_value(execution_envelope, "connector_ref") ||
+          string_value(execution_governance, "connector_ref"),
       lower_request_ref:
         Keyword.get(opts, :lower_request_ref, lower_request_ref(invocation, capability_id)),
       resource_scope_refs:
@@ -601,12 +608,12 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
     %{
       connector_ref: connector_ref,
       connector_manifest_ref:
-        Keyword.get(opts, :connector_manifest_ref, "manifest://#{connector_ref}@local"),
+        Keyword.get(opts, :connector_manifest_ref, default_connector_manifest_ref(connector_ref)),
       connector_manifest_hash:
         Keyword.get(
           opts,
           :connector_manifest_hash,
-          "sha256:" <> sha256("#{connector_ref}:#{capability_id}")
+          default_connector_manifest_hash(connector_ref, capability_id)
         ),
       connector_manifest_state: Keyword.get(opts, :connector_manifest_state, :active),
       capability_negotiation_ref:
@@ -799,6 +806,21 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
     end
   end
 
+  defp validate_connector_ref(%{connector_ref: connector_ref} = attrs) do
+    case connector_ref do
+      value when is_binary(value) and value != "" ->
+        :ok
+
+      _missing ->
+        {:error,
+         lower_denial_from_attrs(
+           attrs,
+           :manifest_missing,
+           "connector_ref must be resolved from binding or manifest data before lower dispatch"
+         )}
+    end
+  end
+
   defp validate_connector_manifest(
          %{
            side_effect_class: side_effect_class,
@@ -914,17 +936,21 @@ defmodule Mezzanine.IntegrationBridge.AuthorizedInvocation do
     "lower-request://#{invocation.execution_id}/#{URI.encode_www_form(capability_id)}"
   end
 
-  defp infer_lower_runtime_kind("codex.session." <> _rest), do: :codex_session
-  defp infer_lower_runtime_kind(_capability_id), do: :direct_connector
-
-  defp infer_connector_ref("codex.session." <> _rest), do: "jido/connectors/codex_cli"
-  defp infer_connector_ref("linear." <> _rest), do: "jido/connectors/linear"
-  defp infer_connector_ref("github." <> _rest), do: "jido/connectors/github"
-  defp infer_connector_ref(_capability_id), do: "jido/connectors/deterministic_fixture"
-
   defp infer_runtime_class(:codex_session), do: :session
   defp infer_runtime_class(:deterministic_fixture), do: :fixture
   defp infer_runtime_class(_lower_runtime_kind), do: :direct
+
+  defp default_connector_manifest_ref(connector_ref)
+       when is_binary(connector_ref) and connector_ref != "",
+       do: "manifest://#{connector_ref}@local"
+
+  defp default_connector_manifest_ref(_connector_ref), do: nil
+
+  defp default_connector_manifest_hash(connector_ref, capability_id)
+       when is_binary(connector_ref) and connector_ref != "",
+       do: "sha256:" <> sha256("#{connector_ref}:#{capability_id}")
+
+  defp default_connector_manifest_hash(_connector_ref, _capability_id), do: nil
 
   defp infer_side_effect_class(capability_id) do
     capability_id

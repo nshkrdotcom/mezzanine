@@ -338,9 +338,6 @@ defmodule Mezzanine.IntegrationBridge.ProviderAuthorityAdmission do
     Enum.find(values, &present?/1)
   end
 
-  defp provider_family("linear." <> _rest, _connector_ref), do: "linear"
-  defp provider_family("github." <> _rest, _connector_ref), do: "github"
-  defp provider_family("codex." <> _rest, _connector_ref), do: "codex"
   defp provider_family(_capability_id, "jido/connectors/linear"), do: "linear"
   defp provider_family(_capability_id, "jido/connectors/github"), do: "github"
   defp provider_family(_capability_id, "jido/connectors/codex_cli"), do: "codex"

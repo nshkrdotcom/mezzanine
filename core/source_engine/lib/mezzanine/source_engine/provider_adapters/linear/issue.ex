@@ -118,34 +118,17 @@ defmodule Mezzanine.SourceEngine.ProviderAdapters.Linear.Issue do
       |> Map.put(:assigned_to_worker, assigned_to_worker?(issue, binding, scope))
 
     {classification, decision} =
-      Admission.classify_candidate(payload, binding_with_defaults(binding))
+      Admission.classify_candidate(payload, binding_for_classification(binding))
 
     {:ok, %{classification: classification, decision: decision}}
   end
 
-  defp binding_with_defaults(%SourceBinding{} = binding), do: binding
+  defp binding_for_classification(%SourceBinding{} = binding), do: binding
 
-  defp binding_with_defaults(binding) when is_map(binding) do
-    state_mapping =
-      case state_mapping(binding) do
-        mapping when map_size(mapping) > 0 ->
-          mapping
-
-        _empty ->
-          %{
-            "submitted" => ["Todo"],
-            "completed" => ["Done", "Completed"],
-            "rejected" => ["Canceled", "Cancelled", "Duplicate"]
-          }
-      end
-
-    %SourceBinding{
-      source_binding_id: string_value(binding, :source_binding_id) || "linear_primary",
-      installation_id: string_value(binding, :installation_id) || "unknown-installation",
-      provider: @provider,
-      connection_ref: string_value(binding, :connection_ref) || "linear",
-      candidate_filters: map_value(binding, :candidate_filters) || %{},
-      state_mapping: state_mapping
+  defp binding_for_classification(binding) when is_map(binding) do
+    %{
+      "candidate_filters" => map_value(binding, :candidate_filters) || %{},
+      "state_mapping" => state_mapping(binding)
     }
   end
 

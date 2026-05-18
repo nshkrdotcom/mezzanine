@@ -287,6 +287,20 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
              SourceFlow.candidate_fetch_input(binding)
   end
 
+  test "Linear candidate fetch requires state mapping from the binding unless explicit states are supplied" do
+    binding = %{source_binding() | state_mapping: %{}}
+
+    assert {:error, :missing_source_state_mapping} =
+             SourceFlow.candidate_fetch_input(binding)
+
+    assert {:ok, input} =
+             SourceFlow.candidate_fetch_input(binding,
+               filter: %{state_names: ["Ready For Work"]}
+             )
+
+    assert input.filter.state_names == ["Ready For Work"]
+  end
+
   test "builds current-state Linear fetch inputs by de-duplicating and batching requested ids" do
     assert {:ok, inputs} =
              SourceFlow.current_state_fetch_inputs(
@@ -354,6 +368,50 @@ defmodule Mezzanine.SourceEngine.AdmissionTest do
 
     assert refreshed.operation == "linear.issues.retrieve"
     assert refreshed.subject_attrs.provider_external_ref == "lin-issue-321"
+  end
+
+  test "Linear normalization fails closed without source binding identity" do
+    binding =
+      source_binding()
+      |> Map.from_struct()
+      |> Map.delete(:source_binding_id)
+
+    assert {:error, :missing_source_binding} =
+             SourceFlow.normalize_candidate_page(
+               %{issues: [linear_issue()], page_info: %{has_next_page: false}},
+               source_envelope(),
+               binding
+             )
+  end
+
+  test "Linear subject classification uses binding state mapping only" do
+    unmapped_binding =
+      source_binding()
+      |> Map.from_struct()
+      |> Map.put(:state_mapping, %{})
+
+    assert {:ok, ignored} =
+             Issue.subject_attrs(
+               linear_issue(),
+               source_envelope(),
+               unmapped_binding
+             )
+
+    assert ignored.lifecycle_state == "ignored"
+    assert ignored.state_mapping.reason == "unmapped_source_state"
+
+    explicit_mapping =
+      unmapped_binding
+      |> Map.put(:state_mapping, %{"submitted" => ["Ready For Work"]})
+
+    issue =
+      linear_issue()
+      |> put_in([:state, :name], "Ready For Work")
+      |> Map.put(:blockers, [])
+
+    assert {:ok, submitted} = Issue.subject_attrs(issue, source_envelope(), explicit_mapping)
+    assert submitted.lifecycle_state == "submitted"
+    assert submitted.state_mapping.reason == "dispatchable"
   end
 
   test "builds Linear publication inputs and public-safe publication receipt refs" do

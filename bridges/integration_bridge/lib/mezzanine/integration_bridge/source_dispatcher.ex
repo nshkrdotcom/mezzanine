@@ -183,7 +183,6 @@ defmodule Mezzanine.IntegrationBridge.SourceDispatcher do
 
   defp issue_state_publication?(attrs) do
     present?(value(attrs, :state_id)) or present?(value(attrs, :state_name)) or
-      value(attrs, :capability_id) == "linear.issues.update" or
       value(attrs, :publication_kind) in [:issue_state_update, "issue_state_update"]
   end
 

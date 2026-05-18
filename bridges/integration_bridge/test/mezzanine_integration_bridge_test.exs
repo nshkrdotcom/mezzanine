@@ -698,6 +698,45 @@ defmodule Mezzanine.IntegrationBridgeTest do
     refute_received :unexpected_source_dispatch
   end
 
+  test "generic source publication does not use Linear capability ids as branch selectors" do
+    invocation = authorized_invocation_allowing(["linear.comments.update"])
+
+    invoke_fun = fn
+      "linear.comments.update", input, _opts ->
+        send(self(), {:invoke, "linear.comments.update", input})
+
+        {:ok,
+         %{
+           output: %{success: true, comment: %{id: "comment-321"}},
+           artifact_refs: ["artifact://linear/comment-321"]
+         }}
+
+      capability_id, input, _opts ->
+        send(self(), {:unexpected_invoke, capability_id, input})
+        {:ok, %{output: %{success: true}}}
+    end
+
+    assert {:ok, result} =
+             IntegrationBridge.publish_source(
+               invocation,
+               :source_publication,
+               %{
+                 source_publish_ref: "linear_workpad_review",
+                 source_binding_id: "linear-primary",
+                 source_ref: "linear://inst-1/issue/ENG-321",
+                 capability_id: "linear.issues.update",
+                 comment_id: "comment-321",
+                 body: "Provider operation ids are receipt facts, not generic route selectors"
+               },
+               source_binding(),
+               invoke_fun: invoke_fun
+             )
+
+    assert_received {:invoke, "linear.comments.update", %{comment_id: "comment-321"}}
+    refute_received {:unexpected_invoke, _capability_id, _input}
+    assert result.source_publication_receipt.capability_id == "linear.comments.update"
+  end
+
   test "source dispatch fails closed for unknown adapter refs" do
     invocation = authorized_invocation_allowing(["linear.issues.list"])
 
@@ -3607,6 +3646,26 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert GovernedLowerReceipt.matches_envelope?(receipt, envelope)
   end
 
+  test "governed lower envelope requires connector ref from binding data" do
+    attrs =
+      authorized_invocation_attrs()
+      |> update_in(
+        [:invocation_request, :extensions, "citadel", "execution_envelope"],
+        &Map.delete(&1, "connector_ref")
+      )
+
+    invocation = AuthorizedInvocation.new!(attrs)
+
+    assert {:error, %GovernedLowerDenial{} = denial} =
+             AuthorizedInvocation.governed_lower_envelope(
+               invocation,
+               "linear.issues.retrieve"
+             )
+
+    assert denial.denial_class == :manifest_missing
+    assert String.contains?(denial.reason, "connector_ref")
+  end
+
   test "governed lower envelope inherits Citadel TRE policy refs" do
     tre_policy = tre_policy()
 
@@ -3670,27 +3729,33 @@ defmodule Mezzanine.IntegrationBridgeTest do
         authorized_invocation_allowing(["linear.issues.retrieve"]),
         "linear.issues.retrieve",
         :direct_connector,
-        "jido/connectors/linear"
+        "jido/connectors/linear",
+        []
       },
       {
         authorized_invocation_allowing(["github.pr.create"]),
         "github.pr.create",
         :direct_connector,
-        "jido/connectors/github"
+        "jido/connectors/github",
+        [connector_ref: "jido/connectors/github"]
       },
       {
         authorized_invocation_allowing(["codex.session.turn"]),
         "codex.session.turn",
         :codex_session,
-        "jido/connectors/codex_cli"
+        "jido/connectors/codex_cli",
+        [connector_ref: "jido/connectors/codex_cli", lower_runtime_kind: :codex_session]
       }
     ]
 
-    for {invocation, capability_id, lower_runtime_kind, connector_ref} <- cases do
+    for {invocation, capability_id, lower_runtime_kind, connector_ref, dispatch_opts} <- cases do
       assert {:ok, result} =
-               IntegrationBridge.invoke_run_intent(invocation,
-                 invoke_fun: invoke_fun,
-                 capability_id: capability_id
+               IntegrationBridge.invoke_run_intent(
+                 invocation,
+                 Keyword.merge(dispatch_opts,
+                   invoke_fun: invoke_fun,
+                   capability_id: capability_id
+                 )
                )
 
       assert result.capability == capability_id
@@ -4356,7 +4421,8 @@ defmodule Mezzanine.IntegrationBridgeTest do
             "installation_revision" => 3,
             "subject_id" => "subject-1",
             "execution_id" => "exec-1",
-            "submission_dedupe_key" => "dedupe-1"
+            "submission_dedupe_key" => "dedupe-1",
+            "connector_ref" => "jido/connectors/linear"
           }
         }
       }

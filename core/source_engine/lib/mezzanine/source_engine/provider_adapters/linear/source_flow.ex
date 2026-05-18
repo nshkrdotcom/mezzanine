@@ -20,12 +20,13 @@ defmodule Mezzanine.SourceEngine.ProviderAdapters.Linear.SourceFlow do
     opts = normalize_attrs(opts)
     filters = filters(binding, opts)
 
-    with {:ok, assignee_id} <- assignee_filter(filters, opts) do
+    with {:ok, assignee_id} <- assignee_filter(filters, opts),
+         {:ok, state_names} <- state_names(binding, filters) do
       filter =
         %{}
         |> maybe_put(:project_slug, string_value(filters, :project_slug))
         |> maybe_put(:team_id, string_value(filters, :team_id))
-        |> maybe_put(:state_names, state_names(binding, filters))
+        |> maybe_put(:state_names, state_names)
         |> maybe_put(:assignee_id, assignee_id)
         |> compact()
 
@@ -137,11 +138,12 @@ defmodule Mezzanine.SourceEngine.ProviderAdapters.Linear.SourceFlow do
       when is_map(output) and is_map(envelope) and is_map(binding) do
     issues = output |> value(:issues) |> List.wrap() |> Enum.filter(&is_map/1)
 
-    with {:ok, subject_attrs} <- normalize_issues(issues, envelope, binding) do
+    with {:ok, source_binding_id} <- source_binding_id(binding),
+         {:ok, subject_attrs} <- normalize_issues(issues, envelope, binding) do
       {:ok,
        %{
          operation: "linear.issues.list",
-         source_binding_id: source_binding_id(binding),
+         source_binding_id: source_binding_id,
          issues: issues,
          subject_attrs: subject_attrs,
          page_info: value(output, :page_info) || %{},
@@ -158,11 +160,12 @@ defmodule Mezzanine.SourceEngine.ProviderAdapters.Linear.SourceFlow do
     issues = output |> value(:issues) |> List.wrap() |> Enum.filter(&is_map/1)
     ordered_issues = order_issues_by_requested_ids(issues, requested_issue_ids)
 
-    with {:ok, subject_attrs} <- normalize_issues(ordered_issues, envelope, binding) do
+    with {:ok, source_binding_id} <- source_binding_id(binding),
+         {:ok, subject_attrs} <- normalize_issues(ordered_issues, envelope, binding) do
       {:ok,
        %{
          operation: "linear.issues.list",
-         source_binding_id: source_binding_id(binding),
+         source_binding_id: source_binding_id,
          issues: ordered_issues,
          subject_attrs: subject_attrs,
          missing_issue_ids: missing_issue_ids(issues, requested_issue_ids),
@@ -176,12 +179,13 @@ defmodule Mezzanine.SourceEngine.ProviderAdapters.Linear.SourceFlow do
           {:ok, map()} | {:error, term()}
   def normalize_issue_refresh(output, envelope, binding)
       when is_map(output) and is_map(envelope) and is_map(binding) do
-    with %{} = issue <- value(output, :issue),
+    with {:ok, source_binding_id} <- source_binding_id(binding),
+         %{} = issue <- value(output, :issue),
          {:ok, attrs} <- Issue.subject_attrs(issue, envelope, binding) do
       {:ok,
        %{
          operation: "linear.issues.retrieve",
-         source_binding_id: source_binding_id(binding),
+         source_binding_id: source_binding_id,
          issue: issue,
          subject_attrs: attrs,
          auth_binding: value(output, :auth_binding) || %{}
@@ -406,8 +410,8 @@ defmodule Mezzanine.SourceEngine.ProviderAdapters.Linear.SourceFlow do
 
   defp state_names(binding, %{} = filters) do
     case value(filters, :state_names) do
-      values when is_list(values) -> string_list(values)
-      value when is_binary(value) -> [value]
+      values when is_list(values) -> {:ok, string_list(values)}
+      value when is_binary(value) -> {:ok, [value]}
       _other -> mapped_candidate_states(binding)
     end
   end
@@ -416,7 +420,7 @@ defmodule Mezzanine.SourceEngine.ProviderAdapters.Linear.SourceFlow do
     binding
     |> value(:state_mapping)
     |> candidate_state_names()
-    |> nil_if_empty()
+    |> candidate_states_or_error()
   end
 
   defp publication_input_for(_attrs, body, comment_id) when is_binary(comment_id) do
@@ -460,11 +464,15 @@ defmodule Mezzanine.SourceEngine.ProviderAdapters.Linear.SourceFlow do
       else: []
   end
 
-  defp nil_if_empty([]), do: nil
-  defp nil_if_empty(values), do: values
+  defp candidate_states_or_error([]), do: {:error, :missing_source_state_mapping}
+  defp candidate_states_or_error(values), do: {:ok, values}
 
-  defp source_binding_id(binding),
-    do: string_value(binding, :source_binding_id) || "linear_primary"
+  defp source_binding_id(binding) do
+    case string_value(binding, :source_binding_id) || string_value(binding, :source_binding_ref) do
+      value when is_binary(value) and value != "" -> {:ok, value}
+      _missing -> {:error, :missing_source_binding}
+    end
+  end
 
   defp fallback_allowed?(attrs) do
     value(attrs, :allow_create_fallback?) == true or
