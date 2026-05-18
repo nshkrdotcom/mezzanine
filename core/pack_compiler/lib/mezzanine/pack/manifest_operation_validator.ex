@@ -105,7 +105,7 @@ defmodule Mezzanine.Pack.ManifestOperationValidator do
       connector_ref: H.canonicalize_identifier!(binding.connector_ref),
       manifest_ref: H.canonicalize_identifier!(binding.manifest_ref),
       operation_ref: H.canonicalize_identifier!(operation_ref),
-      operation_role: role,
+      operation_role: connector_operation_role(binding_kind, role),
       operation_class: operation_class(binding, role, binding_kind),
       binding_kind: binding_kind,
       required_runtime_family: runtime_family(binding),
@@ -115,10 +115,18 @@ defmodule Mezzanine.Pack.ManifestOperationValidator do
       credential_scope_ref: H.canonicalize_identifier!(binding.credential_binding_ref),
       compiled_manifest_hash: metadata_scalar(binding, :manifest_digest),
       metadata: %{
-        source: :pack_compiler_manifest_validation
+        source: :pack_compiler_manifest_validation,
+        pack_operation_role: role
       }
     }
   end
+
+  defp connector_operation_role(:source, _role), do: :source_read
+  defp connector_operation_role(:source_publication, _role), do: :source_publish
+  defp connector_operation_role(:runtime, _role), do: :runtime_session
+  defp connector_operation_role(:runtime_tool, _role), do: :runtime_tool
+  defp connector_operation_role(:evidence, _role), do: :evidence_collection
+  defp connector_operation_role(:resource_effect, _role), do: :resource_effect
 
   defp safe_resolve(resolver, request) do
     resolver.(request)

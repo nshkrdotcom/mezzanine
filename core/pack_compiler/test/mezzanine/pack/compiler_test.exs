@@ -479,6 +479,16 @@ defmodule Mezzanine.Pack.CompilerTest do
              "review_state_update"
            ]
 
+    assert Map.new(requests, &{&1.operation_ref, &1.operation_role}) == %{
+             "document_lookup" => :runtime_tool,
+             "document_read" => :source_read,
+             "review_evidence_collect" => :evidence_collection,
+             "review_publish" => :source_publish,
+             "review_run" => :runtime_session,
+             "review_state_update" => :resource_effect
+           }
+
+    assert Enum.all?(requests, &Map.has_key?(&1.metadata, :pack_operation_role))
     refute Enum.any?(requests, &Map.has_key?(&1, :api_key))
     refute Enum.any?(requests, &Map.has_key?(&1, :access_token))
     refute Enum.any?(requests, &Map.has_key?(&1, :oauth_session))

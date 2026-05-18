@@ -8,6 +8,7 @@ defmodule Mezzanine.IntegrationBridge.CredentialIngress do
 
   alias Jido.Integration.Secrets.Broker
   alias Jido.Integration.Secrets.EnvProvider
+  alias Jido.Integration.Secrets.EphemeralProvider
   alias Mezzanine.IntegrationBridge.LinearCredentialIngress
 
   @type credential_request :: map() | keyword()
@@ -82,7 +83,11 @@ defmodule Mezzanine.IntegrationBridge.CredentialIngress do
   end
 
   defp secret_provider(credential_request) do
-    provider = value(credential_request, :secret_provider) || EnvProvider
+    provider =
+      value(credential_request, :secret_provider) ||
+        secret_source_provider(value(credential_request, :secret_source_ref)) ||
+        secret_source_provider(value(credential_request, :secret_provider_ref)) ||
+        EnvProvider
 
     if is_atom(provider) and Code.ensure_loaded?(provider) and
          function_exported?(provider, :materialize, 3) do
@@ -90,6 +95,32 @@ defmodule Mezzanine.IntegrationBridge.CredentialIngress do
     else
       {:error, {:secret_provider_unavailable, provider}}
     end
+  end
+
+  defp secret_source_provider(source_ref) when is_binary(source_ref) do
+    case normalize_secret_source_ref(source_ref) do
+      "env" -> EnvProvider
+      "environment" -> EnvProvider
+      "ephemeral" -> EphemeralProvider
+      "call_scope" -> EphemeralProvider
+      _unknown -> nil
+    end
+  end
+
+  defp secret_source_provider(source_ref) when source_ref in [:env, :environment],
+    do: EnvProvider
+
+  defp secret_source_provider(source_ref) when source_ref in [:ephemeral, :call_scope],
+    do: EphemeralProvider
+
+  defp secret_source_provider(_source_ref), do: nil
+
+  defp normalize_secret_source_ref(source_ref) do
+    source_ref
+    |> String.trim()
+    |> String.downcase()
+    |> String.split([":", "/", ".", "-"], trim: true)
+    |> List.last()
   end
 
   defp lease_ref(credential_request, attrs) do

@@ -2,7 +2,14 @@ defmodule MezzanineConfigRegistryTest do
   use Mezzanine.ConfigRegistry.DataCase, async: false
 
   alias Ash.Error.Invalid
-  alias Mezzanine.ConfigRegistry.{ClusterInvalidation, Installation, PackRegistration}
+
+  alias Mezzanine.ConfigRegistry.{
+    BindingRegistry,
+    ClusterInvalidation,
+    Installation,
+    PackRegistration
+  }
+
   alias Mezzanine.Execution.Repo, as: ExecutionRepo
   alias Mezzanine.LeaseInvalidation
   alias Mezzanine.Leasing
@@ -19,6 +26,7 @@ defmodule MezzanineConfigRegistryTest do
     OperatorActionSpec,
     ProjectionSpec,
     Serializer,
+    SourceBinding,
     SourceBindingSpec,
     SourceKindSpec,
     SourcePublishSpec,
@@ -76,6 +84,102 @@ defmodule MezzanineConfigRegistryTest do
              "local_docker"
 
     assert updated_installation.compiled_pack_revision == 2
+  end
+
+  test "binding registry lookup cannot return another tenant's binding set" do
+    registration = register_fixture_pack!()
+
+    assert {:ok, %Installation{} = tenant_a_installation} =
+             MezzanineConfigRegistry.create_installation(%{
+               tenant_id: "tenant-a",
+               environment: "prod",
+               pack_registration_id: registration.id
+             })
+
+    assert {:ok, %Installation{}} =
+             MezzanineConfigRegistry.activate_installation(tenant_a_installation)
+
+    assert {:ok, resolution} =
+             BindingRegistry.resolve_active_binding(%{
+               tenant_id: "tenant-a",
+               environment: "prod",
+               pack_slug: "expense_approval",
+               binding_ref: "expense_request_linear_primary",
+               binding_kind: :source
+             })
+
+    assert resolution.active_binding_set.tenant_id == "tenant-a"
+    assert resolution.binding_set.tenant_id == "tenant-a"
+    assert resolution.compiled_binding.binding_ref == "expense_request_linear_primary"
+
+    assert {:error, _not_found} =
+             BindingRegistry.resolve_active_binding(%{
+               tenant_id: "tenant-b",
+               environment: "prod",
+               pack_slug: "expense_approval",
+               binding_ref: "expense_request_linear_primary",
+               binding_kind: :source
+             })
+  end
+
+  test "run binding snapshots are tenant scoped and cannot be reused by a matching run ref" do
+    registration = register_fixture_pack!()
+
+    assert {:ok, %Installation{} = tenant_a_installation} =
+             MezzanineConfigRegistry.create_installation(%{
+               tenant_id: "tenant-a",
+               environment: "prod",
+               pack_registration_id: registration.id
+             })
+
+    assert {:ok, %Installation{} = tenant_b_installation} =
+             MezzanineConfigRegistry.create_installation(%{
+               tenant_id: "tenant-b",
+               environment: "prod",
+               pack_registration_id: registration.id
+             })
+
+    assert {:ok, %Installation{}} =
+             MezzanineConfigRegistry.activate_installation(tenant_a_installation)
+
+    assert {:ok, %Installation{}} =
+             MezzanineConfigRegistry.activate_installation(tenant_b_installation)
+
+    snapshot_request = %{
+      tenant_id: "tenant-a",
+      environment: "prod",
+      pack_slug: "expense_approval",
+      run_ref: "run://shared/run-1",
+      binding_ref: "expense_request_linear_primary",
+      binding_kind: :source
+    }
+
+    assert {:ok, tenant_a_snapshot} =
+             BindingRegistry.capture_run_binding_snapshot(snapshot_request)
+
+    assert tenant_a_snapshot.tenant_id == "tenant-a"
+    assert tenant_a_snapshot.run_ref == "run://shared/run-1"
+
+    assert {:error, _not_found} =
+             BindingRegistry.resolve_run_binding_snapshot(%{
+               tenant_id: "tenant-b",
+               environment: "prod",
+               run_ref: "run://shared/run-1",
+               binding_ref: "expense_request_linear_primary"
+             })
+
+    assert {:ok, tenant_b_plan} =
+             BindingRegistry.resolve_operation_plan(%{
+               tenant_id: "tenant-b",
+               environment: "prod",
+               pack_slug: "expense_approval",
+               run_ref: "run://shared/run-1",
+               binding_ref: "expense_request_linear_primary",
+               binding_kind: :source
+             })
+
+    assert tenant_b_plan.source == :active_binding_set
+    refute tenant_b_plan.binding_set.id == tenant_a_snapshot.binding_set_id
   end
 
   test "installation activation writes access graph scope, resource, and policy edges" do
@@ -561,6 +665,24 @@ defmodule MezzanineConfigRegistryTest do
           candidate_filters: %{team_key: "ops"},
           cursor_policy: %{strategy: :incremental},
           source_write_policy: %{operation_scopes: ["comments"]}
+        }
+      ],
+      binding_specs: [
+        %SourceBinding{
+          binding_ref: source_binding_ref,
+          source_kind: source_kind,
+          subject_kind: subject_kind,
+          connector_ref: :linear_connector,
+          manifest_ref: :linear_issue_manifest_v1,
+          operation_refs: %{preview: :preview_issues, read: :search_issues},
+          credential_binding_ref: :linear_credentials,
+          connection_ref: :linear_primary,
+          metadata: %{
+            "operation_classes" => %{"preview" => :source_preview, "read" => :source_read},
+            "required_scopes" => %{"preview" => ["issues.preview"], "read" => ["issues.read"]},
+            policy_refs: [:source_authority_policy],
+            manifest_digest: "sha256:linear_issue_manifest_fixture"
+          }
         }
       ],
       source_publish_specs: [
