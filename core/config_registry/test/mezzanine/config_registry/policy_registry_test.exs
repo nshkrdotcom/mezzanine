@@ -9,6 +9,9 @@ defmodule Mezzanine.ConfigRegistry.PolicyRegistryTest do
     TransformPolicy
   }
 
+  alias Mezzanine.RuntimeProfile
+  alias Mezzanine.RuntimeProfileStore
+
   @effective_from ~U[2026-04-23 00:00:00Z]
   @effective_until ~U[2026-04-24 00:00:00Z]
 
@@ -166,26 +169,7 @@ defmodule Mezzanine.ConfigRegistry.PolicyRegistryTest do
   end
 
   test "rolls back policy registration when invalidation publish fails" do
-    previous_publisher =
-      Application.get_env(:mezzanine_config_registry, :cluster_invalidation_publisher)
-
-    Application.put_env(
-      :mezzanine_config_registry,
-      :cluster_invalidation_publisher,
-      {__MODULE__, :reject_invalidation}
-    )
-
-    on_exit(fn ->
-      if is_nil(previous_publisher) do
-        Application.delete_env(:mezzanine_config_registry, :cluster_invalidation_publisher)
-      else
-        Application.put_env(
-          :mezzanine_config_registry,
-          :cluster_invalidation_publisher,
-          previous_publisher
-        )
-      end
-    end)
+    replace_runtime_profile(cluster_invalidation_publisher: {__MODULE__, :reject_invalidation})
 
     assert {:error, :publish_failed} =
              read_policy("read-publish-fails", :tenant)
@@ -269,6 +253,15 @@ defmodule Mezzanine.ConfigRegistry.PolicyRegistryTest do
     on_exit(fn -> :telemetry.detach(handler_id) end)
 
     handler_id
+  end
+
+  defp replace_runtime_profile(config) do
+    profile =
+      RuntimeProfileStore.profile()
+      |> RuntimeProfile.put_config(:mezzanine_config_registry, config)
+
+    assert {:ok, previous_profile} = RuntimeProfileStore.replace_profile(profile)
+    on_exit(fn -> RuntimeProfileStore.replace_profile(previous_profile) end)
   end
 
   defp commit_hlc do

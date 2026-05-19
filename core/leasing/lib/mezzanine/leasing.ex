@@ -513,7 +513,7 @@ defmodule Mezzanine.Leasing do
 
   defp access_graph_store(opts) do
     Keyword.get(opts, :access_graph_store) ||
-      Application.get_env(:mezzanine_leasing, :access_graph_store)
+      Mezzanine.RuntimeProfileStore.config(:mezzanine_leasing, :access_graph_store)
   end
 
   defp access_graph_revoke_opts(rows, opts) do
@@ -823,10 +823,10 @@ defmodule Mezzanine.Leasing do
   end
 
   defp default_read_ttl_ms do
-    Application.get_env(:mezzanine_leasing, :default_read_ttl_ms, 300_000)
+    Mezzanine.RuntimeProfileStore.config(:mezzanine_leasing, :default_read_ttl_ms, 300_000)
   end
 
   defp default_stream_ttl_ms do
-    Application.get_env(:mezzanine_leasing, :default_stream_ttl_ms, 120_000)
+    Mezzanine.RuntimeProfileStore.config(:mezzanine_leasing, :default_stream_ttl_ms, 120_000)
   end
 end

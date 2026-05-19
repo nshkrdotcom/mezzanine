@@ -559,7 +559,7 @@ defmodule Mezzanine.Authoring.Bundle do
   defp signing_key(opts) do
     opts
     |> Keyword.get_lazy(:signing_key, fn ->
-      Application.get_env(:mezzanine_config_registry, :authoring_signing_key)
+      Mezzanine.RuntimeProfileStore.config(:mezzanine_config_registry, :authoring_signing_key)
     end)
     |> case do
       key when is_binary(key) and key != "" -> key

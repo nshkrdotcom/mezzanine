@@ -1,6 +1,8 @@
 defmodule Mezzanine.WorkflowRuntime.TemporalSupervisorTest do
   use ExUnit.Case, async: false
 
+  alias Mezzanine.RuntimeProfile
+  alias Mezzanine.RuntimeProfileStore
   alias Mezzanine.WorkflowRuntime.TemporalSupervisor
 
   test "stays inert unless Temporal workers are explicitly enabled" do
@@ -138,23 +140,39 @@ defmodule Mezzanine.WorkflowRuntime.TemporalSupervisorTest do
            ) == Mezzanine.WorkflowRuntime.StackLabPhase6Temporal.MezzanineHazmat
   end
 
-  test "governed runtime config ignores application-configured Temporal credentials" do
-    previous = Application.get_env(:mezzanine_workflow_runtime, :temporal)
+  test "non-governed runtime config uses the supervised boot profile" do
+    profile =
+      RuntimeProfile.empty()
+      |> RuntimeProfile.put(:mezzanine_workflow_runtime, :temporal,
+        enabled?: true,
+        address: "temporal.example.internal:7233",
+        namespace: "profile-selected",
+        instance_base: Mezzanine.WorkflowRuntime.TestTemporal
+      )
 
-    Application.put_env(:mezzanine_workflow_runtime, :temporal,
-      enabled?: true,
-      address: "temporal.example.internal:7233",
-      namespace: "env-selected",
-      api_key: "env-token"
-    )
+    assert {:ok, previous_profile} = RuntimeProfileStore.replace_profile(profile)
+    on_exit(fn -> RuntimeProfileStore.replace_profile(previous_profile) end)
 
-    on_exit(fn ->
-      if previous do
-        Application.put_env(:mezzanine_workflow_runtime, :temporal, previous)
-      else
-        Application.delete_env(:mezzanine_workflow_runtime, :temporal)
-      end
-    end)
+    config = TemporalSupervisor.runtime_config()
+
+    assert Keyword.fetch!(config, :enabled?)
+    assert Keyword.fetch!(config, :address) == "temporal.example.internal:7233"
+    assert Keyword.fetch!(config, :namespace) == "profile-selected"
+    assert Keyword.fetch!(config, :instance_base) == Mezzanine.WorkflowRuntime.TestTemporal
+  end
+
+  test "governed runtime config ignores boot-profile Temporal credentials" do
+    profile =
+      RuntimeProfile.empty()
+      |> RuntimeProfile.put(:mezzanine_workflow_runtime, :temporal,
+        enabled?: true,
+        address: "temporal.example.internal:7233",
+        namespace: "profile-selected",
+        api_key: "profile-token"
+      )
+
+    assert {:ok, previous_profile} = RuntimeProfileStore.replace_profile(profile)
+    on_exit(fn -> RuntimeProfileStore.replace_profile(previous_profile) end)
 
     config = TemporalSupervisor.runtime_config(governed?: true, namespace: "explicit")
 

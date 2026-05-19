@@ -10,7 +10,8 @@ defmodule Mezzanine.Archival.ColdStore do
 
   @spec module() :: module()
   def module do
-    Application.fetch_env!(:mezzanine_archival_engine, :cold_store)
+    :mezzanine_archival_engine
+    |> Mezzanine.RuntimeProfileStore.keyword_config(:cold_store, [])
     |> Keyword.fetch!(:module)
   end
 
@@ -65,7 +66,8 @@ defmodule Mezzanine.Archival.FileSystemColdStore do
   defp root(opts) do
     case Keyword.get(opts, :root) do
       nil ->
-        Application.fetch_env!(:mezzanine_archival_engine, :cold_store)
+        :mezzanine_archival_engine
+        |> Mezzanine.RuntimeProfileStore.keyword_config(:cold_store, [])
         |> Keyword.fetch!(:root)
 
       value ->

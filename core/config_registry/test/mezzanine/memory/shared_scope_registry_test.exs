@@ -3,6 +3,8 @@ defmodule Mezzanine.Memory.SharedScopeRegistryTest do
 
   alias Mezzanine.ConfigRegistry.ClusterInvalidation
   alias Mezzanine.Memory.SharedScopeRegistry
+  alias Mezzanine.RuntimeProfile
+  alias Mezzanine.RuntimeProfileStore
 
   @tenant_ref "tenant://alpha"
   @scope_ref "scope://team-alpha"
@@ -69,26 +71,7 @@ defmodule Mezzanine.Memory.SharedScopeRegistryTest do
     pubsub = Mezzanine.Memory.SharedScopeRegistryTest.PubSub
     start_supervised!({Phoenix.PubSub, name: pubsub})
 
-    previous_publisher =
-      Application.get_env(:mezzanine_config_registry, :cluster_invalidation_publisher)
-
-    Application.put_env(
-      :mezzanine_config_registry,
-      :cluster_invalidation_publisher,
-      {:phoenix_pubsub, pubsub}
-    )
-
-    on_exit(fn ->
-      if is_nil(previous_publisher) do
-        Application.delete_env(:mezzanine_config_registry, :cluster_invalidation_publisher)
-      else
-        Application.put_env(
-          :mezzanine_config_registry,
-          :cluster_invalidation_publisher,
-          previous_publisher
-        )
-      end
-    end)
+    replace_runtime_profile(cluster_invalidation_publisher: {:phoenix_pubsub, pubsub})
 
     topic = SharedScopeRegistry.invalidation_topic!(@tenant_ref, @scope_ref)
 
@@ -180,5 +163,14 @@ defmodule Mezzanine.Memory.SharedScopeRegistryTest do
     on_exit(fn -> :telemetry.detach(handler_id) end)
 
     handler_id
+  end
+
+  defp replace_runtime_profile(config) do
+    profile =
+      RuntimeProfileStore.profile()
+      |> RuntimeProfile.put_config(:mezzanine_config_registry, config)
+
+    assert {:ok, previous_profile} = RuntimeProfileStore.replace_profile(profile)
+    on_exit(fn -> RuntimeProfileStore.replace_profile(previous_profile) end)
   end
 end

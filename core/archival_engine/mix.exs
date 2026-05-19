@@ -95,6 +95,7 @@ defmodule MezzanineArchivalEngine.MixProject do
   defp deps do
     [
       {:mezzanine_core, path: "../mezzanine_core"},
+      {:mezzanine_runtime_profile, path: "../runtime_profile"},
       {:mezzanine_config_registry, path: "../config_registry"},
       {:mezzanine_audit_engine, path: "../audit_engine"},
       {:mezzanine_object_engine, path: "../object_engine"},

@@ -1,6 +1,8 @@
 defmodule Mezzanine.WorkflowRuntime.TemporalexAdapterTest do
   use ExUnit.Case, async: false
 
+  alias Mezzanine.RuntimeProfile
+  alias Mezzanine.RuntimeProfileStore
   alias Mezzanine.WorkflowRuntime.TemporalexAdapter
 
   defmodule FakeBoundary do
@@ -101,17 +103,13 @@ defmodule Mezzanine.WorkflowRuntime.TemporalexAdapterTest do
              )
   end
 
-  test "governed Temporal requests use explicit boundary instead of application config" do
-    previous_boundary = Application.get_env(:mezzanine_workflow_runtime, :temporalex_boundary)
-    Application.put_env(:mezzanine_workflow_runtime, :temporalex_boundary, ErrorBoundary)
+  test "governed Temporal requests use explicit boundary instead of boot-profile config" do
+    profile =
+      RuntimeProfile.empty()
+      |> RuntimeProfile.put(:mezzanine_workflow_runtime, :temporalex_boundary, ErrorBoundary)
 
-    on_exit(fn ->
-      if previous_boundary do
-        Application.put_env(:mezzanine_workflow_runtime, :temporalex_boundary, previous_boundary)
-      else
-        Application.delete_env(:mezzanine_workflow_runtime, :temporalex_boundary)
-      end
-    end)
+    assert {:ok, previous_profile} = RuntimeProfileStore.replace_profile(profile)
+    on_exit(fn -> RuntimeProfileStore.replace_profile(previous_profile) end)
 
     assert {:ok, receipt} = TemporalexAdapter.start_workflow(start_request())
     assert receipt.workflow_run_id == "run-temporal-001"

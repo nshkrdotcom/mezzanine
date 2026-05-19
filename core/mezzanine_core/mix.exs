@@ -51,6 +51,7 @@ defmodule MezzanineCore.MixProject do
 
   defp deps do
     [
+      {:mezzanine_runtime_profile, path: "../runtime_profile"},
       DependencySources.dep(:ground_plane_persistence_policy, @repo_root, override: true),
       {:telemetry, "~> 1.3"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},

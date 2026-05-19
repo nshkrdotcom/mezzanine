@@ -77,7 +77,7 @@ defmodule Mezzanine.WorkflowRuntime.TemporalSupervisor do
       if Keyword.get(overrides, :governed?, false) do
         []
       else
-        Application.get_env(:mezzanine_workflow_runtime, :temporal, [])
+        Mezzanine.RuntimeProfileStore.keyword_config(:mezzanine_workflow_runtime, :temporal, [])
       end
 
     base_config

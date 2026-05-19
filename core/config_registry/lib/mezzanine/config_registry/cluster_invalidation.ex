@@ -138,7 +138,10 @@ defmodule Mezzanine.ConfigRegistry.ClusterInvalidation do
   end
 
   defp configured_publish(%__MODULE__{} = message) do
-    case Application.get_env(:mezzanine_config_registry, :cluster_invalidation_publisher) do
+    case Mezzanine.RuntimeProfileStore.config(
+           :mezzanine_config_registry,
+           :cluster_invalidation_publisher
+         ) do
       nil ->
         telemetry_publish(message)
 

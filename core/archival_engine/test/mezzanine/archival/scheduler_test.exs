@@ -3,15 +3,22 @@ defmodule Mezzanine.Archival.SchedulerTest do
 
   alias Ecto.Adapters.SQL
   alias Mezzanine.Archival.{ArchivalManifest, Query, Repo, Scheduler}
+  alias Mezzanine.RuntimeProfile
+  alias Mezzanine.RuntimeProfileStore
 
   setup do
     root = Path.expand("../tmp/test_scheduler_store", __DIR__)
     File.rm_rf(root)
 
-    Application.put_env(:mezzanine_archival_engine, :cold_store,
-      module: Mezzanine.Archival.FileSystemColdStore,
-      root: root
-    )
+    {:ok, previous_profile} =
+      replace_runtime_profile(
+        cold_store: [
+          module: Mezzanine.Archival.FileSystemColdStore,
+          root: root
+        ]
+      )
+
+    on_exit(fn -> RuntimeProfileStore.replace_profile(previous_profile) end)
 
     :ok
   end
@@ -117,9 +124,11 @@ defmodule Mezzanine.Archival.SchedulerTest do
     insert_subject(subject_id, installation_id, terminal_at)
     insert_execution(execution_id, subject_id, installation_id, "trace-failure")
 
-    Application.put_env(:mezzanine_archival_engine, :cold_store,
-      module: Mezzanine.Archival.FileSystemColdStore,
-      root: "/dev/null/unwritable"
+    replace_runtime_profile(
+      cold_store: [
+        module: Mezzanine.Archival.FileSystemColdStore,
+        root: "/dev/null/unwritable"
+      ]
     )
 
     attach_telemetry(self())
@@ -309,6 +318,14 @@ defmodule Mezzanine.Archival.SchedulerTest do
         trace_id
       ]
     )
+  end
+
+  defp replace_runtime_profile(config) do
+    profile =
+      RuntimeProfileStore.profile()
+      |> RuntimeProfile.put_config(:mezzanine_archival_engine, config)
+
+    RuntimeProfileStore.replace_profile(profile)
   end
 
   defp hot_count(table, id) do

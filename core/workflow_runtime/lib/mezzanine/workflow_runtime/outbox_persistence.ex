@@ -24,7 +24,7 @@ defmodule Mezzanine.WorkflowRuntime.OutboxPersistence do
 
   defp store do
     :mezzanine_workflow_runtime
-    |> Application.get_env(:outbox_persistence, [])
+    |> Mezzanine.RuntimeProfileStore.keyword_config(:outbox_persistence, [])
     |> Keyword.get(:store, Mezzanine.WorkflowRuntime.OutboxPersistence.Memory)
   end
 end
@@ -210,7 +210,7 @@ defmodule Mezzanine.WorkflowRuntime.OutboxPersistence.SQL do
 
   defp repo do
     :mezzanine_workflow_runtime
-    |> Application.get_env(:outbox_persistence, [])
+    |> Mezzanine.RuntimeProfileStore.keyword_config(:outbox_persistence, [])
     |> Keyword.get(:repo, Mezzanine.Execution.Repo)
   end
 

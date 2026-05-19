@@ -2,6 +2,8 @@ defmodule Mezzanine.WorkflowRuntime.OperatorSignalControlTest do
   use ExUnit.Case, async: false
 
   alias Mezzanine.WorkflowRuntime.OperatorSignalControl
+  alias Mezzanine.RuntimeProfile
+  alias Mezzanine.RuntimeProfileStore
   alias Mezzanine.WorkflowRuntime.WorkflowSignalOutboxWorker
   alias Mezzanine.Workflows.DecisionReview
 
@@ -60,27 +62,11 @@ defmodule Mezzanine.WorkflowRuntime.OperatorSignalControlTest do
   end
 
   setup do
-    previous = Application.get_env(:mezzanine_core, :workflow_runtime_impl)
-    previous_outbox = Application.get_env(:mezzanine_workflow_runtime, :outbox_persistence)
-
-    Application.put_env(:mezzanine_core, :workflow_runtime_impl, SignalRuntime)
-
-    Application.put_env(:mezzanine_workflow_runtime, :outbox_persistence,
-      store: RecordingOutboxStore
-    )
+    {:ok, previous_profile} =
+      RuntimeProfileStore.replace_profile(runtime_profile(outbox_store: RecordingOutboxStore))
 
     on_exit(fn ->
-      if previous do
-        Application.put_env(:mezzanine_core, :workflow_runtime_impl, previous)
-      else
-        Application.delete_env(:mezzanine_core, :workflow_runtime_impl)
-      end
-
-      if previous_outbox do
-        Application.put_env(:mezzanine_workflow_runtime, :outbox_persistence, previous_outbox)
-      else
-        Application.delete_env(:mezzanine_workflow_runtime, :outbox_persistence)
-      end
+      RuntimeProfileStore.replace_profile(previous_profile)
     end)
   end
 
@@ -201,9 +187,7 @@ defmodule Mezzanine.WorkflowRuntime.OperatorSignalControlTest do
   end
 
   test "retained signal worker does not ack when outcome persistence fails" do
-    Application.put_env(:mezzanine_workflow_runtime, :outbox_persistence,
-      store: FailingOutboxStore
-    )
+    replace_runtime_profile(outbox_store: FailingOutboxStore)
 
     assert {:ok, accepted} = OperatorSignalControl.accept_operator_signal(signal_attrs())
 
@@ -374,5 +358,17 @@ defmodule Mezzanine.WorkflowRuntime.OperatorSignalControlTest do
       payload_hash: String.duplicate("d", 64),
       payload_ref: "claim://operator-signal/097"
     }
+  end
+
+  defp replace_runtime_profile(opts) do
+    RuntimeProfileStore.replace_profile(runtime_profile(opts))
+  end
+
+  defp runtime_profile(opts) do
+    outbox_store = Keyword.fetch!(opts, :outbox_store)
+
+    RuntimeProfile.empty()
+    |> RuntimeProfile.put(:mezzanine_core, :workflow_runtime_impl, SignalRuntime)
+    |> RuntimeProfile.put(:mezzanine_workflow_runtime, :outbox_persistence, store: outbox_store)
   end
 end

@@ -4,8 +4,9 @@ defmodule Mezzanine.Build.InternalModularityContract do
   @root Path.expand("..", __DIR__)
 
   @package_specs [
+    %{path: "core/runtime_profile", allowed_internal_deps: []},
     %{path: "core/substrate_model", allowed_internal_deps: []},
-    %{path: "core/mezzanine_core", allowed_internal_deps: []},
+    %{path: "core/mezzanine_core", allowed_internal_deps: ["core/runtime_profile"]},
     %{path: "core/ops_model", allowed_internal_deps: []},
     %{path: "core/ops_domain", allowed_internal_deps: ["core/ops_model"]},
     %{path: "core/pack_model", allowed_internal_deps: []},
@@ -14,14 +15,18 @@ defmodule Mezzanine.Build.InternalModularityContract do
       path: "core/barriers",
       allowed_internal_deps: ["core/execution_engine", "core/mezzanine_core"]
     },
-    %{path: "core/leasing", allowed_internal_deps: ["core/mezzanine_core"]},
+    %{
+      path: "core/leasing",
+      allowed_internal_deps: ["core/mezzanine_core", "core/runtime_profile"]
+    },
     %{
       path: "core/config_registry",
       allowed_internal_deps: [
         "core/execution_engine",
         "core/leasing",
         "core/pack_compiler",
-        "core/pack_model"
+        "core/pack_model",
+        "core/runtime_profile"
       ]
     },
     %{
@@ -70,7 +75,10 @@ defmodule Mezzanine.Build.InternalModularityContract do
         "core/object_engine"
       ]
     },
-    %{path: "core/workflow_runtime", allowed_internal_deps: ["core/mezzanine_core"]},
+    %{
+      path: "core/workflow_runtime",
+      allowed_internal_deps: ["core/mezzanine_core", "core/runtime_profile"]
+    },
     %{
       path: "core/m1_m2_runtime",
       allowed_internal_deps: [
@@ -147,7 +155,8 @@ defmodule Mezzanine.Build.InternalModularityContract do
         "core/evidence_engine",
         "core/execution_engine",
         "core/mezzanine_core",
-        "core/object_engine"
+        "core/object_engine",
+        "core/runtime_profile"
       ]
     }
   ]

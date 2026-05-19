@@ -61,6 +61,7 @@ defmodule MezzanineConfigRegistry.MixProject do
 
   defp deps do
     [
+      {:mezzanine_runtime_profile, path: "../runtime_profile"},
       {:mezzanine_execution_engine, path: "../execution_engine"},
       {:mezzanine_leasing, path: "../leasing"},
       {:mezzanine_pack_model, path: "../pack_model"},

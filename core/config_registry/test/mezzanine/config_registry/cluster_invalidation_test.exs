@@ -2,6 +2,8 @@ defmodule Mezzanine.ConfigRegistry.ClusterInvalidationTest do
   use ExUnit.Case, async: false
 
   alias Mezzanine.ConfigRegistry.ClusterInvalidation
+  alias Mezzanine.RuntimeProfile
+  alias Mezzanine.RuntimeProfileStore
 
   @node_ref "node://mez_1@127.0.0.1/node-a"
   @commit_hlc %{
@@ -114,26 +116,7 @@ defmodule Mezzanine.ConfigRegistry.ClusterInvalidationTest do
     pubsub = Mezzanine.ConfigRegistry.ClusterInvalidationTest.PubSub
     start_supervised!({Phoenix.PubSub, name: pubsub})
 
-    previous_publisher =
-      Application.get_env(:mezzanine_config_registry, :cluster_invalidation_publisher)
-
-    Application.put_env(
-      :mezzanine_config_registry,
-      :cluster_invalidation_publisher,
-      {:phoenix_pubsub, pubsub}
-    )
-
-    on_exit(fn ->
-      if is_nil(previous_publisher) do
-        Application.delete_env(:mezzanine_config_registry, :cluster_invalidation_publisher)
-      else
-        Application.put_env(
-          :mezzanine_config_registry,
-          :cluster_invalidation_publisher,
-          previous_publisher
-        )
-      end
-    end)
+    replace_runtime_profile(cluster_invalidation_publisher: {:phoenix_pubsub, pubsub})
 
     message =
       ClusterInvalidation.new!(%{
@@ -160,5 +143,14 @@ defmodule Mezzanine.ConfigRegistry.ClusterInvalidationTest do
 
     assert_receive {:cluster_invalidation, ^message}
     assert_receive {:cluster_invalidation, ^message}
+  end
+
+  defp replace_runtime_profile(config) do
+    profile =
+      RuntimeProfileStore.profile()
+      |> RuntimeProfile.put_config(:mezzanine_config_registry, config)
+
+    assert {:ok, previous_profile} = RuntimeProfileStore.replace_profile(profile)
+    on_exit(fn -> RuntimeProfileStore.replace_profile(previous_profile) end)
   end
 end

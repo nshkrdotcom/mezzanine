@@ -3,9 +3,9 @@ defmodule Mezzanine.GovernedRuntimeConfig do
   Bounded runtime-module resolver for governed Mezzanine effects.
 
   Explicit modules carried by the caller win. When `:governed_default?` is set
-  and the request carries authority/workflow markers, application config is not
-  consulted; the compiled default is used instead. Standalone callers can keep
-  application config compatibility by leaving that option disabled.
+  and the request carries authority/workflow markers, the boot profile is not
+  consulted; the compiled default is used instead. Standalone callers can pass
+  an explicit `:runtime_profile` or `:runtime_profile_store`.
   """
 
   @runtime_module_keys [
@@ -24,6 +24,8 @@ defmodule Mezzanine.GovernedRuntimeConfig do
                 :lower_submission_ref,
                 :permission_decision_ref,
                 :release_manifest_ref,
+                :runtime_profile,
+                :runtime_profile_store,
                 :runtime_modules,
                 :signal_id,
                 :tenant_id,
@@ -60,11 +62,7 @@ defmodule Mezzanine.GovernedRuntimeConfig do
     attrs = normalize(attrs)
 
     explicit_module(attrs, key) ||
-      if Keyword.get(opts, :governed_default?, false) and governed?(attrs) do
-        default
-      else
-        Application.get_env(app, key, default)
-      end
+      configured_module(attrs, app, key, default, opts)
   end
 
   @spec governed?(attrs()) :: boolean()
@@ -86,6 +84,28 @@ defmodule Mezzanine.GovernedRuntimeConfig do
     case map_value(attrs, container_key) do
       %{} = modules -> map_value(modules, key)
       _other -> nil
+    end
+  end
+
+  defp configured_module(attrs, app, key, default, opts) do
+    if Keyword.get(opts, :governed_default?, false) and governed?(attrs) do
+      default
+    else
+      profile = Keyword.get(opts, :runtime_profile) || map_value(attrs, :runtime_profile)
+
+      store =
+        Keyword.get(opts, :runtime_profile_store) || map_value(attrs, :runtime_profile_store)
+
+      cond do
+        match?(%Mezzanine.RuntimeProfile{}, profile) ->
+          Mezzanine.RuntimeProfile.module(profile, app, key, default)
+
+        not is_nil(store) ->
+          Mezzanine.RuntimeProfileStore.module(app, key, default, store)
+
+        true ->
+          Mezzanine.RuntimeProfileStore.module(app, key, default)
+      end
     end
   end
 

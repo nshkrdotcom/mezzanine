@@ -10,6 +10,7 @@ defmodule Mezzanine.Workspace do
   ]
 
   @neutral_package_paths [
+    "core/runtime_profile",
     "core/substrate_model",
     "core/pack_model",
     "core/pack_compiler",

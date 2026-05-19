@@ -2,6 +2,8 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
   use ExUnit.Case, async: false
   use Temporalex.Testing
 
+  alias Mezzanine.RuntimeProfile
+  alias Mezzanine.RuntimeProfileStore
   alias Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow
   alias Mezzanine.WorkspaceEngine.Allocator
   alias Mezzanine.Workflows.ExecutionAttempt
@@ -623,26 +625,22 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
              ExecutionLifecycleWorkflow.compile_citadel_authority_activity(attrs)
   end
 
-  test "governed activity dispatch ignores application-configured bridges and reducers" do
-    previous_integration = Application.get_env(:mezzanine_workflow_runtime, :integration_bridge)
-    previous_reducer = Application.get_env(:mezzanine_workflow_runtime, :receipt_reducer)
+  test "governed activity dispatch ignores boot-profile bridges and reducers" do
+    profile =
+      RuntimeProfile.empty()
+      |> RuntimeProfile.put(
+        :mezzanine_workflow_runtime,
+        :integration_bridge,
+        EnvConfiguredIntegrationBridge
+      )
+      |> RuntimeProfile.put(
+        :mezzanine_workflow_runtime,
+        :receipt_reducer,
+        EnvConfiguredReceiptReducer
+      )
 
-    Application.put_env(
-      :mezzanine_workflow_runtime,
-      :integration_bridge,
-      EnvConfiguredIntegrationBridge
-    )
-
-    Application.put_env(
-      :mezzanine_workflow_runtime,
-      :receipt_reducer,
-      EnvConfiguredReceiptReducer
-    )
-
-    on_exit(fn ->
-      restore_app_env(:mezzanine_workflow_runtime, :integration_bridge, previous_integration)
-      restore_app_env(:mezzanine_workflow_runtime, :receipt_reducer, previous_reducer)
-    end)
+    assert {:ok, previous_profile} = RuntimeProfileStore.replace_profile(profile)
+    on_exit(fn -> RuntimeProfileStore.replace_profile(previous_profile) end)
 
     attrs = lifecycle_attrs()
     assert {:ok, authority} = ExecutionLifecycleWorkflow.compile_citadel_authority_activity(attrs)
@@ -1033,7 +1031,4 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     File.mkdir_p!(path)
     path
   end
-
-  defp restore_app_env(app, key, nil), do: Application.delete_env(app, key)
-  defp restore_app_env(app, key, value), do: Application.put_env(app, key, value)
 end

@@ -363,7 +363,8 @@ defmodule Mezzanine.Archival.Scheduler do
   end
 
   defp scheduler_config(key, default) do
-    Application.fetch_env!(:mezzanine_archival_engine, :scheduler)
+    :mezzanine_archival_engine
+    |> Mezzanine.RuntimeProfileStore.keyword_config(:scheduler, [])
     |> Keyword.get(key, default)
   end
 

@@ -466,7 +466,7 @@ defmodule MezzanineConfigRegistry do
 
   defp access_graph_store(opts) do
     Keyword.get(opts, :access_graph_store) ||
-      Application.get_env(:mezzanine_config_registry, :access_graph_store)
+      Mezzanine.RuntimeProfileStore.config(:mezzanine_config_registry, :access_graph_store)
   end
 
   defp installation_graph_edges(%Installation{} = installation, opts) do

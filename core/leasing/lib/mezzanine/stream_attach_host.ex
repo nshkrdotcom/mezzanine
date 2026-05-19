@@ -39,7 +39,7 @@ defmodule Mezzanine.StreamAttachHost do
       Keyword.get(
         opts,
         :poll_interval_ms,
-        Application.get_env(:mezzanine_leasing, :default_poll_interval_ms, 2_000)
+        Mezzanine.RuntimeProfileStore.config(:mezzanine_leasing, :default_poll_interval_ms, 2_000)
       )
 
     if poll_interval_ms > 2_000 do

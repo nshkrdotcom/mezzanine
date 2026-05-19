@@ -154,7 +154,10 @@ defmodule Mezzanine.Pack.Registry do
   end
 
   defp maybe_subscribe_cache_fanout do
-    case Application.get_env(:mezzanine_config_registry, :cluster_invalidation_publisher) do
+    case Mezzanine.RuntimeProfileStore.config(
+           :mezzanine_config_registry,
+           :cluster_invalidation_publisher
+         ) do
       {:phoenix_pubsub, pubsub_name} ->
         Phoenix.PubSub.subscribe(pubsub_name, ClusterInvalidation.cache_fanout_topic())
 
