@@ -14,6 +14,7 @@ defmodule Mezzanine.Build.WeldContract do
   @manifest_dependencies [
     :citadel_governance,
     :execution_plane,
+    :execution_plane_process,
     :outer_brain_context_budget,
     :outer_brain_memory_contracts,
     :outer_brain_token_meter,
@@ -30,6 +31,7 @@ defmodule Mezzanine.Build.WeldContract do
 
   @manifest_dependency_opts %{
     execution_plane: [override: true],
+    execution_plane_process: [override: true],
     ground_plane_contracts: [override: true],
     ground_plane_persistence_policy: [override: true]
   }

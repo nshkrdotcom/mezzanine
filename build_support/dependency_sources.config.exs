@@ -33,9 +33,11 @@ end
         subdir: "core/execution_plane"
       },
       hex: "~> 0.1.0",
-      default_order: [:github, :hex, :path],
+      default_order: [:path, :github, :hex],
       publish_order: [:hex]
     },
+    execution_plane_process:
+      dep.("execution_plane", "runtimes/execution_plane_process", "~> 0.1.0"),
     gepa_framework: root_dep.("gepa_framework", "~> 0.1.0"),
     ground_plane_contracts: dep.("ground_plane", "core/ground_plane_contracts", "~> 0.1.0"),
     ground_plane_persistence_policy: dep.("ground_plane", "core/persistence_policy", "~> 0.1.0"),

@@ -1,6 +1,11 @@
+unless Code.ensure_loaded?(DependencySources) do
+  Code.require_file("../../build_support/dependency_sources.exs", __DIR__)
+end
+
 defmodule MezzanineWorkspaceEngine.MixProject do
   use Mix.Project
 
+  @repo_root Path.expand("../..", __DIR__)
   @source_url "https://github.com/nshkrdotcom/mezzanine"
 
   def project do
@@ -46,6 +51,9 @@ defmodule MezzanineWorkspaceEngine.MixProject do
 
   defp deps do
     [
+      DependencySources.dep(:execution_plane, @repo_root, override: true),
+      DependencySources.dep(:execution_plane_process, @repo_root, override: true),
+      DependencySources.dep(:ground_plane_contracts, @repo_root, override: true),
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.40.1", only: :dev, runtime: false}

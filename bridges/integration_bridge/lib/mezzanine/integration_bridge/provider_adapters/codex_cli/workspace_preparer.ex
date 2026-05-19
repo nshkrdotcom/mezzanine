@@ -2,7 +2,7 @@ defmodule Mezzanine.IntegrationBridge.ProviderAdapters.CodexCli.WorkspacePrepare
   @moduledoc false
 
   alias Mezzanine.IntegrationBridge.ProviderAdapters.CodexCli.Support
-  alias Mezzanine.WorkspaceEngine.{Hooks, LocalCommandRunner, WorkspaceRecord}
+  alias Mezzanine.WorkspaceEngine.{ExecutionPlaneCommandRunner, Hooks, WorkspaceRecord}
 
   @spec prepare(String.t() | nil, keyword()) :: :ok | {:error, term()}
   def prepare(workspace_root, opts) when is_binary(workspace_root) do
@@ -60,7 +60,7 @@ defmodule Mezzanine.IntegrationBridge.ProviderAdapters.CodexCli.WorkspacePrepare
     Keyword.get(
       opts,
       :workspace_hook_runner,
-      LocalCommandRunner.runner(env: Keyword.get(opts, :workspace_hook_env, %{}))
+      ExecutionPlaneCommandRunner.runner(env: Keyword.get(opts, :workspace_hook_env, %{}))
     )
   end
 

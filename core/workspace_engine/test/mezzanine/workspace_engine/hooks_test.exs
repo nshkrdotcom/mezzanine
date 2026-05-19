@@ -1,7 +1,17 @@
 defmodule Mezzanine.WorkspaceEngine.HooksTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
-  alias Mezzanine.WorkspaceEngine.{Allocator, Hooks, LocalCommandRunner}
+  alias Mezzanine.WorkspaceEngine.{
+    Allocator,
+    ExecutionPlaneCommandRunner,
+    Hooks,
+    LocalCommandRunner
+  }
+
+  setup_all do
+    Application.ensure_all_started(:execution_plane_process)
+    :ok
+  end
 
   test "runs matching workspace hooks and returns receipts" do
     {:ok, workspace} =
@@ -267,7 +277,7 @@ defmodule Mezzanine.WorkspaceEngine.HooksTest do
     assert receipt.action == :halt
   end
 
-  test "local command runner executes normalized hook command in prepared cwd" do
+  test "execution plane command runner executes normalized hook command in prepared cwd" do
     {:ok, workspace} =
       Allocator.reserve(%{
         installation_id: "installation-1",
@@ -284,12 +294,36 @@ defmodule Mezzanine.WorkspaceEngine.HooksTest do
       })
 
     assert {:ok, [receipt]} =
-             Hooks.run(workspace, :before_run, runner: LocalCommandRunner.runner())
+             Hooks.run(workspace, :before_run, runner: ExecutionPlaneCommandRunner.runner())
 
     assert receipt.status == :succeeded
     assert receipt.result.status == 0
     assert receipt.result.stdout == "ok"
     assert File.read!(Path.join(workspace.concrete_path, "marker.txt")) == "cwd-ready"
+    assert receipt.result.execution_plane.status == "succeeded"
+  end
+
+  test "local command runner is explicit simulation profile only" do
+    {:ok, workspace} =
+      Allocator.reserve(%{
+        installation_id: "installation-1",
+        subject_id: "subject-1",
+        workspace_root: tmp_dir(),
+        hook_specs: [
+          %{
+            "hook_ref" => "pre-run",
+            "stage" => "before_run",
+            "timeout_ms" => 100,
+            "command" => "printf should-not-run"
+          }
+        ]
+      })
+
+    assert {:error, {:hook_failed, receipt}} =
+             Hooks.run(workspace, :before_run, runner: LocalCommandRunner.runner())
+
+    assert receipt.status == :failed
+    assert receipt.reason == :local_command_runner_requires_simulation_profile
   end
 
   test "hook receipts redact and truncate output" do
