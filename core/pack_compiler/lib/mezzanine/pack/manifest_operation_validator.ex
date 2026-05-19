@@ -8,7 +8,7 @@ defmodule Mezzanine.Pack.ManifestOperationValidator do
     ValidationError
   }
 
-  alias Mezzanine.Pack.Compiler.Helpers, as: H
+  alias Mezzanine.Pack.Canonicalizer, as: H
 
   @required_descriptor_fields [
     :connector_ref,

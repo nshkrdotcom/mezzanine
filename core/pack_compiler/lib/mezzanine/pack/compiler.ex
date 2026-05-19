@@ -3,7 +3,15 @@ defmodule Mezzanine.Pack.Compiler do
   Pure validation and compilation entrypoint for neutral Mezzanine domain packs.
   """
 
-  alias Mezzanine.Pack.{Builder, CompiledPack, Manifest, Normalizer, ValidationError, Validator}
+  alias Mezzanine.Pack.{
+    CompiledPack,
+    Diagnostics,
+    Manifest,
+    ManifestEmitter,
+    Normalizer,
+    SchemaValidator,
+    ValidationError
+  }
 
   @type pack_input :: term()
   @type compile_result :: {:ok, CompiledPack.t()} | {:error, [ValidationError.t()]}
@@ -11,14 +19,14 @@ defmodule Mezzanine.Pack.Compiler do
   @spec compile(pack_input(), keyword()) :: compile_result()
   def compile(pack_or_manifest, opts \\ []) when is_list(opts) do
     with {:ok, manifest} <- load_manifest(pack_or_manifest) do
-      diagnostics = Validator.diagnostics(manifest, opts)
-      errors = Enum.filter(diagnostics, &(&1.severity == :error))
+      diagnostics = SchemaValidator.diagnostics(manifest, opts)
+      errors = Diagnostics.errors(diagnostics)
 
       case errors do
         [] ->
           manifest
           |> Normalizer.normalize()
-          |> Builder.build()
+          |> ManifestEmitter.emit()
           |> then(&{:ok, &1})
 
         _ ->
@@ -30,7 +38,7 @@ defmodule Mezzanine.Pack.Compiler do
   @spec diagnostics(pack_input(), keyword()) :: [ValidationError.t()]
   def diagnostics(pack_or_manifest, opts \\ []) when is_list(opts) do
     case load_manifest(pack_or_manifest) do
-      {:ok, manifest} -> Validator.diagnostics(manifest, opts)
+      {:ok, manifest} -> SchemaValidator.diagnostics(manifest, opts)
       {:error, issue} -> [issue]
     end
   end

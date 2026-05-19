@@ -4,8 +4,8 @@ defmodule Mezzanine.Lifecycle.Evaluator do
   """
 
   alias Mezzanine.Lifecycle.SubjectSnapshot
+  alias Mezzanine.Pack.Canonicalizer, as: H
   alias Mezzanine.Pack.{CompiledPack, SubjectContext}
-  alias Mezzanine.Pack.Compiler.Helpers, as: H
 
   @type transition_result :: {:ok, map()} | {:error, :no_transition} | {:error, :guard_failed}
 

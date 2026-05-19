@@ -403,6 +403,73 @@ defmodule Mezzanine.Pack.CompilerTest do
            ]
   end
 
+  test "keeps generic binding compiled-pack snapshot stable during compiler support extraction" do
+    assert {:ok, compiled} = Compiler.compile(generic_binding_manifest_with_workflow_graph())
+
+    graph = compiled.compiled_operation_graphs_by_ref["document_review_graph"]
+
+    snapshot = %{
+      pack_slug: compiled.pack_slug,
+      profile_slots: compiled.manifest.profile_slots,
+      binding_refs_by_kind:
+        Map.new(compiled.bindings_by_kind, fn {kind, bindings} ->
+          {kind, Enum.map(bindings, & &1.binding_ref)}
+        end),
+      workflow_refs: Map.keys(compiled.workflows_by_ref),
+      graph_roles:
+        Map.new(graph.roles_by_ref, fn {role_ref, role} ->
+          {role_ref,
+           {role.binding_kind, role.operation_role, role.operation_ref, role.operation_class}}
+        end),
+      graph_dependencies:
+        Enum.map(graph.dependencies, fn dependency ->
+          {dependency.from_role, dependency.to_role, dependency.relation}
+        end),
+      transition_states: Map.keys(compiled.transitions_by_state)
+    }
+
+    assert snapshot == %{
+             pack_slug: "toy_document_review",
+             profile_slots: %{
+               evidence_profile_ref: :review_report_evidence,
+               memory_profile_ref: :none,
+               projection_profile_ref: :document_review_projection,
+               publication_profile_ref: :document_review_publication,
+               review_profile_ref: :human_operator,
+               runtime_profile_ref: :deterministic_review_runtime,
+               source_profile_ref: :document_source_profile,
+               tool_scope_ref: :document_review_tools
+             },
+             binding_refs_by_kind: %{
+               evidence: ["review_evidence"],
+               resource_effect: ["review_state_update"],
+               runtime: ["deterministic_review_runtime"],
+               runtime_tool: ["review_lookup_tool"],
+               source: ["document_source"],
+               source_publication: ["document_publication"]
+             },
+             workflow_refs: ["document_review_workflow"],
+             graph_roles: %{
+               "document_intake" => {:source, "read", "document_read", :source_read},
+               "deterministic_review" => {:runtime, "run", "review_run", :runtime_operation},
+               "review_evidence" =>
+                 {:evidence, "collect", "review_evidence_collect", :evidence_collection},
+               "review_publication" =>
+                 {:source_publication, "publish", "review_publish", :source_write},
+               "review_state_effect" =>
+                 {:resource_effect, "update", "review_state_update", :resource_effect}
+             },
+             graph_dependencies: [
+               {"document_intake", "deterministic_review", :blocks_on_success},
+               {"deterministic_review", "review_evidence", :parallel_allowed},
+               {"deterministic_review", "review_publication", :blocks_on_success},
+               {"review_evidence", "review_publication", :blocks_on_review},
+               {"review_publication", "review_state_effect", :blocks_on_confirmation}
+             ],
+             transition_states: []
+           }
+  end
+
   test "infers conservative default operation graph dependencies when no edges are authored" do
     manifest = generic_binding_manifest_with_workflow_graph()
 
