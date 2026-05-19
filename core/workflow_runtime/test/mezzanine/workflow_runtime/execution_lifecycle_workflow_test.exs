@@ -670,7 +670,8 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
   test "Citadel activity rejects missing or stale installation revision" do
     attrs = lifecycle_attrs()
 
-    assert {:error, "missing required Citadel routing fact :installation_revision"} =
+    assert {:error,
+            {:missing_routing_facts, :compile_citadel_authority, [:installation_revision]}} =
              attrs
              |> update_in([:routing_facts], &Map.delete(&1, :installation_revision))
              |> ExecutionLifecycleWorkflow.compile_citadel_authority_activity()
@@ -680,6 +681,13 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
              %{expected_installation_revision: 6, installation_revision: 7}}} =
              attrs
              |> put_in([:routing_facts, :expected_installation_revision], 6)
+             |> ExecutionLifecycleWorkflow.compile_citadel_authority_activity()
+  end
+
+  test "Citadel activity rejects unknown routing facts before lower dispatch" do
+    assert {:error, {:unknown_routing_fact_keys, ["surprise_provider_switch"]}} =
+             lifecycle_attrs()
+             |> put_in([:routing_facts, :surprise_provider_switch], true)
              |> ExecutionLifecycleWorkflow.compile_citadel_authority_activity()
   end
 
