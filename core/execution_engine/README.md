@@ -70,6 +70,19 @@ governed effect or fail closed to the unconfigured lower gateway fallback;
 standalone compatibility can still use application config outside governed
 dispatch.
 
+## Lower-Gateway Circuit Cache
+
+The supervised lower-gateway circuit cache process owns the VM-local circuit
+cache under the execution-engine supervision tree. Cache entries are
+process-lifetime acceleration only; the durable source of truth remains the
+`lower_gateway_circuits` table.
+
+Invalidation is best-effort across local `:pg` members and emits
+`[:mezzanine, :spine, :circuit, :invalidate]` telemetry for broadcast,
+no-group, and failure outcomes. Cache entries carry an owner-local epoch and
+are rejected when an invalidation advances the epoch, so stale local reads fail
+closed to a database fetch instead of returning a cached circuit.
+
 Primary modules:
 
 - `Mezzanine.Execution`

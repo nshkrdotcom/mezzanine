@@ -470,14 +470,22 @@ defmodule Mezzanine.LowerGatewayCircuit.CacheInvalidator do
 
   use GenServer
 
+  alias Mezzanine.Telemetry
+
   @group {:mezzanine, :lower_gateway_circuits}
 
-  @type entries :: %{optional(term()) => {integer(), Mezzanine.LowerGatewayCircuit.t()}}
-  @type state :: %{entries: entries(), probe_owner: String.t()}
+  @type entries :: %{
+          optional(term()) => {integer(), non_neg_integer(), Mezzanine.LowerGatewayCircuit.t()}
+        }
+  @type epochs :: %{optional(term()) => non_neg_integer()}
+  @type state :: %{entries: entries(), epochs: epochs(), probe_owner: String.t()}
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
+
+  @spec group() :: term()
+  def group, do: @group
 
   @spec read(term(), integer(), pos_integer()) ::
           {:ok, Mezzanine.LowerGatewayCircuit.t()} | :stale
@@ -514,33 +522,71 @@ defmodule Mezzanine.LowerGatewayCircuit.CacheInvalidator do
     broadcast(cache_key)
   end
 
-  def broadcast(cache_key) do
-    if Code.ensure_loaded?(:pg) do
-      for pid <- :pg.get_members(@group) do
-        send(pid, {:invalidate_circuit_cache, cache_key})
-      end
+  @spec broadcast(term(), keyword()) :: :ok
+  def broadcast(cache_key, opts \\ []) do
+    pg = Keyword.get(opts, :pg, :pg)
+    group = Keyword.get(opts, :group, @group)
+
+    cond do
+      not Code.ensure_loaded?(pg) ->
+        emit_invalidation(:no_group, cache_key, 0, %{reason: :pg_unavailable})
+
+      not pg_running?(pg) ->
+        emit_invalidation(:no_group, cache_key, 0, %{reason: :pg_not_running})
+
+      true ->
+        maybe_join_group(group)
+        members = pg.get_members(group)
+
+        for pid <- members do
+          send(pid, {:invalidate_circuit_cache, cache_key})
+        end
+
+        if members == [] do
+          emit_invalidation(:no_group, cache_key, 0, %{reason: :empty_group})
+        else
+          emit_invalidation(:broadcast, cache_key, length(members), %{})
+        end
     end
 
     :ok
   rescue
-    _error -> :ok
+    error ->
+      emit_invalidation(:failed, cache_key, 0, %{
+        failure_kind: :error,
+        reason: Exception.message(error)
+      })
+
+      :ok
+  catch
+    :exit, reason ->
+      emit_invalidation(:failed, cache_key, 0, %{
+        failure_kind: :exit,
+        reason: inspect(reason)
+      })
+
+      :ok
   end
 
   @impl true
   def init(opts) do
-    maybe_join_group()
+    maybe_join_group(@group)
 
     {:ok,
      %{
        entries: %{},
+       epochs: %{},
        probe_owner: opts |> Keyword.get(:probe_owner, Atom.to_string(node())) |> to_string()
      }}
   end
 
   @impl true
   def handle_call({:read, cache_key, now_ms, ttl_ms}, _from, state) do
+    current_epoch = epoch(state, cache_key)
+
     case Map.fetch(state.entries, cache_key) do
-      {:ok, {cached_at_ms, circuit}} when now_ms - cached_at_ms <= ttl_ms ->
+      {:ok, {cached_at_ms, entry_epoch, circuit}}
+      when entry_epoch == current_epoch and now_ms - cached_at_ms <= ttl_ms ->
         {:reply, {:ok, circuit}, state}
 
       {:ok, _stale} ->
@@ -552,7 +598,8 @@ defmodule Mezzanine.LowerGatewayCircuit.CacheInvalidator do
   end
 
   def handle_call({:write, cache_key, now_ms, circuit}, _from, state) do
-    {:reply, :ok, %{state | entries: Map.put(state.entries, cache_key, {now_ms, circuit})}}
+    entry = {now_ms, epoch(state, cache_key), circuit}
+    {:reply, :ok, %{state | entries: Map.put(state.entries, cache_key, entry)}}
   end
 
   def handle_call(:default_probe_owner, _from, state) do
@@ -560,15 +607,45 @@ defmodule Mezzanine.LowerGatewayCircuit.CacheInvalidator do
   end
 
   def handle_call({:invalidate, cache_key}, _from, state) do
-    {:reply, :ok, %{state | entries: Map.delete(state.entries, cache_key)}}
+    {:reply, :ok, bump_epoch(state, cache_key)}
   end
 
   @impl true
   def handle_info({:invalidate_circuit_cache, cache_key}, state) do
-    {:noreply, %{state | entries: Map.delete(state.entries, cache_key)}}
+    {:noreply, bump_epoch(state, cache_key)}
   end
 
-  defp maybe_join_group do
+  defp bump_epoch(state, cache_key) do
+    next_epoch = epoch(state, cache_key) + 1
+
+    %{
+      state
+      | entries: Map.delete(state.entries, cache_key),
+        epochs: Map.put(state.epochs, cache_key, next_epoch)
+    }
+  end
+
+  defp epoch(state, cache_key), do: Map.get(state.epochs, cache_key, 0)
+
+  defp pg_running?(:pg), do: Process.whereis(:pg) != nil
+  defp pg_running?(_pg), do: true
+
+  defp emit_invalidation(status, cache_key, member_count, metadata) do
+    Telemetry.emit(
+      [:spine, :circuit, :invalidate],
+      %{count: 1, member_count: member_count},
+      Map.merge(
+        %{
+          cache_key: inspect(cache_key),
+          status: status,
+          member_count: member_count
+        },
+        metadata
+      )
+    )
+  end
+
+  defp maybe_join_group(group) do
     cond do
       not Code.ensure_loaded?(:pg) ->
         :ok
@@ -576,8 +653,11 @@ defmodule Mezzanine.LowerGatewayCircuit.CacheInvalidator do
       Process.whereis(:pg) == nil ->
         :ok
 
+      Enum.member?(:pg.get_members(group), self()) ->
+        :ok
+
       true ->
-        :pg.join(@group, self())
+        :pg.join(group, self())
         :ok
     end
   rescue

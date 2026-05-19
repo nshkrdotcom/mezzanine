@@ -129,6 +129,78 @@ defmodule Mezzanine.LowerGatewayCircuitTest do
     assert :stale = CacheInvalidator.read(cache_key, now_ms, 1_000)
   end
 
+  test "cache invalidation broadcasts to local pg members and emits success telemetry" do
+    ensure_pg_started()
+    restart_cache_invalidator()
+
+    telemetry_ids = attach_telemetry([[:mezzanine, :spine, :circuit, :invalidate]])
+    cache_key = {:mezzanine_lower_gateway_circuit, "tenant-pg", "inst-pg"}
+
+    member =
+      start_supervised!(
+        {__MODULE__.ForwardingInvalidationMember, parent: self(), group: CacheInvalidator.group()}
+      )
+
+    assert :ok = CacheInvalidator.broadcast(cache_key)
+
+    assert_receive {:forwarded_invalidation, ^member, ^cache_key}
+
+    assert_receive {:telemetry_event, [:mezzanine, :spine, :circuit, :invalidate], %{count: 1},
+                    metadata}
+
+    assert metadata.event_name == "spine.circuit.invalidate"
+    assert metadata.status == :broadcast
+    assert metadata.member_count >= 1
+    detach_telemetry(telemetry_ids)
+  end
+
+  test "cache invalidation emits no-group telemetry when no members exist" do
+    telemetry_ids = attach_telemetry([[:mezzanine, :spine, :circuit, :invalidate]])
+    cache_key = {:mezzanine_lower_gateway_circuit, "tenant-no-group", "inst-no-group"}
+
+    assert :ok = CacheInvalidator.broadcast(cache_key, pg: __MODULE__.EmptyPg)
+
+    assert_receive {:telemetry_event, [:mezzanine, :spine, :circuit, :invalidate], %{count: 1},
+                    metadata}
+
+    assert metadata.status == :no_group
+    assert metadata.member_count == 0
+    detach_telemetry(telemetry_ids)
+  end
+
+  test "cache invalidation emits failure telemetry when pg broadcast fails" do
+    telemetry_ids = attach_telemetry([[:mezzanine, :spine, :circuit, :invalidate]])
+    cache_key = {:mezzanine_lower_gateway_circuit, "tenant-failed-pg", "inst-failed-pg"}
+
+    assert :ok = CacheInvalidator.broadcast(cache_key, pg: __MODULE__.FailingPg)
+
+    assert_receive {:telemetry_event, [:mezzanine, :spine, :circuit, :invalidate], %{count: 1},
+                    metadata}
+
+    assert metadata.status == :failed
+    assert metadata.member_count == 0
+    assert metadata.failure_kind == :error
+    detach_telemetry(telemetry_ids)
+  end
+
+  test "cache epochs reject stale entries after invalidation" do
+    cache_key = {:mezzanine_lower_gateway_circuit, "tenant-epoch", "inst-epoch"}
+    now_ms = System.monotonic_time(:millisecond)
+    circuit = circuit_fixture("tenant-epoch", "inst-epoch")
+
+    assert :ok = CacheInvalidator.write(cache_key, now_ms, circuit)
+    assert {:ok, ^circuit} = CacheInvalidator.read(cache_key, now_ms, 1_000)
+
+    assert :ok = CacheInvalidator.invalidate(cache_key)
+
+    :sys.replace_state(CacheInvalidator, fn state ->
+      %{state | entries: Map.put(state.entries, cache_key, {now_ms, 0, circuit})}
+    end)
+
+    assert :stale = CacheInvalidator.read(cache_key, now_ms, 1_000)
+    assert :stale = CacheInvalidator.read(cache_key, now_ms, 1_000)
+  end
+
   defp attach_telemetry(events) do
     Enum.map(events, fn event ->
       handler_id = {__MODULE__, make_ref(), event}
@@ -145,6 +217,38 @@ defmodule Mezzanine.LowerGatewayCircuitTest do
     send(pid, {:telemetry_event, event, measurements, metadata})
   end
 
+  defp circuit_fixture(tenant_id, installation_id) do
+    %{
+      tenant_id: tenant_id,
+      installation_id: installation_id,
+      state: :closed,
+      error_count: 0,
+      window_started_at: nil,
+      opened_at: nil,
+      last_probe_at: nil,
+      generation: 1
+    }
+  end
+
+  defp ensure_pg_started do
+    case Process.whereis(:pg) do
+      nil ->
+        {:ok, _pid} = :pg.start_link()
+        :ok
+
+      _pid ->
+        :ok
+    end
+  end
+
+  defp restart_cache_invalidator do
+    old_pid = Process.whereis(CacheInvalidator)
+    Process.exit(old_pid, :kill)
+    refute Process.alive?(old_pid)
+    assert eventually_registered(CacheInvalidator) != old_pid
+    :ok
+  end
+
   defp eventually_registered(name, attempts \\ 20)
   defp eventually_registered(name, 0), do: Process.whereis(name)
 
@@ -157,5 +261,35 @@ defmodule Mezzanine.LowerGatewayCircuitTest do
       pid ->
         pid
     end
+  end
+
+  defmodule ForwardingInvalidationMember do
+    use GenServer
+
+    def start_link(opts) do
+      GenServer.start_link(__MODULE__, opts)
+    end
+
+    @impl true
+    def init(opts) do
+      parent = Keyword.fetch!(opts, :parent)
+      group = Keyword.fetch!(opts, :group)
+      :pg.join(group, self())
+      {:ok, %{parent: parent}}
+    end
+
+    @impl true
+    def handle_info({:invalidate_circuit_cache, cache_key}, state) do
+      send(state.parent, {:forwarded_invalidation, self(), cache_key})
+      {:noreply, state}
+    end
+  end
+
+  defmodule EmptyPg do
+    def get_members(_group), do: []
+  end
+
+  defmodule FailingPg do
+    def get_members(_group), do: raise("pg unavailable")
   end
 end
