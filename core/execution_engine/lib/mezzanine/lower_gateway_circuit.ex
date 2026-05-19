@@ -428,31 +428,20 @@ defmodule Mezzanine.LowerGatewayCircuit do
   end
 
   defp default_probe_owner do
-    Application.get_env(
-      :mezzanine_execution_engine,
-      :runtime_scheduler_probe_owner,
-      Atom.to_string(node())
-    )
+    CacheInvalidator.default_probe_owner()
   end
 
   defp read_cache(cache_key, now_ms) do
-    case :persistent_term.get(cache_key, nil) do
-      {cached_at_ms, circuit} when now_ms - cached_at_ms <= @cache_ttl_ms ->
-        {:ok, circuit}
-
-      _other ->
-        :stale
-    end
+    CacheInvalidator.read(cache_key, now_ms, @cache_ttl_ms)
   end
 
   defp write_cache(cache_key, now_ms, circuit) do
-    :persistent_term.put(cache_key, {now_ms, circuit})
+    CacheInvalidator.write(cache_key, now_ms, circuit)
   end
 
   defp invalidate_cache(tenant_id, installation_id) do
     cache_key = cache_key(tenant_id, installation_id)
-    :persistent_term.erase(cache_key)
-    CacheInvalidator.broadcast(cache_key)
+    CacheInvalidator.invalidate(cache_key)
   end
 
   defp cache_key(tenant_id, installation_id),
@@ -483,8 +472,46 @@ defmodule Mezzanine.LowerGatewayCircuit.CacheInvalidator do
 
   @group {:mezzanine, :lower_gateway_circuits}
 
+  @type entries :: %{optional(term()) => {integer(), Mezzanine.LowerGatewayCircuit.t()}}
+  @type state :: %{entries: entries(), probe_owner: String.t()}
+
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  end
+
+  @spec read(term(), integer(), pos_integer()) ::
+          {:ok, Mezzanine.LowerGatewayCircuit.t()} | :stale
+  def read(cache_key, now_ms, ttl_ms) do
+    case Process.whereis(__MODULE__) do
+      nil -> :stale
+      pid -> GenServer.call(pid, {:read, cache_key, now_ms, ttl_ms})
+    end
+  end
+
+  @spec write(term(), integer(), Mezzanine.LowerGatewayCircuit.t()) :: :ok
+  def write(cache_key, now_ms, circuit) do
+    case Process.whereis(__MODULE__) do
+      nil -> :ok
+      pid -> GenServer.call(pid, {:write, cache_key, now_ms, circuit})
+    end
+  end
+
+  @spec default_probe_owner() :: String.t()
+  def default_probe_owner do
+    case Process.whereis(__MODULE__) do
+      nil -> Atom.to_string(node())
+      pid -> GenServer.call(pid, :default_probe_owner)
+    end
+  end
+
+  @spec invalidate(term()) :: :ok
+  def invalidate(cache_key) do
+    case Process.whereis(__MODULE__) do
+      nil -> :ok
+      pid -> GenServer.call(pid, {:invalidate, cache_key})
+    end
+
+    broadcast(cache_key)
   end
 
   def broadcast(cache_key) do
@@ -500,16 +527,45 @@ defmodule Mezzanine.LowerGatewayCircuit.CacheInvalidator do
   end
 
   @impl true
-  def init(_opts) do
+  def init(opts) do
     maybe_join_group()
 
-    {:ok, %{}}
+    {:ok,
+     %{
+       entries: %{},
+       probe_owner: opts |> Keyword.get(:probe_owner, Atom.to_string(node())) |> to_string()
+     }}
+  end
+
+  @impl true
+  def handle_call({:read, cache_key, now_ms, ttl_ms}, _from, state) do
+    case Map.fetch(state.entries, cache_key) do
+      {:ok, {cached_at_ms, circuit}} when now_ms - cached_at_ms <= ttl_ms ->
+        {:reply, {:ok, circuit}, state}
+
+      {:ok, _stale} ->
+        {:reply, :stale, %{state | entries: Map.delete(state.entries, cache_key)}}
+
+      :error ->
+        {:reply, :stale, state}
+    end
+  end
+
+  def handle_call({:write, cache_key, now_ms, circuit}, _from, state) do
+    {:reply, :ok, %{state | entries: Map.put(state.entries, cache_key, {now_ms, circuit})}}
+  end
+
+  def handle_call(:default_probe_owner, _from, state) do
+    {:reply, state.probe_owner, state}
+  end
+
+  def handle_call({:invalidate, cache_key}, _from, state) do
+    {:reply, :ok, %{state | entries: Map.delete(state.entries, cache_key)}}
   end
 
   @impl true
   def handle_info({:invalidate_circuit_cache, cache_key}, state) do
-    :persistent_term.erase(cache_key)
-    {:noreply, state}
+    {:noreply, %{state | entries: Map.delete(state.entries, cache_key)}}
   end
 
   defp maybe_join_group do

@@ -3,6 +3,7 @@ defmodule Mezzanine.LowerGatewayCircuitTest do
 
   alias Mezzanine.Execution.Repo
   alias Mezzanine.LowerGatewayCircuit
+  alias Mezzanine.LowerGatewayCircuit.CacheInvalidator
 
   test "persisted circuit timestamps round-trip as DateTime values" do
     telemetry_ids = attach_telemetry([[:mezzanine, :spine, :circuit, :open]])
@@ -100,6 +101,34 @@ defmodule Mezzanine.LowerGatewayCircuitTest do
     detach_telemetry(telemetry_ids)
   end
 
+  test "circuit cache is owned by the supervised invalidator and cleared after owner restart" do
+    tenant_id = "tenant-cache-owner"
+    installation_id = "inst-cache-owner"
+    now = DateTime.utc_now() |> DateTime.truncate(:microsecond)
+
+    assert {:ok, circuit} =
+             LowerGatewayCircuit.record_failure(tenant_id, installation_id,
+               now: now,
+               repo: Repo
+             )
+
+    assert circuit.error_count == 1
+
+    assert %{error_count: 1} = LowerGatewayCircuit.fetch(tenant_id, installation_id, repo: Repo)
+
+    cache_key = {:mezzanine_lower_gateway_circuit, tenant_id, installation_id}
+    now_ms = System.monotonic_time(:millisecond)
+    assert {:ok, %{error_count: 1}} = CacheInvalidator.read(cache_key, now_ms, 1_000)
+
+    old_pid = Process.whereis(CacheInvalidator)
+    Process.exit(old_pid, :kill)
+    refute Process.alive?(old_pid)
+
+    assert restarted_pid = eventually_registered(CacheInvalidator)
+    assert restarted_pid != old_pid
+    assert :stale = CacheInvalidator.read(cache_key, now_ms, 1_000)
+  end
+
   defp attach_telemetry(events) do
     Enum.map(events, fn event ->
       handler_id = {__MODULE__, make_ref(), event}
@@ -114,5 +143,19 @@ defmodule Mezzanine.LowerGatewayCircuitTest do
 
   def handle_telemetry_event(event, measurements, metadata, pid) do
     send(pid, {:telemetry_event, event, measurements, metadata})
+  end
+
+  defp eventually_registered(name, attempts \\ 20)
+  defp eventually_registered(name, 0), do: Process.whereis(name)
+
+  defp eventually_registered(name, attempts) do
+    case Process.whereis(name) do
+      nil ->
+        Process.sleep(25)
+        eventually_registered(name, attempts - 1)
+
+      pid ->
+        pid
+    end
   end
 end

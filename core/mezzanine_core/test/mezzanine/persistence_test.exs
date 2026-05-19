@@ -1,5 +1,5 @@
 defmodule Mezzanine.PersistenceTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Mezzanine.Persistence
   alias Mezzanine.Persistence.MemoryStore
@@ -31,5 +31,34 @@ defmodule Mezzanine.PersistenceTest do
     assert event.sequence == 1
     assert {:ok, stored} = MemoryStore.fetch(:phase_5_test, row.id)
     assert stored.events == [event]
+  end
+
+  test "memory store is supervised and restart-scoped" do
+    MemoryStore.reset!(:phase_15_restart_test)
+
+    assert {:ok, row} = MemoryStore.put(:phase_15_restart_test, %{kind: :ephemeral})
+    assert {:ok, _stored} = MemoryStore.fetch(:phase_15_restart_test, row.id)
+
+    old_pid = Process.whereis(MemoryStore)
+    Process.exit(old_pid, :kill)
+    refute Process.alive?(old_pid)
+
+    assert restarted_pid = eventually_registered(MemoryStore)
+    assert restarted_pid != old_pid
+    assert {:error, :not_found} = MemoryStore.fetch(:phase_15_restart_test, row.id)
+  end
+
+  defp eventually_registered(name, attempts \\ 20)
+  defp eventually_registered(name, 0), do: Process.whereis(name)
+
+  defp eventually_registered(name, attempts) do
+    case Process.whereis(name) do
+      nil ->
+        Process.sleep(25)
+        eventually_registered(name, attempts - 1)
+
+      pid ->
+        pid
+    end
   end
 end
