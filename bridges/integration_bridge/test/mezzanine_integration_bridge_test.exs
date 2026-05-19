@@ -10,6 +10,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
   alias Mezzanine.IntegrationBridge
   alias Mezzanine.IntegrationBridge.AuthorizedInvocation
   alias Mezzanine.IntegrationBridge.ProviderAdapters.CodexCli.AgentRuntime, as: CodexAgentRuntime
+  alias Mezzanine.IntegrationBridge.ProviderAdapters.CodexCli.ReceiptNormalizer
 
   alias Mezzanine.IntegrationBridge.ProviderAdapters.GitHub.PrBranchCleanupRuntime,
     as: GitHubPrBranchCleanupRuntime
@@ -1097,6 +1098,100 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert receipt.stage == :before_run
     assert receipt.status == :succeeded
     assert receipt.result.stdout == "ready [REDACTED]"
+  end
+
+  test "Codex agent runtime installs connection when no connection id is supplied" do
+    attrs =
+      codex_agent_attrs()
+      |> Map.put(:run_ref, "run://sample-app/codex-install")
+      |> Map.put(:idempotency_key, "idem-codex-install")
+
+    start_install_fun = fn connector_id, tenant_id, params ->
+      send(self(), {:codex_start_install, connector_id, tenant_id, params})
+
+      {:ok,
+       %{
+         install: %{install_id: "install-codex"},
+         connection: %{connection_id: "conn-codex-started"}
+       }}
+    end
+
+    complete_install_fun = fn install_id, params ->
+      send(self(), {:codex_complete_install, install_id, params})
+
+      {:ok, %{connection: %{connection_id: "conn-codex-completed"}}}
+    end
+
+    invoke_fun = fn capability_id, input, opts ->
+      send(self(), {:codex_installed_connection_invoke, capability_id, input, opts})
+
+      {:ok,
+       %{
+         run: %{run_id: "jido-run-codex-install"},
+         attempt: %{attempt_id: "jido-attempt-codex-install"},
+         output: %{provider_session_id: "codex-install-session", status: :completed}
+       }}
+    end
+
+    assert {:ok, projection} =
+             CodexAgentRuntime.run(attrs,
+               start_install_fun: start_install_fun,
+               complete_install_fun: complete_install_fun,
+               invoke_fun: invoke_fun,
+               start_runtime_router?: false,
+               register_connector?: false
+             )
+
+    assert_received {:codex_start_install, "codex_cli", "tenant://neutral", start_params}
+    assert start_params.actor_id == "actor://mezzanine/codex-agent-runtime"
+
+    assert start_params.requested_scopes == [
+             "session:execute",
+             "session:control",
+             "session:tools"
+           ]
+
+    assert_received {:codex_complete_install, "install-codex", complete_params}
+    assert complete_params.secret.access_token == "codex-native-auth-redacted"
+
+    assert_received {:codex_installed_connection_invoke, "codex.session.turn", _input,
+                     invoke_opts}
+
+    assert Keyword.fetch!(invoke_opts, :connection_id) == "conn-codex-completed"
+    assert projection.status == "completed"
+  end
+
+  test "Codex receipt normalizer emits governed operation receipt lineage" do
+    receipt =
+      ReceiptNormalizer.operation_receipt(
+        %{
+          tenant_ref: "tenant://sample-app",
+          subject_ref: "subject://sample-app/codex",
+          run_ref: "run://sample-app/codex",
+          trace_id: "trace://sample-app/codex"
+        },
+        "codex.session.turn",
+        "lower-request://jido-run-codex/codex.session.turn",
+        "lower-receipt://jido-attempt-codex/codex.session.turn/succeeded",
+        "completed",
+        ["artifact://codex/output"],
+        %{
+          connector_binding_ref: "connector-binding://codex/conn-codex",
+          credential_lease_ref: "credential-lease://codex/conn-codex/lease",
+          authority_packet_ref: "authority-packet://codex",
+          handoff_ref: "authority-handoff://codex"
+        }
+      )
+
+    assert receipt.status == "succeeded"
+    assert receipt.capability_id == "codex.session.turn"
+    assert receipt.connector_ref == "jido/connectors/codex_cli"
+    assert receipt.connector_manifest_ref == "manifest://jido/connectors/codex_cli@local"
+    assert receipt.connector_binding_ref == "connector-binding://codex/conn-codex"
+    assert receipt.credential_lease_ref == "credential-lease://codex/conn-codex/lease"
+    assert receipt.authority_ref == "authority-packet://codex"
+    assert receipt.authority_handoff_ref == "authority-handoff://codex"
+    assert receipt.artifact_refs == ["artifact://codex/output"]
   end
 
   test "Codex agent runtime invokes Jido codex.session.turn and returns AppKit readback projection" do
