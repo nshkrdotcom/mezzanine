@@ -26,6 +26,14 @@ defmodule Mezzanine.IntegrationBridgeTest do
   alias Mezzanine.IntegrationBridge.ProviderAuthorityAdmission
   alias Mezzanine.Intent.{EffectIntent, ReadIntent, RunIntent}
 
+  @forbidden_authority_key_aliases %{
+    "CODEX_API_KEY" => :codex_api_key,
+    "GH_TOKEN" => :gh_token,
+    "GITHUB_TOKEN" => :github_token,
+    "LINEAR_API_KEY" => :linear_api_key,
+    "OPENAI_API_KEY" => :openai_api_key
+  }
+
   defmodule EvidenceAdapter do
     def fetch(attrs, opts) do
       send(self(), {:evidence_adapter_fetch, attrs, opts})
@@ -4200,6 +4208,38 @@ defmodule Mezzanine.IntegrationBridgeTest do
                      ]}
   end
 
+  test "dispatch_read loads lower facts modules before callback support checks" do
+    lower_facts = unloaded_lower_facts_stub!()
+    store_lineage!()
+
+    intent =
+      ReadIntent.new!(%{
+        intent_id: "read-lazy-lower-facts",
+        read_type: :lower_fact,
+        subject: %{
+          actor_id: "actor-1",
+          tenant_id: "tenant-1",
+          installation_id: "inst-1",
+          execution_id: "exec-1"
+        },
+        query: %{
+          operation: :fetch_run
+        }
+      })
+
+    assert {:ok, result} = IntegrationBridge.dispatch_read(intent, lower_facts: lower_facts)
+
+    assert result.operation == :fetch_run
+    assert result.source == :lower_run_status
+    assert result.result.run_id == "run-1"
+
+    assert_received {:lazy_lower_facts_fetch_run,
+                     [
+                       %TenantScope{tenant_id: "tenant-1", installation_id: "inst-1"},
+                       "run-1"
+                     ]}
+  end
+
   test "dispatch_read passes tenant scope to the substrate read slice and fails closed on mismatch" do
     store_lineage!(tenant_id: "tenant-other")
 
@@ -4376,6 +4416,33 @@ defmodule Mezzanine.IntegrationBridgeTest do
     assert mapped.work_object_id == "work-1"
   end
 
+  defp unloaded_lower_facts_stub! do
+    module = Mezzanine.IntegrationBridgeTest.LazyLowerFactsStub
+    beam_dir = Path.join(System.tmp_dir!(), "mezzanine_integration_bridge_lazy_lower_facts_stub")
+    source_path = Path.expand("../priv/test_fixtures/lazy_lower_facts_stub.ex", __DIR__)
+
+    File.rm_rf!(beam_dir)
+    File.mkdir_p!(beam_dir)
+    Code.prepend_path(beam_dir)
+
+    case Kernel.ParallelCompiler.compile_to_path([source_path], beam_dir,
+           return_diagnostics: true
+         ) do
+      {:ok, _modules, _diagnostics} ->
+        :ok
+
+      {:error, errors, _diagnostics} ->
+        flunk("lazy lower facts stub failed to compile: #{inspect(errors)}")
+    end
+
+    :code.purge(module)
+    :code.delete(module)
+
+    assert :code.is_loaded(module) == false
+
+    module
+  end
+
   defp store_lineage!(opts \\ []) do
     lineage =
       ExecutionLineage.new!(%{
@@ -4474,9 +4541,7 @@ defmodule Mezzanine.IntegrationBridgeTest do
   defp normalize_forbidden_key(key) when is_atom(key), do: key
 
   defp normalize_forbidden_key(key) when is_binary(key) do
-    key
-    |> String.downcase()
-    |> String.to_atom()
+    Map.fetch!(@forbidden_authority_key_aliases, key)
   end
 
   defp authorized_invocation_attrs do

@@ -94,14 +94,18 @@ defmodule Mezzanine.IntegrationBridge.ReadDispatcher do
     end
   end
 
-  defp operation_supported(lower_facts, operation) do
-    if function_exported?(lower_facts, :operation_supported?, 1) and
+  defp operation_supported(lower_facts, operation) when is_atom(lower_facts) do
+    if Code.ensure_loaded?(lower_facts) and
+         function_exported?(lower_facts, :operation_supported?, 1) and
          lower_facts.operation_supported?(operation) do
       :ok
     else
       {:error, {:unsupported_lower_facts_operation, operation}}
     end
   end
+
+  defp operation_supported(_lower_facts, operation),
+    do: {:error, {:unsupported_lower_facts_operation, operation}}
 
   defp reject_primary_lower_identifier_overrides(operation, query) do
     query = normalize_map(query)
