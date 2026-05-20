@@ -10,6 +10,7 @@ defmodule Mezzanine.Build.WorkspaceContract do
   @neutral_package_paths [
     "core/runtime_profile",
     "core/substrate_model",
+    "core/governed_effects",
     "core/pack_model",
     "core/pack_compiler",
     "core/barriers",

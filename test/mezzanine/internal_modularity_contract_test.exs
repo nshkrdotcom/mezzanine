@@ -19,6 +19,7 @@ defmodule Mezzanine.InternalModularityContractTest do
              "core/eval_engine",
              "core/evidence_engine",
              "core/execution_engine",
+             "core/governed_effects",
              "core/headless_coding_ops",
              "core/leasing",
              "core/lifecycle_engine",
