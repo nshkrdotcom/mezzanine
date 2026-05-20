@@ -32,6 +32,9 @@ defmodule Mezzanine.AgentRuntime.AgentRunSpec do
     :session_ref,
     :workspace_ref,
     :worker_ref,
+    :effect_governance_mode,
+    :diagnostic_lane,
+    :governed_effect_refs,
     :initial_context_refs,
     :review_policy_ref,
     :operator_interrupt_policy_ref,
@@ -39,6 +42,10 @@ defmodule Mezzanine.AgentRuntime.AgentRunSpec do
   ]
   @fields @required ++ @optional
   @enforce_keys @required
+  @effect_governance_modes [:fixture_backed, :staging_live, :disabled]
+  @effect_governance_mode_lookup Map.new(@effect_governance_modes, &{Atom.to_string(&1), &1})
+  @diagnostic_lanes [:echo, :probe]
+  @diagnostic_lane_lookup Map.new(@diagnostic_lanes, &{Atom.to_string(&1), &1})
   defstruct @fields
 
   @type t :: %__MODULE__{}
@@ -73,6 +80,20 @@ defmodule Mezzanine.AgentRuntime.AgentRunSpec do
          true <- is_map(timeout_policy),
          {:ok, profile_bundle} <-
            optional_profile_bundle(Support.optional(attrs, :profile_bundle)),
+         {:ok, effect_governance_mode} <-
+           optional_bounded_atom(
+             Support.optional(attrs, :effect_governance_mode),
+             @effect_governance_modes,
+             @effect_governance_mode_lookup
+           ),
+         {:ok, diagnostic_lane} <-
+           optional_bounded_atom(
+             Support.optional(attrs, :diagnostic_lane),
+             @diagnostic_lanes,
+             @diagnostic_lane_lookup
+           ),
+         governed_effect_refs <- Support.optional(attrs, :governed_effect_refs, %{}),
+         true <- serializable_map?(governed_effect_refs),
          true <-
            optional_refs?(attrs, [
              :source_ref,
@@ -92,6 +113,9 @@ defmodule Mezzanine.AgentRuntime.AgentRunSpec do
          attrs
          |> values(@fields)
          |> Map.put(:profile_bundle, profile_bundle)
+         |> Map.put(:effect_governance_mode, effect_governance_mode)
+         |> Map.put(:diagnostic_lane, diagnostic_lane)
+         |> Map.put(:governed_effect_refs, governed_effect_refs)
          |> Map.put(:initial_context_refs, initial_context_refs)
        )}
     else
@@ -106,6 +130,38 @@ defmodule Mezzanine.AgentRuntime.AgentRunSpec do
   defp optional_profile_bundle(nil), do: {:ok, nil}
   defp optional_profile_bundle(%ProfileBundle{} = bundle), do: {:ok, bundle}
   defp optional_profile_bundle(attrs), do: ProfileBundle.new(attrs)
+
+  defp optional_bounded_atom(nil, _allowed, _lookup), do: {:ok, nil}
+
+  defp optional_bounded_atom(value, allowed, _lookup) when is_atom(value) do
+    if value in allowed, do: {:ok, value}, else: :error
+  end
+
+  defp optional_bounded_atom(value, _allowed, lookup) when is_binary(value),
+    do: Map.fetch(lookup, value)
+
+  defp optional_bounded_atom(_value, _allowed, _lookup), do: :error
+
+  defp serializable_map?(value) when is_map(value) do
+    Enum.all?(value, fn
+      {key, nested} when is_atom(key) or is_binary(key) -> serializable_value?(nested)
+      _other -> false
+    end)
+  end
+
+  defp serializable_map?(_value), do: false
+
+  defp serializable_value?(value) when is_binary(value) or is_number(value) or is_boolean(value),
+    do: true
+
+  defp serializable_value?(nil), do: true
+  defp serializable_value?(value) when is_atom(value), do: true
+
+  defp serializable_value?(value) when is_list(value),
+    do: Enum.all?(value, &serializable_value?/1)
+
+  defp serializable_value?(value) when is_map(value), do: serializable_map?(value)
+  defp serializable_value?(_value), do: false
 
   defp required_refs?(attrs, keys),
     do: Enum.all?(keys, &(Support.required(attrs, &1) |> Support.safe_ref?()))

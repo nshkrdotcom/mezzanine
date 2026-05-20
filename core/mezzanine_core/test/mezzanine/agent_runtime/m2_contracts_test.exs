@@ -33,6 +33,39 @@ defmodule Mezzanine.AgentRuntime.M2ContractsTest do
              |> AgentRunSpec.new()
   end
 
+  test "AgentRunSpec accepts bounded governed-effect diagnostic fields" do
+    attrs =
+      agent_run_spec_attrs()
+      |> Map.merge(%{
+        effect_governance_mode: "staging_live",
+        diagnostic_lane: "echo",
+        governed_effect_refs: %{
+          "effect_ref" => "effect://synapse/live-slice/echo",
+          "receipt_ref" => "receipt://synapse/live-slice/echo",
+          "trace_ref" => "trace://synapse/live-slice"
+        }
+      })
+
+    assert {:ok, spec} = AgentRunSpec.new(attrs)
+    assert spec.effect_governance_mode == :staging_live
+    assert spec.diagnostic_lane == :echo
+    assert spec.governed_effect_refs["effect_ref"] == "effect://synapse/live-slice/echo"
+
+    dumped = AgentRunSpec.dump(spec)
+    assert dumped["effect_governance_mode"] == "staging_live"
+    assert dumped["diagnostic_lane"] == "echo"
+
+    assert {:error, :invalid_agent_run_spec} =
+             attrs
+             |> Map.put(:diagnostic_lane, "unbounded")
+             |> AgentRunSpec.new()
+
+    assert {:error, :invalid_agent_run_spec} =
+             attrs
+             |> Map.put(:governed_effect_refs, %{"effect_ref" => self()})
+             |> AgentRunSpec.new()
+  end
+
   test "turn state transitions forward and duplicate replay keeps the existing state" do
     assert {:ok, turn} = AgentTurnState.new(turn_attrs())
     assert turn.state == :initialized
