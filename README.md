@@ -65,7 +65,7 @@ mezzanine/
 ## Implementation Notes
 
 Maintainers should read
-[Code Smell Remediation](guides/code_smell_remediation.md) before changing
+[Code Smell Remediation](https://github.com/nshkrdotcom/mezzanine/blob/main/guides/code_smell_remediation.md) before changing
 pack compiler support, workflow normalization, runtime state ownership,
 cache invalidation, runtime configuration, or workspace command execution.
 
