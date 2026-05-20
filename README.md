@@ -62,6 +62,13 @@ mezzanine/
 - generalized models for distributed AI operations
 - product-neutral logic above `app_kit`
 
+## Implementation Notes
+
+Maintainers should read
+[Code Smell Remediation](guides/code_smell_remediation.md) before changing
+pack compiler support, workflow normalization, runtime state ownership,
+cache invalidation, runtime configuration, or workspace command execution.
+
 ## Current Operational Surface
 
 Mezzanine is the reusable operating layer that now makes the product loop real.

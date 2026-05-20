@@ -173,6 +173,7 @@ defmodule Mezzanine.Workspace.MixProject do
         "docs/guides/receipts_and_projections.md",
         "docs/guides/appkit_and_product_boundary.md",
         "docs/guides/local_acceptance_with_stacklab.md",
+        "guides/code_smell_remediation.md",
         "docs/publication.md",
         "docs/roadmap.md",
         "CHANGELOG.md",
@@ -190,7 +191,8 @@ defmodule Mezzanine.Workspace.MixProject do
           "docs/guides/workflow_runtime_and_execution_lifecycle.md",
           "docs/guides/receipts_and_projections.md",
           "docs/guides/appkit_and_product_boundary.md",
-          "docs/guides/local_acceptance_with_stacklab.md"
+          "docs/guides/local_acceptance_with_stacklab.md",
+          "guides/code_smell_remediation.md"
         ],
         Publication: ["docs/publication.md"],
         Project: ["CHANGELOG.md", "LICENSE"]
