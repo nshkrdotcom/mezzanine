@@ -125,6 +125,7 @@ defmodule Mezzanine.Workspace.MixProject do
         hex_home: "_build/hex"
       ],
       parallelism: [
+        env: "MEZZANINE_MONOREPO_MAX_CONCURRENCY",
         max_concurrency: nil,
         multiplier: :auto,
         base: [

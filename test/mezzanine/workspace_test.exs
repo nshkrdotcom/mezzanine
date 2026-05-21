@@ -196,13 +196,13 @@ defmodule Mezzanine.WorkspaceTest do
     refute "surfaces/*" in Mezzanine.Workspace.active_project_globs()
   end
 
-  test "workspace concurrency is not selected from environment variables" do
+  test "workspace concurrency can be selected from the local CI environment" do
     parallelism =
       Mezzanine.Workspace.MixProject.project()
       |> Keyword.fetch!(:blitz_workspace)
       |> Keyword.fetch!(:parallelism)
 
-    refute Keyword.has_key?(parallelism, :env)
+    assert Keyword.fetch!(parallelism, :env) == "MEZZANINE_MONOREPO_MAX_CONCURRENCY"
     assert Keyword.has_key?(parallelism, :max_concurrency)
   end
 
