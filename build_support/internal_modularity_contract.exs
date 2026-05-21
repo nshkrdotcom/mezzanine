@@ -111,6 +111,7 @@ defmodule Mezzanine.Build.InternalModularityContract do
     %{
       path: "core/decision_engine",
       allowed_internal_deps: [
+        "core/agent_turn_engine",
         "core/audit_engine",
         "core/execution_engine",
         "core/mezzanine_core",
@@ -120,6 +121,7 @@ defmodule Mezzanine.Build.InternalModularityContract do
     %{
       path: "core/evidence_engine",
       allowed_internal_deps: [
+        "core/agent_turn_engine",
         "core/audit_engine",
         "core/execution_engine",
         "core/mezzanine_core",
@@ -129,6 +131,7 @@ defmodule Mezzanine.Build.InternalModularityContract do
     %{
       path: "core/projection_engine",
       allowed_internal_deps: [
+        "core/agent_turn_engine",
         "core/audit_engine",
         "core/decision_engine",
         "core/evidence_engine",

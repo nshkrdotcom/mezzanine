@@ -86,6 +86,7 @@ defmodule MezzanineProjectionEngine.MixProject do
 
   defp deps do
     [
+      {:mezzanine_agent_turn_engine, path: "../agent_turn_engine"},
       {:mezzanine_core, path: "../mezzanine_core"},
       {:mezzanine_audit_engine, path: "../audit_engine"},
       {:mezzanine_object_engine, path: "../object_engine"},
