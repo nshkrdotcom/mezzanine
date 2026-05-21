@@ -8,10 +8,14 @@ defmodule Mezzanine.AgentTurnEngine do
   """
 
   alias Mezzanine.AgentTurnEngine.AgentTurnLedger
+  alias Mezzanine.AgentTurnEngine.PendingDecision
   alias Mezzanine.AgentTurnEngine.Reducer
 
   @spec new_ledger(map()) :: {:ok, AgentTurnLedger.t()} | {:error, term()}
   defdelegate new_ledger(attrs), to: AgentTurnLedger, as: :new
+
+  @spec new_pending_decision(map()) :: {:ok, PendingDecision.t()} | {:error, term()}
+  defdelegate new_pending_decision(attrs), to: PendingDecision, as: :new
 
   @spec new_state(AgentTurnLedger.t()) :: {:ok, Reducer.State.t()} | {:error, term()}
   defdelegate new_state(ledger), to: Reducer, as: :new
