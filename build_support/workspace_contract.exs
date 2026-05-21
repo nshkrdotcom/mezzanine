@@ -11,6 +11,7 @@ defmodule Mezzanine.Build.WorkspaceContract do
     "core/runtime_profile",
     "core/substrate_model",
     "core/governed_effects",
+    "core/agent_turn_engine",
     "core/pack_model",
     "core/pack_compiler",
     "core/barriers",

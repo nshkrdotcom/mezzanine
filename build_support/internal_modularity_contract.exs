@@ -7,6 +7,7 @@ defmodule Mezzanine.Build.InternalModularityContract do
     %{path: "core/runtime_profile", allowed_internal_deps: []},
     %{path: "core/substrate_model", allowed_internal_deps: []},
     %{path: "core/governed_effects", allowed_internal_deps: []},
+    %{path: "core/agent_turn_engine", allowed_internal_deps: []},
     %{path: "core/mezzanine_core", allowed_internal_deps: ["core/runtime_profile"]},
     %{path: "core/ops_model", allowed_internal_deps: []},
     %{path: "core/ops_domain", allowed_internal_deps: ["core/ops_model"]},

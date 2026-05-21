@@ -11,6 +11,7 @@ graph:
 
 - `pack_model`
 - `pack_compiler`
+- `agent_turn_engine`
 - `lifecycle_engine`
 - `config_registry`
 - `source_engine`
@@ -30,5 +31,6 @@ The `ops_*` packages still host live semantic domains. New reusable work lands
 in the neutral package graph while later phases migrate the remaining semantic
 hosts to current package names and boundaries. Source admission and workspace
 path-safety contracts now have neutral homes in `source_engine` and
-`workspace_engine`; provider execution and product defaults stay outside those
+`workspace_engine`; native agent turn truth has a pure home in
+`agent_turn_engine`; provider execution and product defaults stay outside those
 packages.

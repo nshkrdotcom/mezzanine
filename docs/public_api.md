@@ -105,6 +105,29 @@ Primary functions:
 This surface returns Mezzanine DTOs and does not expose Temporal SDK structs,
 task tokens, NIF resources, protobufs, or raw workflow history.
 
+### Agent Turn Engine
+
+Module: `Mezzanine.AgentTurnEngine`
+
+Use this package-local surface to validate and reduce native agent turn facts:
+ledgers, conversation events, execution events, replay requests, cursor
+catch-up state, and pending interactions. This surface is pure and does not
+start processes, query stores, call providers, or expose generated protocol
+modules.
+
+Primary modules:
+
+- `Mezzanine.AgentTurnEngine.AgentTurnLedger`
+- `Mezzanine.AgentTurnEngine.AgentConversationEvent`
+- `Mezzanine.AgentTurnEngine.AgentExecutionEvent`
+- `Mezzanine.AgentTurnEngine.AgentRunCursor`
+- `Mezzanine.AgentTurnEngine.ExecutionReplay`
+- `Mezzanine.AgentTurnEngine.AgentPendingInteraction`
+- `Mezzanine.AgentTurnEngine.Reducer`
+
+Products still enter through AppKit. Store adapters, workflow integration, and
+AITrace export are separate Mezzanine phases layered on top of these contracts.
+
 ### Execution Lifecycle Workflow Contract
 
 Module: `Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow`

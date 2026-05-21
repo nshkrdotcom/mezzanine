@@ -29,6 +29,7 @@ mezzanine/
   build_support/       # workspace and Weld manifests
   core/mezzanine_core  # projected artifact shell over the neutral rebuild
   core/substrate_model # pure generic operation, envelope, receipt, and graph DTOs
+  core/agent_turn_engine # pure native agent turn ledger, replay, cursor, and pending DTOs
   core/pack_model      # neutral pack definitions and shared structs
   core/pack_compiler   # neutral pack compilation and validation
   core/lifecycle_engine # durable lifecycle coordinator over explicit execution requests
@@ -91,6 +92,9 @@ The current runtime path is assembled from these neutral surfaces:
 - `Mezzanine.WorkflowRuntime` owns Temporal-backed execution handoff, workflow
   start outbox processing, compact workflow evidence, and runtime dispatch
   activities.
+- `Mezzanine.AgentTurnEngine` owns native agent ledger, event, replay, cursor,
+  and pending-interaction truth as pure refs and reducers before store adapters
+  or workflow integration.
 - `Mezzanine.ExecutionLifecycleWorkflow` and lifecycle reducers keep execution
   rows, subject state, decisions, evidence, projections, source reconciliation,
   and audit ledgers coherent as lower receipts arrive.
@@ -220,6 +224,7 @@ flowchart LR
 The active buildout in this repo is the neutral core scaffold:
 
 - `core/substrate_model`
+- `core/agent_turn_engine`
 - `core/pack_model`
 - `core/pack_compiler`
 - `core/lifecycle_engine`

@@ -39,6 +39,7 @@ defmodule Mezzanine.Build.WeldContract do
   @artifact_docs [
     "README.md",
     "core/substrate_model/README.md",
+    "core/agent_turn_engine/README.md",
     "core/mezzanine_core/README.md",
     "core/pack_model/README.md",
     "core/pack_compiler/README.md",
@@ -108,6 +109,7 @@ defmodule Mezzanine.Build.WeldContract do
     [
       roots: [
         "core/substrate_model",
+        "core/agent_turn_engine",
         "core/mezzanine_core",
         "core/pack_model",
         "core/pack_compiler",
