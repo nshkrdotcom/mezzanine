@@ -118,6 +118,24 @@ adapter and receipt facts. The generic Mezzanine path routes by pack, binding,
 authority, credential lease, manifest, and receipt refs rather than by
 provider-named product calls.
 
+The Synapse governed-effect lift adds the minimal product-neutral
+governed-effect core under `core/governed_effects`. Its public owner is
+`Mezzanine.Core.GovernedEffects`, with `GovernedEffect`, `AuthorityPacket`,
+`EffectReceipt`, `TransitionGate`, `EffectLog`, `Projection`, `DiagnosticWorkflow`,
+and `Coordinator` modules. The coordinator is the narrow cross-stack path for a
+diagnostic effect: build or accept a command envelope, authorize through
+Citadel, dispatch through Jido Integration, receive the Execution Plane
+diagnostic result, reduce the receipt, and project the timeline for AppKit
+readback. Product repos consume this through AppKit, not by importing these
+modules directly.
+
+The Synapse conformance receipt is produced from StackLab:
+
+```bash
+cd /home/home/p/g/n/stack_lab
+MIX_ENV=test mix stack_lab.synapse.staged_live.v1 --json
+```
+
 That is the core accomplishment of the current repo: Mezzanine has enough
 neutral engines for a product to submit governed coding work, dispatch it
 through the lower runtime, track the workspace and source lifecycle, reduce
