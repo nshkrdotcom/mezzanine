@@ -22,6 +22,8 @@ core/evidence_engine/
 core/projection_engine/
 core/operator_engine/
 core/adaptive_control_engine/
+core/context_packet_engine/
+core/ai_execution_engine/
 core/optimization_engine/
 core/coordination_engine/
 core/audit_engine/

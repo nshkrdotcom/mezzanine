@@ -7,6 +7,7 @@ defmodule Mezzanine.InternalModularityContractTest do
     assert InternalModularityContract.package_paths() == [
              "core/adaptive_control_engine",
              "core/agent_turn_engine",
+             "core/ai_execution_engine",
              "core/ai_run_model",
              "core/archival_engine",
              "core/audit_engine",
@@ -14,6 +15,7 @@ defmodule Mezzanine.InternalModularityContractTest do
              "core/budget_enforcement_engine",
              "core/config_registry",
              "core/context_budget_admission",
+             "core/context_packet_engine",
              "core/coordination_engine",
              "core/cost_attribution_engine",
              "core/decision_engine",

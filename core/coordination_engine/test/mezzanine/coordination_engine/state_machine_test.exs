@@ -150,6 +150,7 @@ defmodule Mezzanine.CoordinationEngine.StateMachineTest do
       role_packs: [
         %{
           role_ref: "role://worker",
+          projection_ref: "projection://role/worker",
           prompt_ref: "prompt://worker",
           capability_refs: ["capability://compose"],
           allowed_model_profile_refs: ["model://mock"],

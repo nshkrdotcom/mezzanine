@@ -46,6 +46,8 @@ mezzanine/
   core/operator_engine
   core/adaptive_control_engine
   core/optimization_engine
+  core/context_packet_engine
+  core/ai_execution_engine
   core/coordination_engine
   core/audit_engine
   core/archival_engine
@@ -95,6 +97,11 @@ The current runtime path is assembled from these neutral surfaces:
 - `Mezzanine.AgentTurnEngine` owns native agent ledger, event, replay, cursor,
   and pending-interaction truth as pure refs and reducers before store adapters
   or workflow integration.
+- `Mezzanine.ContextPacketEngine` owns durable admission receipts for
+  OuterBrain Context ABI packets after Citadel authority and budget checks.
+- `Mezzanine.AIExecution` owns TRINITY/GEPA adapter behaviours and the
+  rendered-prompt handoff from OuterBrain refs into Jido Integration model
+  invocation requests.
 - `Mezzanine.ExecutionLifecycleWorkflow` and lifecycle reducers keep execution
   rows, subject state, decisions, evidence, projections, source reconciliation,
   and audit ledgers coherent as lower receipts arrive.

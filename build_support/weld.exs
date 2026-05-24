@@ -12,11 +12,16 @@ defmodule Mezzanine.Build.WeldContract do
   @repo_root Path.expand("..", __DIR__)
 
   @manifest_dependencies [
+    :citadel_authority_contract,
+    :citadel_contract_core,
     :citadel_governance,
+    :citadel_context_authority_contract,
     :execution_plane,
     :execution_plane_process,
+    :outer_brain_context_abi,
     :outer_brain_context_budget,
     :outer_brain_memory_contracts,
+    :outer_brain_prompting,
     :outer_brain_token_meter,
     :ai_trace_replay_contracts,
     :ground_plane_contracts,
@@ -25,15 +30,20 @@ defmodule Mezzanine.Build.WeldContract do
     :trinity_framework,
     :jido_hive_coordination_patterns,
     :jido_hive_inter_agent_messaging,
+    :jido_integration_provider_classification,
     :jido_integration_v2,
     :temporalex
   ]
 
   @manifest_dependency_opts %{
+    citadel_authority_contract: [override: true],
+    citadel_contract_core: [override: true],
     execution_plane: [override: true],
     execution_plane_process: [override: true],
     ground_plane_contracts: [override: true],
-    ground_plane_persistence_policy: [override: true]
+    ground_plane_persistence_policy: [override: true],
+    jido_integration_provider_classification: [override: true],
+    outer_brain_context_abi: [override: true]
   }
 
   @artifact_docs [
@@ -52,6 +62,8 @@ defmodule Mezzanine.Build.WeldContract do
     "core/workspace_build_model/README.md",
     "core/adaptive_control_engine/README.md",
     "core/ai_run_model/README.md",
+    "core/context_packet_engine/README.md",
+    "core/ai_execution_engine/README.md",
     "core/optimization_engine/README.md",
     "core/coordination_engine/README.md",
     "core/decision_engine/README.md",
@@ -89,7 +101,9 @@ defmodule Mezzanine.Build.WeldContract do
         internal_only: [
           ".",
           "core/adaptive_control_engine",
+          "core/ai_execution_engine",
           "core/context_budget_admission",
+          "core/context_packet_engine",
           "core/ai_run_model",
           "core/cost_attribution_engine",
           "core/budget_enforcement_engine",
@@ -122,6 +136,8 @@ defmodule Mezzanine.Build.WeldContract do
         "core/workspace_build_model",
         "core/adaptive_control_engine",
         "core/ai_run_model",
+        "core/context_packet_engine",
+        "core/ai_execution_engine",
         "core/optimization_engine",
         "core/coordination_engine",
         "core/decision_engine",

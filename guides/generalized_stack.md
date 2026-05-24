@@ -24,6 +24,8 @@ Core public interfaces are grouped by responsibility:
   source/object/workspace contracts;
 - `core/evidence_engine`, `core/projection_engine`, `core/audit_engine`, and
   `core/archival_engine` for receipt reduction and read models;
+- `core/context_packet_engine` and `core/ai_execution_engine` for Context ABI
+  admission, route/optimization adapter contracts, and rendered prompt handoff;
 - `bridges/citadel_bridge` and `bridges/integration_bridge` for lower owner
   calls.
 

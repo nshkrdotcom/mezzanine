@@ -23,6 +23,8 @@ graph:
 - `evidence_engine`
 - `projection_engine`
 - `operator_engine`
+- `context_packet_engine`
+- `ai_execution_engine`
 - `optimization_engine`
 - `audit_engine`
 - `archival_engine`
@@ -32,5 +34,6 @@ in the neutral package graph while later phases migrate the remaining semantic
 hosts to current package names and boundaries. Source admission and workspace
 path-safety contracts now have neutral homes in `source_engine` and
 `workspace_engine`; native agent turn truth has a pure home in
-`agent_turn_engine`; provider execution and product defaults stay outside those
-packages.
+`agent_turn_engine`; Context ABI admission and the AI execution adapter seam
+now have neutral homes in `context_packet_engine` and `ai_execution_engine`;
+provider execution and product defaults stay outside those packages.

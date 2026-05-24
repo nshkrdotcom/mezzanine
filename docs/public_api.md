@@ -128,6 +128,41 @@ Primary modules:
 Products still enter through AppKit. Store adapters, workflow integration, and
 AITrace export are separate Mezzanine phases layered on top of these contracts.
 
+### Context Packet Admission
+
+Module: `Mezzanine.ContextPacketEngine`
+
+Use this surface to admit an `OuterBrain.ContextABI.ContextPacket` after
+Citadel authority and Mezzanine budget gates have been evaluated.
+
+Primary functions:
+
+- `admit/3`
+- `redacted_projection/1`
+
+This surface returns Mezzanine packet-admission receipts and ref-only projection
+source data. It does not compile context, authorize context, render prompts, or
+call providers.
+
+### AI Execution Contracts
+
+Module: `Mezzanine.AIExecution`
+
+Use this surface for route/optimization adapter invocation and the
+rendered-prompt handoff from OuterBrain refs into model-invocation requests.
+
+Primary functions:
+
+- `route/3`
+- `propose/3`
+- `render_context/4`
+- `invocation_request/3`
+
+The concrete TRINITY and GEPA integrations implement
+`Mezzanine.AIExecution.RouterAdapter` and
+`Mezzanine.AIExecution.OptimizerAdapter`. This surface does not execute model
+providers directly.
+
 ### Execution Lifecycle Workflow Contract
 
 Module: `Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow`

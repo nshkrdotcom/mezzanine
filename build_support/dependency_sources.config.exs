@@ -24,6 +24,10 @@ end
 %{
   deps: %{
     ai_trace_replay_contracts: dep.("AITrace", "core/replay_contracts", "~> 0.1.0"),
+    citadel_authority_contract: dep.("citadel", "core/authority_contract", "~> 0.1.0"),
+    citadel_contract_core: dep.("citadel", "core/contract_core", "~> 0.1.0"),
+    citadel_context_authority_contract:
+      dep.("citadel", "core/context_authority_contract", "~> 0.1.0"),
     citadel_governance: dep.("citadel", "core/citadel_governance", "~> 0.1.0"),
     execution_plane: %{
       path: Path.join(siblings_root, "execution_plane/core/execution_plane"),
@@ -43,6 +47,17 @@ end
     ground_plane_persistence_policy: dep.("ground_plane", "core/persistence_policy", "~> 0.1.0"),
     jido_hive_coordination_patterns: dep.("jido_hive", "core/coordination_patterns", "~> 0.1.0"),
     jido_hive_inter_agent_messaging: dep.("jido_hive", "core/inter_agent_messaging", "~> 0.1.0"),
+    jido_integration_provider_classification: %{
+      path: Path.join(siblings_root, "jido_integration/core/provider_classification"),
+      github: %{
+        repo: "agentjido/jido_integration",
+        branch: "main",
+        subdir: "core/provider_classification"
+      },
+      hex: "~> 0.1.0",
+      default_order: [:path, :github, :hex],
+      publish_order: [:hex]
+    },
     jido_integration_v2: dep.("jido_integration", "core/platform", "~> 0.1.0"),
     jido_integration_v2_codex_cli: dep.("jido_integration", "connectors/codex_cli", "~> 0.1.0"),
     jido_integration_v2_github: dep.("jido_integration", "connectors/github", "~> 0.1.0"),
@@ -51,8 +66,10 @@ end
       dep.("jido_integration", "core/runtime_router", "~> 0.1.0"),
     jido_integration_secrets_provider:
       dep.("jido_integration", "core/secrets_provider", "~> 0.1.0"),
+    outer_brain_context_abi: dep.("outer_brain", "core/context_abi", "~> 0.1.0"),
     outer_brain_context_budget: dep.("outer_brain", "core/context_budget", "~> 0.1.0"),
     outer_brain_memory_contracts: dep.("outer_brain", "core/memory_contracts", "~> 0.1.0"),
+    outer_brain_prompting: dep.("outer_brain", "core/outer_brain_prompting", "~> 0.1.0"),
     outer_brain_token_meter: dep.("outer_brain", "core/token_meter", "~> 0.1.0"),
     temporalex: root_dep.("temporalex", "~> 0.1.0"),
     trinity_framework: root_dep.("trinity_framework", "~> 0.1.0")

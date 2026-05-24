@@ -108,6 +108,11 @@ defmodule Mezzanine.Build.InternalModularityContract do
     },
     %{path: "core/adaptive_control_engine", allowed_internal_deps: []},
     %{path: "core/ai_run_model", allowed_internal_deps: []},
+    %{path: "core/context_packet_engine", allowed_internal_deps: []},
+    %{
+      path: "core/ai_execution_engine",
+      allowed_internal_deps: ["core/context_packet_engine"]
+    },
     %{
       path: "core/decision_engine",
       allowed_internal_deps: [

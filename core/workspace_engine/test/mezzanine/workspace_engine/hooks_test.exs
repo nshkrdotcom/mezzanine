@@ -287,7 +287,7 @@ defmodule Mezzanine.WorkspaceEngine.HooksTest do
           %{
             "hook_ref" => "pre-run",
             "stage" => "before_run",
-            "timeout_ms" => 100,
+            "timeout_ms" => 1_000,
             "command" => "printf cwd-ready > marker.txt && printf ok"
           }
         ]

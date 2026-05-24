@@ -29,6 +29,8 @@ defmodule Mezzanine.Build.WorkspaceContract do
     "core/workspace_build_model",
     "core/adaptive_control_engine",
     "core/ai_run_model",
+    "core/context_packet_engine",
+    "core/ai_execution_engine",
     "core/decision_engine",
     "core/evidence_engine",
     "core/projection_engine",
