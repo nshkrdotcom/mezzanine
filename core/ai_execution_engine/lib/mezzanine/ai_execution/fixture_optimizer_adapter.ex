@@ -35,8 +35,15 @@ defmodule Mezzanine.AIExecution.FixtureOptimizerAdapter do
            lineage_refs: candidate_source_refs,
            objective_score_ref: "objective-score://fixture/" <> suffix(candidate_ref),
            promotion_required?: true,
-           trace_ref: trace_ref
+           trace_ref: trace_ref,
+           context_packet_ref: optional(optimization_request, :context_packet_ref),
+           route_decision_ref: optional(optimization_request, :route_decision_ref),
+           eval_refs: string_list(optimization_request, :eval_refs),
+           cost_refs: string_list(optimization_request, :cost_refs),
+           promotion_refs: optional_list(optimization_request, :promotion_ref),
+           rollback_refs: optional_list(optimization_request, :rollback_ref)
          }
+         |> reject_nil_values()
        ]}
     end
   end
@@ -71,6 +78,33 @@ defmodule Mezzanine.AIExecution.FixtureOptimizerAdapter do
           evidence_refs: ["field://#{Atom.to_string(field)}"]
         )
     end
+  end
+
+  defp optional(attrs, field) do
+    case Map.get(attrs, field) || Map.get(attrs, Atom.to_string(field)) do
+      value when is_binary(value) and value != "" -> value
+      _other -> nil
+    end
+  end
+
+  defp optional_list(attrs, field) do
+    case optional(attrs, field) do
+      nil -> []
+      value -> [value]
+    end
+  end
+
+  defp string_list(attrs, field) do
+    case Map.get(attrs, field) || Map.get(attrs, Atom.to_string(field), []) do
+      values when is_list(values) -> Enum.filter(values, &(is_binary(&1) and &1 != ""))
+      _other -> []
+    end
+  end
+
+  defp reject_nil_values(map) do
+    map
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new()
   end
 
   defp suffix(ref), do: ref |> String.split("/") |> List.last()

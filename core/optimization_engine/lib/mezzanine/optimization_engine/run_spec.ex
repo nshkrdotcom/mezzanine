@@ -144,6 +144,25 @@ defmodule Mezzanine.OptimizationEngine.RunSpec do
     ]
   end
 
+  @spec optimizer_request(t()) :: map()
+  def optimizer_request(%__MODULE__{} = spec) do
+    %{
+      tenant_ref: spec.tenant_ref,
+      run_ref: spec.framework_run_ref,
+      objective_ref: spec.eval_suite_ref,
+      candidate_source_refs: candidate_source_refs(spec),
+      promotion_policy_ref: List.first(spec.promotion_ref_set),
+      trace_ref: spec.trace_ref,
+      context_packet_ref: spec.context_budget_ref,
+      route_decision_ref: spec.target_ref,
+      eval_refs: [spec.eval_suite_ref],
+      cost_refs: spec.cost_budget_ref_set,
+      promotion_ref: List.first(spec.promotion_ref_set),
+      rollback_ref: List.first(spec.rollback_ref_set),
+      optimization_target_ref: spec.target_ref
+    }
+  end
+
   defp component_specs(spec) do
     spec.prompt_ref_set
     |> Enum.with_index(1)
@@ -154,6 +173,18 @@ defmodule Mezzanine.OptimizationEngine.RunSpec do
         content_ref: prompt_ref
       }
     end)
+  end
+
+  defp candidate_source_refs(spec) do
+    [
+      spec.memory_ref_set,
+      spec.prompt_ref_set,
+      [spec.context_budget_ref],
+      spec.guardrail_ref_set,
+      spec.drift_ref_set
+    ]
+    |> List.flatten()
+    |> Enum.uniq()
   end
 
   defp required_strings(attrs) do

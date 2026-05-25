@@ -17,6 +17,14 @@ and local restart-safe persistence posture refs are explicit, and that raw
 prompt, provider, model, memory, credential, secret, or workflow payloads are
 absent.
 
+## Candidate Proposal
+
+`Mezzanine.OptimizationEngine.propose_candidates/3` converts a governed
+`RunSpec` into the `Mezzanine.AIExecution.OptimizerAdapter` request shape. The
+request preserves context, route, eval, cost, promotion, rollback, and trace
+refs so same-BEAM fixture mode and GEPA Framework stack mode use the same
+contract.
+
 Promotion decisions require operator-visible evidence refs for eval, replay,
 guardrail, and budget gates before a candidate can be promoted. Missing gate
 evidence or missing operator evidence leaves the decision blocked with rollback

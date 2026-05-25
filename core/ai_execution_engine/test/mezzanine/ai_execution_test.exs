@@ -66,12 +66,24 @@ defmodule Mezzanine.AIExecutionTest do
                objective_ref: "objective://tenant-a/quality",
                candidate_source_refs: ["trace-dataset://tenant-a/a"],
                promotion_policy_ref: "promotion-policy://tenant-a/default",
-               trace_ref: "trace://tenant-a/optimization"
+               trace_ref: "trace://tenant-a/optimization",
+               context_packet_ref: "context-packet://tenant-a/run-a",
+               route_decision_ref: "route-decision://tenant-a/run-a",
+               eval_refs: ["eval://tenant-a/gepa"],
+               cost_refs: ["cost://tenant-a/gepa"],
+               promotion_ref: "promotion://tenant-a/gepa",
+               rollback_ref: "rollback://tenant-a/gepa"
              })
 
     assert candidate.candidate_ref =~ ~r/^optimization-candidate:\/\/[0-9a-f]{64}$/
     assert candidate.promotion_required? == true
     assert candidate.lineage_refs == ["trace-dataset://tenant-a/a"]
+    assert candidate.context_packet_ref == "context-packet://tenant-a/run-a"
+    assert candidate.route_decision_ref == "route-decision://tenant-a/run-a"
+    assert candidate.eval_refs == ["eval://tenant-a/gepa"]
+    assert candidate.cost_refs == ["cost://tenant-a/gepa"]
+    assert candidate.promotion_refs == ["promotion://tenant-a/gepa"]
+    assert candidate.rollback_refs == ["rollback://tenant-a/gepa"]
   end
 
   test "render result rejects raw prompt or provider payload fields" do

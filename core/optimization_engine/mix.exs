@@ -31,6 +31,7 @@ defmodule Mezzanine.OptimizationEngine.MixProject do
 
   defp deps do
     [
+      {:mezzanine_ai_execution_engine, path: "../ai_execution_engine"},
       DependencySources.dep(:gepa_framework, @repo_root),
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
