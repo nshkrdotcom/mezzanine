@@ -65,6 +65,39 @@ defmodule Mezzanine.AdaptiveControlEngine.ControlLoopTest do
              |> AdaptiveControlEngine.evaluate()
   end
 
+  test "records promotion truth only after eval and Citadel gates are present" do
+    assert {:error, receipt} =
+             promotion_attrs()
+             |> Map.put(:eval_refs, [])
+             |> AdaptiveControlEngine.record_promotion()
+
+    assert receipt.status == :denied
+    assert "gate:eval" in receipt.blocked_gate_refs
+
+    assert {:ok, receipt} = AdaptiveControlEngine.record_promotion(promotion_attrs())
+
+    assert receipt.status == :promoted
+    assert receipt.citadel_authority_ref == "authority://citadel/promotion/a"
+    assert receipt.candidate_ref == "memory-candidate://tenant-a/a"
+    assert receipt.promotion_ref == "memory-promotion://tenant-a/a"
+  end
+
+  test "records rollback truth and rejects rollback without Citadel authority" do
+    assert {:error, receipt} =
+             rollback_attrs()
+             |> Map.delete(:citadel_authority_ref)
+             |> AdaptiveControlEngine.record_rollback()
+
+    assert receipt.status == :denied
+    assert "gate:citadel_authority" in receipt.blocked_gate_refs
+
+    assert {:ok, receipt} = AdaptiveControlEngine.record_rollback(rollback_attrs())
+
+    assert receipt.status == :rolled_back
+    assert receipt.rollback_ref == "memory-rollback://tenant-a/a"
+    assert receipt.restored_ref == "memory://tenant-a/promoted/previous"
+  end
+
   defp control_attrs do
     %{
       control_run_ref: "adaptive-control://phase-13/worker",
@@ -122,6 +155,31 @@ defmodule Mezzanine.AdaptiveControlEngine.ControlLoopTest do
       appkit_projection_refs: ["appkit://adaptive-control/worker"],
       ground_plane_fence_refs: ["ground-plane://stale-candidate/fence"],
       audit_refs: ["audit://adaptive-control/worker"]
+    }
+  end
+
+  defp promotion_attrs do
+    %{
+      candidate_ref: "memory-candidate://tenant-a/a",
+      promotion_ref: "memory-promotion://tenant-a/a",
+      rollback_ref: "memory-rollback://tenant-a/a",
+      tenant_ref: "tenant://adaptive",
+      citadel_authority_ref: "authority://citadel/promotion/a",
+      eval_refs: ["eval://memory/a"],
+      trace_ref: "trace://adaptive/promotion/a",
+      appkit_projection_ref: "appkit://memory/promotion/a"
+    }
+  end
+
+  defp rollback_attrs do
+    %{
+      candidate_ref: "memory-candidate://tenant-a/a",
+      rollback_ref: "memory-rollback://tenant-a/a",
+      restored_ref: "memory://tenant-a/promoted/previous",
+      tenant_ref: "tenant://adaptive",
+      citadel_authority_ref: "authority://citadel/rollback/a",
+      trace_ref: "trace://adaptive/rollback/a",
+      appkit_projection_ref: "appkit://memory/rollback/a"
     }
   end
 end

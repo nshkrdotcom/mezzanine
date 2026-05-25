@@ -93,12 +93,76 @@ defmodule Mezzanine.AdaptiveControlEngine.ControlLoop.Receipt do
         }
 end
 
+defmodule Mezzanine.AdaptiveControlEngine.ControlLoop.PromotionReceipt do
+  @moduledoc "Memory-promotion truth recorded by Mezzanine adaptive control."
+
+  @enforce_keys [
+    :receipt_ref,
+    :status,
+    :blocked_gate_refs,
+    :candidate_ref,
+    :promotion_ref,
+    :rollback_ref,
+    :tenant_ref,
+    :citadel_authority_ref,
+    :eval_refs,
+    :trace_ref,
+    :appkit_projection_ref
+  ]
+  defstruct @enforce_keys
+
+  @type t :: %__MODULE__{
+          receipt_ref: String.t(),
+          status: :promoted | :denied,
+          blocked_gate_refs: [String.t()],
+          candidate_ref: String.t() | nil,
+          promotion_ref: String.t() | nil,
+          rollback_ref: String.t() | nil,
+          tenant_ref: String.t() | nil,
+          citadel_authority_ref: String.t() | nil,
+          eval_refs: [String.t()],
+          trace_ref: String.t() | nil,
+          appkit_projection_ref: String.t() | nil
+        }
+end
+
+defmodule Mezzanine.AdaptiveControlEngine.ControlLoop.RollbackReceipt do
+  @moduledoc "Memory-rollback truth recorded by Mezzanine adaptive control."
+
+  @enforce_keys [
+    :receipt_ref,
+    :status,
+    :blocked_gate_refs,
+    :candidate_ref,
+    :rollback_ref,
+    :restored_ref,
+    :tenant_ref,
+    :citadel_authority_ref,
+    :trace_ref,
+    :appkit_projection_ref
+  ]
+  defstruct @enforce_keys
+
+  @type t :: %__MODULE__{
+          receipt_ref: String.t(),
+          status: :rolled_back | :denied,
+          blocked_gate_refs: [String.t()],
+          candidate_ref: String.t() | nil,
+          rollback_ref: String.t() | nil,
+          restored_ref: String.t() | nil,
+          tenant_ref: String.t() | nil,
+          citadel_authority_ref: String.t() | nil,
+          trace_ref: String.t() | nil,
+          appkit_projection_ref: String.t() | nil
+        }
+end
+
 defmodule Mezzanine.AdaptiveControlEngine.ControlLoop do
   @moduledoc """
   Evaluates closed-loop adaptive-control promotion readiness.
   """
 
-  alias Mezzanine.AdaptiveControlEngine.ControlLoop.Receipt
+  alias Mezzanine.AdaptiveControlEngine.ControlLoop.{PromotionReceipt, Receipt, RollbackReceipt}
 
   @fixture_refs ["AOC-028", "AOC-029", "AOC-030", "PERSIST-AOC-008"]
   @required_strings [
@@ -202,6 +266,48 @@ defmodule Mezzanine.AdaptiveControlEngine.ControlLoop do
 
   def evaluate(_attrs), do: {:error, :invalid_adaptive_control_attrs}
 
+  @spec record_promotion(map()) ::
+          {:ok, PromotionReceipt.t()} | {:error, PromotionReceipt.t() | term()}
+  def record_promotion(attrs) when is_map(attrs) do
+    with :ok <- reject_raw(attrs) do
+      blocked_gate_refs =
+        attrs
+        |> promotion_blocked_gate_refs()
+        |> Enum.uniq()
+        |> Enum.sort()
+
+      receipt = promotion_receipt(attrs, blocked_gate_refs)
+
+      case receipt.status do
+        :promoted -> {:ok, receipt}
+        :denied -> {:error, receipt}
+      end
+    end
+  end
+
+  def record_promotion(_attrs), do: {:error, :invalid_promotion_attrs}
+
+  @spec record_rollback(map()) ::
+          {:ok, RollbackReceipt.t()} | {:error, RollbackReceipt.t() | term()}
+  def record_rollback(attrs) when is_map(attrs) do
+    with :ok <- reject_raw(attrs) do
+      blocked_gate_refs =
+        attrs
+        |> rollback_blocked_gate_refs()
+        |> Enum.uniq()
+        |> Enum.sort()
+
+      receipt = rollback_receipt(attrs, blocked_gate_refs)
+
+      case receipt.status do
+        :rolled_back -> {:ok, receipt}
+        :denied -> {:error, receipt}
+      end
+    end
+  end
+
+  def record_rollback(_attrs), do: {:error, :invalid_rollback_attrs}
+
   defp blocked_gate_refs(attrs) do
     string_gate_refs(attrs) ++
       list_gate_refs(attrs) ++
@@ -291,6 +397,80 @@ defmodule Mezzanine.AdaptiveControlEngine.ControlLoop do
 
   defp status([]), do: :ready_for_promotion
   defp status([_ | _]), do: :blocked
+
+  defp promotion_blocked_gate_refs(attrs) do
+    required_string_gate_refs(attrs, [
+      {:candidate_ref, "gate:candidate"},
+      {:promotion_ref, "gate:promotion"},
+      {:rollback_ref, "gate:rollback"},
+      {:tenant_ref, "gate:tenant"},
+      {:citadel_authority_ref, "gate:citadel_authority"},
+      {:trace_ref, "gate:trace"},
+      {:appkit_projection_ref, "gate:appkit_projection"}
+    ]) ++ required_list_gate_refs(attrs, [{:eval_refs, "gate:eval"}])
+  end
+
+  defp rollback_blocked_gate_refs(attrs) do
+    required_string_gate_refs(attrs, [
+      {:candidate_ref, "gate:candidate"},
+      {:rollback_ref, "gate:rollback"},
+      {:restored_ref, "gate:restored_memory"},
+      {:tenant_ref, "gate:tenant"},
+      {:citadel_authority_ref, "gate:citadel_authority"},
+      {:trace_ref, "gate:trace"},
+      {:appkit_projection_ref, "gate:appkit_projection"}
+    ])
+  end
+
+  defp required_string_gate_refs(attrs, fields) do
+    Enum.flat_map(fields, fn {field, gate_ref} ->
+      if present_string?(fetch(attrs, field)), do: [], else: [gate_ref]
+    end)
+  end
+
+  defp required_list_gate_refs(attrs, fields) do
+    Enum.flat_map(fields, fn {field, gate_ref} ->
+      if string_list(attrs, field) != [], do: [], else: [gate_ref]
+    end)
+  end
+
+  defp promotion_receipt(attrs, blocked_gate_refs) do
+    %PromotionReceipt{
+      receipt_ref:
+        "adaptive-control-promotion://" <> to_ref_segment(fetch(attrs, :promotion_ref)),
+      status: promotion_status(blocked_gate_refs),
+      blocked_gate_refs: blocked_gate_refs,
+      candidate_ref: fetch(attrs, :candidate_ref),
+      promotion_ref: fetch(attrs, :promotion_ref),
+      rollback_ref: fetch(attrs, :rollback_ref),
+      tenant_ref: fetch(attrs, :tenant_ref),
+      citadel_authority_ref: fetch(attrs, :citadel_authority_ref),
+      eval_refs: string_list(attrs, :eval_refs),
+      trace_ref: fetch(attrs, :trace_ref),
+      appkit_projection_ref: fetch(attrs, :appkit_projection_ref)
+    }
+  end
+
+  defp rollback_receipt(attrs, blocked_gate_refs) do
+    %RollbackReceipt{
+      receipt_ref: "adaptive-control-rollback://" <> to_ref_segment(fetch(attrs, :rollback_ref)),
+      status: rollback_status(blocked_gate_refs),
+      blocked_gate_refs: blocked_gate_refs,
+      candidate_ref: fetch(attrs, :candidate_ref),
+      rollback_ref: fetch(attrs, :rollback_ref),
+      restored_ref: fetch(attrs, :restored_ref),
+      tenant_ref: fetch(attrs, :tenant_ref),
+      citadel_authority_ref: fetch(attrs, :citadel_authority_ref),
+      trace_ref: fetch(attrs, :trace_ref),
+      appkit_projection_ref: fetch(attrs, :appkit_projection_ref)
+    }
+  end
+
+  defp promotion_status([]), do: :promoted
+  defp promotion_status([_ | _]), do: :denied
+
+  defp rollback_status([]), do: :rolled_back
+  defp rollback_status([_ | _]), do: :denied
 
   defp reject_raw(attrs) do
     case raw_key(attrs) do
