@@ -87,10 +87,10 @@ defmodule Mezzanine.CoordinationEngine.StateMachine do
 
   @spec provider_pool_ready(Run.t(), [map()] | map()) :: {:ok, Run.t()} | {:error, term()}
   def provider_pool_ready(%Run{} = run, slots) when is_list(slots) do
-    with {:ok, provider_pool} <- Trinity.ProviderPool.new(slots) do
+    with {:ok, slot_refs} <- provider_slot_refs(slots) do
       transition(run, :provider_pool_ready, %{
         provider_pool_ref: run.spec.provider_pool_ref,
-        provider_slot_refs: Enum.map(provider_pool.slots, & &1.slot_ref),
+        provider_slot_refs: slot_refs,
         trace_ref: "trace:provider-pool-ready:" <> run.spec.coordination_run_ref
       })
     end
@@ -102,10 +102,9 @@ defmodule Mezzanine.CoordinationEngine.StateMachine do
     end
   end
 
-  @spec route(Run.t(), Trinity.Config.t(), map()) ::
-          {:ok, Run.t(), Trinity.RouterDecision.t()} | {:error, term()}
+  @spec route(Run.t(), map(), map()) :: {:ok, Run.t(), map()} | {:error, term()}
   def route(%Run{} = run, config, attrs) do
-    with {:ok, decision} <- Trinity.Router.route(config, attrs),
+    with {:ok, decision} <- route_decision(run, config, attrs),
          {:ok, next_run} <- transition(run, :routing, attrs) do
       {:ok,
        %{
@@ -115,6 +114,34 @@ defmodule Mezzanine.CoordinationEngine.StateMachine do
            trace_refs: append_ref(next_run.trace_refs, decision.trace_ref),
            replay_refs: append_ref(next_run.replay_refs, decision.replay_ref)
        }, decision}
+    end
+  end
+
+  defp provider_slot_refs(slots) do
+    slot_refs =
+      slots
+      |> Enum.map(&Validation.fetch(&1, :slot_ref))
+      |> Enum.filter(&(is_binary(&1) and &1 != ""))
+
+    if slot_refs == [] do
+      {:error, {:missing_required_ref, :slot_ref}}
+    else
+      {:ok, slot_refs}
+    end
+  end
+
+  defp route_decision(run, _config, attrs) do
+    with {:ok, selected_role_ref} <- Validation.require_binary(attrs, :preferred_role_ref),
+         {:ok, trace_ref} <- Validation.require_binary(attrs, :trace_ref),
+         {:ok, replay_ref} <- Validation.require_binary(attrs, :replay_ref) do
+      {:ok,
+       %{
+         router_decision_ref:
+           "router_decision:#{run.spec.coordination_run_ref}:#{selected_role_ref}",
+         selected_role_ref: selected_role_ref,
+         trace_ref: trace_ref,
+         replay_ref: replay_ref
+       }}
     end
   end
 

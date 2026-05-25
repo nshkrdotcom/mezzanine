@@ -3,7 +3,7 @@ defmodule Mezzanine.OptimizationEngine.RunSpec do
   Ref-only governed optimization run spec.
   """
 
-  alias GEPAFramework.Value
+  alias Mezzanine.AIExecution.OptimizerAdapter
 
   @type t :: %__MODULE__{
           run_ref: String.t(),
@@ -75,19 +75,19 @@ defmodule Mezzanine.OptimizationEngine.RunSpec do
          :ok <- required_ref_lists(attrs) do
       {:ok,
        %__MODULE__{
-         run_ref: Value.get(attrs, :run_ref),
-         tenant_ref: Value.get(attrs, :tenant_ref),
-         authority_ref: Value.get(attrs, :authority_ref),
-         target_ref: Value.get(attrs, :target_ref),
-         framework_run_ref: Value.get(attrs, :framework_run_ref),
-         checkpoint_ref: Value.get(attrs, :checkpoint_ref),
-         budget_ref: Value.get(attrs, :budget_ref),
-         eval_suite_ref: Value.get(attrs, :eval_suite_ref),
-         replay_bundle_ref: Value.get(attrs, :replay_bundle_ref),
-         trace_ref: Value.get(attrs, :trace_ref),
+         run_ref: value(attrs, :run_ref),
+         tenant_ref: value(attrs, :tenant_ref),
+         authority_ref: value(attrs, :authority_ref),
+         target_ref: value(attrs, :target_ref),
+         framework_run_ref: value(attrs, :framework_run_ref),
+         checkpoint_ref: value(attrs, :checkpoint_ref),
+         budget_ref: value(attrs, :budget_ref),
+         eval_suite_ref: value(attrs, :eval_suite_ref),
+         replay_bundle_ref: value(attrs, :replay_bundle_ref),
+         trace_ref: value(attrs, :trace_ref),
          memory_ref_set: string_list(attrs, :memory_ref_set),
          prompt_ref_set: string_list(attrs, :prompt_ref_set),
-         context_budget_ref: Value.get(attrs, :context_budget_ref),
+         context_budget_ref: value(attrs, :context_budget_ref),
          guardrail_ref_set: string_list(attrs, :guardrail_ref_set),
          cost_budget_ref_set: string_list(attrs, :cost_budget_ref_set),
          drift_ref_set: string_list(attrs, :drift_ref_set),
@@ -144,21 +144,21 @@ defmodule Mezzanine.OptimizationEngine.RunSpec do
     ]
   end
 
-  @spec optimizer_request(t()) :: map()
+  @spec optimizer_request(t()) :: OptimizerAdapter.optimization_request()
   def optimizer_request(%__MODULE__{} = spec) do
     %{
       tenant_ref: spec.tenant_ref,
       run_ref: spec.framework_run_ref,
       objective_ref: spec.eval_suite_ref,
       candidate_source_refs: candidate_source_refs(spec),
-      promotion_policy_ref: List.first(spec.promotion_ref_set),
+      promotion_policy_ref: first_ref(spec.promotion_ref_set),
       trace_ref: spec.trace_ref,
       context_packet_ref: spec.context_budget_ref,
       route_decision_ref: spec.target_ref,
       eval_refs: [spec.eval_suite_ref],
       cost_refs: spec.cost_budget_ref_set,
-      promotion_ref: List.first(spec.promotion_ref_set),
-      rollback_ref: List.first(spec.rollback_ref_set),
+      promotion_ref: first_ref(spec.promotion_ref_set),
+      rollback_ref: first_ref(spec.rollback_ref_set),
       optimization_target_ref: spec.target_ref
     }
   end
@@ -175,6 +175,7 @@ defmodule Mezzanine.OptimizationEngine.RunSpec do
     end)
   end
 
+  @spec candidate_source_refs(t()) :: [String.t()]
   defp candidate_source_refs(spec) do
     [
       spec.memory_ref_set,
@@ -187,10 +188,13 @@ defmodule Mezzanine.OptimizationEngine.RunSpec do
     |> Enum.uniq()
   end
 
+  @spec first_ref([String.t(), ...] | [String.t()]) :: String.t()
+  defp first_ref([ref | _rest]) when is_binary(ref), do: ref
+
   defp required_strings(attrs) do
     missing =
       @required_fields
-      |> Enum.reject(&(is_binary(Value.get(attrs, &1)) and Value.get(attrs, &1) != ""))
+      |> Enum.reject(&(is_binary(value(attrs, &1)) and value(attrs, &1) != ""))
 
     case missing do
       [] -> :ok
@@ -198,12 +202,12 @@ defmodule Mezzanine.OptimizationEngine.RunSpec do
     end
   end
 
-  defp string_list(attrs, field), do: Value.get(attrs, field, []) |> Value.string_list()
+  defp string_list(attrs, field), do: attrs |> value(field, []) |> normalize_string_list()
 
   defp required_ref_lists(attrs) do
     missing =
       @required_lists
-      |> Enum.reject(&non_empty_string_list?(Value.get(attrs, &1)))
+      |> Enum.reject(&non_empty_string_list?(value(attrs, &1)))
 
     case missing do
       [] -> :ok
@@ -211,7 +215,7 @@ defmodule Mezzanine.OptimizationEngine.RunSpec do
     end
   end
 
-  defp non_empty_string_list?(value), do: Value.string_list(value) == value and value != []
+  defp non_empty_string_list?(value), do: normalize_string_list(value) == value and value != []
 
   defp reject_raw_fields(attrs) do
     case forbidden_field(attrs) do
@@ -228,4 +232,13 @@ defmodule Mezzanine.OptimizationEngine.RunSpec do
 
   defp forbidden_field(input) when is_list(input), do: Enum.find_value(input, &forbidden_field/1)
   defp forbidden_field(_input), do: nil
+
+  defp value(attrs, field, default \\ nil),
+    do: Map.get(attrs, field) || Map.get(attrs, Atom.to_string(field)) || default
+
+  defp normalize_string_list(values) when is_list(values) do
+    Enum.filter(values, &(is_binary(&1) and &1 != ""))
+  end
+
+  defp normalize_string_list(_values), do: []
 end

@@ -5,8 +5,6 @@ end
 defmodule Mezzanine.OptimizationEngine.MixProject do
   use Mix.Project
 
-  @repo_root Path.expand("../..", __DIR__)
-
   def project do
     [
       app: :mezzanine_optimization_engine,
@@ -32,7 +30,6 @@ defmodule Mezzanine.OptimizationEngine.MixProject do
   defp deps do
     [
       {:mezzanine_ai_execution_engine, path: "../ai_execution_engine"},
-      DependencySources.dep(:gepa_framework, @repo_root),
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.40.1", only: :dev, runtime: false}

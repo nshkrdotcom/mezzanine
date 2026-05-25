@@ -37,8 +37,8 @@ defmodule Mezzanine.OptimizationEngine.PromotionWorkflow do
   Promotion workflow gate evaluation for GEPA candidates.
   """
 
-  alias GEPAFramework.Value
   alias Mezzanine.OptimizationEngine.PromotionWorkflow.Decision
+  alias Mezzanine.OptimizationEngine.Value
 
   @gate_order [
     {:eval_gate, "gate:eval"},

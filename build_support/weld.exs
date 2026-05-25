@@ -26,8 +26,6 @@ defmodule Mezzanine.Build.WeldContract do
     :ai_trace_replay_contracts,
     :ground_plane_contracts,
     :ground_plane_persistence_policy,
-    :gepa_framework,
-    :trinity_framework,
     :jido_hive_coordination_patterns,
     :jido_hive_inter_agent_messaging,
     :jido_integration_provider_classification,

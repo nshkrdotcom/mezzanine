@@ -33,7 +33,6 @@ defmodule Mezzanine.CoordinationEngine.MixProject do
   defp deps do
     [
       {:mezzanine_ai_run_model, path: "../ai_run_model"},
-      DependencySources.dep(:trinity_framework, @repo_root),
       DependencySources.dep(:jido_hive_coordination_patterns, @repo_root),
       DependencySources.dep(:jido_hive_inter_agent_messaging, @repo_root),
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},

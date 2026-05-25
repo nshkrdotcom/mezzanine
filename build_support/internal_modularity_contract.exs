@@ -39,7 +39,10 @@ defmodule Mezzanine.Build.InternalModularityContract do
     %{path: "core/cost_attribution_engine", allowed_internal_deps: []},
     %{path: "core/budget_enforcement_engine", allowed_internal_deps: []},
     %{path: "core/eval_engine", allowed_internal_deps: []},
-    %{path: "core/optimization_engine", allowed_internal_deps: []},
+    %{
+      path: "core/optimization_engine",
+      allowed_internal_deps: ["core/ai_execution_engine"]
+    },
     %{path: "core/coordination_engine", allowed_internal_deps: ["core/ai_run_model"]},
     %{
       path: "core/object_engine",

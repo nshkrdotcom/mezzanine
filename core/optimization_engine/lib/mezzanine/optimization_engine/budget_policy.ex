@@ -16,8 +16,8 @@ defmodule Mezzanine.OptimizationEngine.BudgetPolicy do
   Fail-closed optimization budget policy.
   """
 
-  alias GEPAFramework.Value
   alias Mezzanine.OptimizationEngine.BudgetPolicy.Decision
+  alias Mezzanine.OptimizationEngine.Value
 
   @limit_order [
     {:candidate_limit, :candidate_count, "budget:candidate_limit"},

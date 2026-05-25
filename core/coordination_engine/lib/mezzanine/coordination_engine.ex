@@ -21,8 +21,7 @@ defmodule Mezzanine.CoordinationEngine do
   @spec provider_pool_ready(Run.t(), [map()] | map()) :: {:ok, Run.t()} | {:error, term()}
   def provider_pool_ready(%Run{} = run, attrs), do: StateMachine.provider_pool_ready(run, attrs)
 
-  @spec route(Run.t(), Trinity.Config.t(), map()) ::
-          {:ok, Run.t(), Trinity.RouterDecision.t()} | {:error, term()}
+  @spec route(Run.t(), map(), map()) :: {:ok, Run.t(), map()} | {:error, term()}
   def route(%Run{} = run, config, attrs), do: StateMachine.route(run, config, attrs)
 
   @spec inject_role(Run.t(), map()) :: {:ok, Run.t()} | {:error, term()}

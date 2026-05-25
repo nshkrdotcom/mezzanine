@@ -23,7 +23,7 @@ defmodule Mezzanine.CoordinationEngine.StateMachineTest do
     assert run.provider_pool_ref == "provider-pool://coordination-run/phase10"
 
     assert {:ok, run, decision} =
-             CoordinationEngine.route(run, trinity_config(), %{
+             CoordinationEngine.route(run, router_config(), %{
                coordination_run_ref: "coordination-run/phase10",
                preferred_role_ref: "role://worker",
                trace_ref: "trace://router-decision",
@@ -138,8 +138,8 @@ defmodule Mezzanine.CoordinationEngine.StateMachineTest do
     }
   end
 
-  defp trinity_config do
-    Trinity.Config.compile!(%{
+  defp router_config do
+    %{
       router_artifact: %{
         router_artifact_ref: "router://phase10",
         extractor_ref: "extractor://phase10",
@@ -166,7 +166,7 @@ defmodule Mezzanine.CoordinationEngine.StateMachineTest do
         }
       ],
       provider_pool: []
-    })
+    }
   end
 
   defp provider_slots do

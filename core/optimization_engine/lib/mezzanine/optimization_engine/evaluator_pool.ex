@@ -67,9 +67,9 @@ defmodule Mezzanine.OptimizationEngine.EvaluatorPool do
   Deterministic distributed evaluator pool planning and result dedupe.
   """
 
-  alias GEPAFramework.Value
   alias Mezzanine.OptimizationEngine.EvaluatorPool.{Batch, Lease, Result}
   alias Mezzanine.OptimizationEngine.RunSpec
+  alias Mezzanine.OptimizationEngine.Value
 
   @type t :: %__MODULE__{run_ref: String.t(), batches: [Batch.t()], results_by_key: map()}
 

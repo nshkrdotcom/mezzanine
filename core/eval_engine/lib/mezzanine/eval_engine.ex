@@ -234,7 +234,6 @@ defmodule Mezzanine.EvalEngine do
          failure_summary: summary
        }}
     else
-      {:error, %Failure{} = reason} -> {:error, reason}
       {:error, reason} -> eval_failure(reason, attrs)
     end
   end
@@ -498,12 +497,15 @@ defmodule Mezzanine.EvalEngine do
   defp evidence_refs(reason), do: ["reason://#{inspect(reason)}"]
 
   defp eval_failure(reason, attrs) do
-    Failure.new(%{
-      owner: :mezzanine,
-      reason_code: "mezzanine.eval.gate_receipt_invalid.v1",
-      safe_message: "eval gate receipt is invalid",
-      trace_ref: fetch(attrs, :trace_ref),
-      evidence_refs: evidence_refs(reason)
-    })
+    with {:ok, failure} <-
+           Failure.new(%{
+             owner: :mezzanine,
+             reason_code: "mezzanine.eval.gate_receipt_invalid.v1",
+             safe_message: "eval gate receipt is invalid",
+             trace_ref: fetch(attrs, :trace_ref),
+             evidence_refs: evidence_refs(reason)
+           }) do
+      {:error, failure}
+    end
   end
 end

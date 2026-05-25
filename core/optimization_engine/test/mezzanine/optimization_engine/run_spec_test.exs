@@ -30,9 +30,9 @@ defmodule Mezzanine.OptimizationEngine.RunSpecTest do
            }
   end
 
-  test "proposes candidates through the GEPA Mezzanine optimizer adapter" do
+  test "proposes candidates through the Mezzanine optimizer adapter contract" do
     runtime_deps = %Mezzanine.AIExecution.RuntimeDeps{
-      optimizer_adapter: GEPA.MezzanineOptimizerAdapter
+      optimizer_adapter: Mezzanine.AIExecution.FixtureOptimizerAdapter
     }
 
     assert {:ok, [candidate]} =
@@ -40,7 +40,7 @@ defmodule Mezzanine.OptimizationEngine.RunSpecTest do
                examples: ["example://phase13/1"]
              )
 
-    assert candidate.candidate_ref == "candidate:component:gepa:mezzanine:1"
+    assert candidate.candidate_ref =~ ~r/^optimization-candidate:\/\/[0-9a-f]{64}$/
     assert candidate.context_packet_ref == "context-budget://phase13/optimizer"
     assert candidate.route_decision_ref == "target://phase13/role-worker"
     assert candidate.eval_refs == ["eval-suite://phase13"]

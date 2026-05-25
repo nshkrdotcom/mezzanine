@@ -33,8 +33,8 @@ defmodule Mezzanine.OptimizationEngine.PriorFabric do
   Binds inherited memory, prompt, guardrail, eval, replay, cost, and persistence refs.
   """
 
-  alias GEPAFramework.Value
   alias Mezzanine.OptimizationEngine.PriorFabric.Receipt
+  alias Mezzanine.OptimizationEngine.Value
 
   @fixture_refs ["AOC-032", "AOC-033", "PERSIST-AOC-004", "PERSIST-AOC-005"]
   @required_strings [

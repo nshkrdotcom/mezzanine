@@ -3,6 +3,8 @@
 Implementation-facing guides:
 
 - [Generalized Stack Boundary](https://github.com/nshkrdotcom/mezzanine/blob/main/guides/generalized_stack.md)
+- [Context ABI Admission](context_abi.md)
+- [Router Fabric](router_fabric.md)
 - [Code Smell Remediation](code_smell_remediation.md)
 - [QC And Operations](https://github.com/nshkrdotcom/mezzanine/blob/main/guides/qc_and_operations.md)
 
