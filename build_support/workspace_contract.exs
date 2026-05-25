@@ -4,6 +4,7 @@ defmodule Mezzanine.Build.WorkspaceContract do
   @kept_package_paths [
     "core/mezzanine_core",
     "bridges/citadel_bridge",
+    "bridges/outer_brain_bridge",
     "bridges/integration_bridge"
   ]
 
