@@ -31,6 +31,7 @@ defmodule Mezzanine.EvalEngine.MixProject do
 
   defp deps do
     [
+      DependencySources.dep(:outer_brain_context_abi, @repo_root),
       DependencySources.dep(:ai_trace_replay_contracts, @repo_root),
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},

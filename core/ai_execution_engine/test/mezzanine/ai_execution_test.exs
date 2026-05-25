@@ -92,6 +92,33 @@ defmodule Mezzanine.AIExecutionTest do
     assert failure.reason_code == "mezzanine.ai_execution.raw_payload_rejected.v1"
   end
 
+  test "maps owner-local failures to durable AI execution failure receipts" do
+    failure =
+      Failure.new!(%{
+        owner: :trinity,
+        reason_code: "trinity.route.no_route_available.v1",
+        safe_message: "no route available",
+        trace_ref: "trace://tenant-a/run-a",
+        evidence_refs: ["route-policy://tenant-a/default"]
+      })
+
+    assert {:ok, receipt} =
+             AIExecution.failure_receipt(failure,
+               tenant_ref: "tenant://tenant-a",
+               workflow_ref: "workflow://tenant-a/run-a",
+               stage: :router
+             )
+
+    assert receipt.failure_receipt_ref =~ ~r/^ai-execution-failure-receipt:\/\/[0-9a-f]{64}$/
+    assert receipt.failure_ref =~ ~r/^failure:\/\/trinity\/[0-9a-f]{64}$/
+    assert receipt.failure_family == :router
+    assert receipt.status == :failed
+    assert receipt.product_summary == "No governed route is currently available."
+    assert receipt.safe_action == :review_route_policy
+    assert receipt.trace_ref == "trace://tenant-a/run-a"
+    refute Map.has_key?(Map.from_struct(receipt), :raw_prompt)
+  end
+
   defp compile_request do
     %{
       tenant_ref: "tenant://tenant-a",

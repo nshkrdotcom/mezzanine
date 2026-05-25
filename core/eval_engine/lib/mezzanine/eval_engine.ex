@@ -3,6 +3,8 @@ defmodule Mezzanine.EvalEngine do
   Deterministic eval suite execution with bounded verdict composition.
   """
 
+  alias OuterBrain.ContextABI.Failure
+
   @oracles [:exact_shape, :hash_match, :decision_class_match, :structural_subset]
   @max_concurrency 16
   @max_cases 128
@@ -98,6 +100,34 @@ defmodule Mezzanine.EvalEngine do
           }
   end
 
+  defmodule EvalGateReceipt do
+    @moduledoc "Eval gate receipt used by AI execution, promotion, and operator review paths."
+    @enforce_keys [
+      :eval_verdict_ref,
+      :suite_ref,
+      :tenant_ref,
+      :authority_ref,
+      :trace_ref,
+      :status,
+      :verdict,
+      :safe_action,
+      :failure_summary
+    ]
+    defstruct @enforce_keys
+
+    @type t :: %__MODULE__{
+            eval_verdict_ref: String.t(),
+            suite_ref: String.t(),
+            tenant_ref: String.t(),
+            authority_ref: String.t(),
+            trace_ref: String.t(),
+            status: atom(),
+            verdict: atom(),
+            safe_action: atom(),
+            failure_summary: map() | nil
+          }
+  end
+
   @spec run(map(), map(), keyword()) :: {:ok, EvalRunRef.t()} | {:error, term()}
   def run(suite_attrs, variant_config, opts \\ [])
       when is_map(suite_attrs) and is_map(variant_config) and is_list(opts) do
@@ -156,6 +186,95 @@ defmodule Mezzanine.EvalEngine do
   end
 
   def suite_ref(_attrs), do: {:error, :invalid_eval_suite}
+
+  @spec gate_receipt(EvalRunRef.t() | Failure.t(), map() | keyword()) ::
+          {:ok, EvalGateReceipt.t()} | {:error, Failure.t()}
+  def gate_receipt(run_or_failure, attrs \\ %{})
+
+  def gate_receipt(%EvalRunRef{} = run, attrs) do
+    attrs = if is_list(attrs), do: Map.new(attrs), else: attrs
+    verdict = run.verdict
+
+    {:ok,
+     %EvalGateReceipt{
+       eval_verdict_ref: eval_verdict_ref(run, attrs),
+       suite_ref: run.suite_ref,
+       tenant_ref: run.tenant_ref,
+       authority_ref: run.authority_ref,
+       trace_ref: run.trace_ref,
+       status: gate_status(verdict),
+       verdict: verdict,
+       safe_action: gate_safe_action(verdict),
+       failure_summary: nil
+     }}
+  end
+
+  def gate_receipt(%Failure{} = failure, attrs) do
+    attrs = if is_list(attrs), do: Map.new(attrs), else: attrs
+
+    with {:ok, summary} <- Failure.summary(failure),
+         {:ok, suite_ref} <- required_failure_ref(attrs, :suite_ref),
+         {:ok, tenant_ref} <- required_failure_ref(attrs, :tenant_ref),
+         {:ok, authority_ref} <- required_failure_ref(attrs, :authority_ref),
+         {:ok, trace_ref} <- trace_ref(attrs, failure) do
+      {:ok,
+       %EvalGateReceipt{
+         eval_verdict_ref:
+           "eval-verdict://failure/" <>
+             (summary.failure_ref
+              |> String.replace_prefix("failure://", "")
+              |> URI.encode_www_form()),
+         suite_ref: suite_ref,
+         tenant_ref: tenant_ref,
+         authority_ref: authority_ref,
+         trace_ref: trace_ref,
+         status: :blocked,
+         verdict: :inconclusive,
+         safe_action: :review_eval_evidence,
+         failure_summary: summary
+       }}
+    else
+      {:error, %Failure{} = reason} -> {:error, reason}
+      {:error, reason} -> eval_failure(reason, attrs)
+    end
+  end
+
+  @spec failure_from_reason(term(), map() | keyword()) :: {:ok, Failure.t()} | {:error, term()}
+  def failure_from_reason(reason, attrs \\ %{}) do
+    attrs = if is_list(attrs), do: Map.new(attrs), else: attrs
+
+    {reason_code, safe_message, retryable?} =
+      case reason do
+        :unauthorized_eval_run ->
+          {"mezzanine.eval.authority_denied.v1", "eval authority was denied", false}
+
+        :eval_parent_budget_exceeded ->
+          {"mezzanine.eval.budget_exhausted.v1", "eval budget was exhausted", false}
+
+        :eval_suite_has_no_cases ->
+          {"mezzanine.eval.insufficient_evidence.v1", "eval suite has no cases", false}
+
+        :eval_suite_case_count_unbounded ->
+          {"mezzanine.eval.unbounded_case_count.v1", "eval suite has too many cases", false}
+
+        {:raw_eval_payload_forbidden, _field} ->
+          {"mezzanine.eval.raw_payload_rejected.v1", "eval payload contains forbidden raw data",
+           false}
+
+        _other ->
+          {"mezzanine.eval.insufficient_evidence.v1", "eval failed without sufficient evidence",
+           false}
+      end
+
+    Failure.new(%{
+      owner: :mezzanine,
+      reason_code: reason_code,
+      safe_message: safe_message,
+      retryable?: retryable?,
+      trace_ref: fetch(attrs, :trace_ref),
+      evidence_refs: evidence_refs(reason)
+    })
+  end
 
   defp authorize_eval(suite, opts) do
     allowed = Keyword.get(opts, :authorized_tenants, [suite.tenant_ref])
@@ -288,6 +407,21 @@ defmodule Mezzanine.EvalEngine do
   defp verdict_rank(:inconclusive), do: 2
   defp verdict_rank(:regress), do: 3
 
+  defp gate_status(:pass), do: :passed
+  defp gate_status(:improve), do: :passed
+  defp gate_status(:inconclusive), do: :needs_review
+  defp gate_status(:regress), do: :blocked
+
+  defp gate_safe_action(:pass), do: :allow
+  defp gate_safe_action(:improve), do: :allow_with_review
+  defp gate_safe_action(:inconclusive), do: :review_eval_evidence
+  defp gate_safe_action(:regress), do: :block_promotion
+
+  defp eval_verdict_ref(run, attrs) do
+    fetch(attrs, :eval_verdict_ref) ||
+      "eval-verdict://#{hash(run.eval_run_ref <> Atom.to_string(run.verdict))}"
+  end
+
   defp eval_run_ref(suite, variant_config) do
     "eval-run://#{hash(suite.suite_ref <> variant_ref(variant_config))}"
   end
@@ -342,4 +476,34 @@ defmodule Mezzanine.EvalEngine do
     do: Map.get(attrs, field) || Map.get(attrs, Atom.to_string(field)) || default
 
   defp hash(value), do: :crypto.hash(:sha256, value) |> Base.encode16(case: :lower)
+
+  defp required_failure_ref(attrs, field) do
+    case fetch(attrs, field) do
+      value when is_binary(value) and value != "" -> {:ok, value}
+      _other -> {:error, {:missing_eval_gate_ref, field}}
+    end
+  end
+
+  defp trace_ref(attrs, failure) do
+    case fetch(attrs, :trace_ref) || failure.trace_ref do
+      value when is_binary(value) and value != "" -> {:ok, value}
+      _other -> {:error, {:missing_eval_gate_ref, :trace_ref}}
+    end
+  end
+
+  defp evidence_refs({reason, field}) when is_atom(reason) and is_atom(field),
+    do: ["reason://#{Atom.to_string(reason)}", "field://#{Atom.to_string(field)}"]
+
+  defp evidence_refs(reason) when is_atom(reason), do: ["reason://#{Atom.to_string(reason)}"]
+  defp evidence_refs(reason), do: ["reason://#{inspect(reason)}"]
+
+  defp eval_failure(reason, attrs) do
+    Failure.new(%{
+      owner: :mezzanine,
+      reason_code: "mezzanine.eval.gate_receipt_invalid.v1",
+      safe_message: "eval gate receipt is invalid",
+      trace_ref: fetch(attrs, :trace_ref),
+      evidence_refs: evidence_refs(reason)
+    })
+  end
 end

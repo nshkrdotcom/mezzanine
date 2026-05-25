@@ -4,6 +4,7 @@ defmodule Mezzanine.AIExecution do
   """
 
   alias Mezzanine.AIExecution.{
+    FailureReceipt,
     FixtureOptimizerAdapter,
     FixtureRouterAdapter,
     OptimizerAdapter,
@@ -22,6 +23,7 @@ defmodule Mezzanine.AIExecution do
       :router_adapter_contract,
       :optimizer_adapter_contract,
       :render_result_handoff,
+      :failure_receipt_projection,
       :model_invocation_request_assembly,
       :explicit_runtime_dependencies
     ],
@@ -53,6 +55,9 @@ defmodule Mezzanine.AIExecution do
 
   @spec render_result_module() :: module()
   def render_result_module, do: RenderResult
+
+  @spec failure_receipt_module() :: module()
+  def failure_receipt_module, do: FailureReceipt
 
   @spec route(RouterAdapter.route_request(), RuntimeDeps.t() | map() | keyword(), keyword()) ::
           {:ok, RouterAdapter.route_decision()} | {:error, Failure.t()}
@@ -111,6 +116,12 @@ defmodule Mezzanine.AIExecution do
          trace_ref: render_result.trace_ref
        }}
     end
+  end
+
+  @spec failure_receipt(Failure.t(), map() | keyword()) ::
+          {:ok, FailureReceipt.t()} | {:error, Failure.t()}
+  def failure_receipt(%Failure{} = failure, attrs \\ %{}) do
+    FailureReceipt.new(failure, attrs)
   end
 
   defp render_profile(route_decision, opts) do

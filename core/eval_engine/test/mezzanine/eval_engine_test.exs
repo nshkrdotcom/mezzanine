@@ -47,6 +47,44 @@ defmodule Mezzanine.EvalEngineTest do
              )
   end
 
+  test "builds eval gate receipts for verdicts and owner-local failures" do
+    assert {:ok, run} =
+             EvalEngine.run(
+               suite_attrs([case_attrs("case-1")]),
+               variant_config(),
+               max_concurrency: 1
+             )
+
+    assert {:ok, gate} =
+             EvalEngine.gate_receipt(run,
+               eval_verdict_ref: "eval-verdict://phase-c/pass"
+             )
+
+    assert gate.eval_verdict_ref == "eval-verdict://phase-c/pass"
+    assert gate.status == :passed
+    assert gate.safe_action == :allow
+    assert gate.failure_summary == nil
+
+    assert {:ok, failure} =
+             EvalEngine.failure_from_reason(:eval_parent_budget_exceeded,
+               trace_ref: "trace://eval"
+             )
+
+    assert {:ok, failure_gate} =
+             EvalEngine.gate_receipt(failure,
+               suite_ref: "eval-suite://phase-c",
+               tenant_ref: "tenant://a",
+               authority_ref: "authority://a"
+             )
+
+    assert failure_gate.status == :blocked
+    assert failure_gate.verdict == :inconclusive
+    assert failure_gate.failure_summary.failure_family == :eval
+
+    assert failure_gate.failure_summary.product_summary ==
+             "Evaluation did not approve this result."
+  end
+
   defp suite_attrs(cases) do
     %{
       suite_ref: "eval-suite://phase-c",
