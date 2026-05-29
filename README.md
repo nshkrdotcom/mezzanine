@@ -392,3 +392,11 @@ Operational rules:
 - Evidence is emitted through lifecycle/workflow/runtime tests, ConfigRegistry
   receipts, StackLab proofs, AITrace refs, projection receipts, and product
   acceptance runs that exercise Mezzanine through AppKit.
+
+## Chassis Deployment Workflow
+
+Mezzanine includes a mezzanine_chassis_bridge package with deployment and rollback workflow facades plus root smoke tasks for mezzanine.workflow.dispatch and mezzanine.read.get. Mezzanine owns workflow truth; Chassis owns substrate effects.
+
+## Chassis Evolution Workflows
+
+The bridge package contains the nine Chassis Evolution workflow facades, Truth record structs, and read projection facades required for failure batches, trials, scoring, consent, promotion, model materialization, and tensor reload.
