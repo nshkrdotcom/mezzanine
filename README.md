@@ -395,8 +395,47 @@ Operational rules:
 
 ## Chassis Deployment Workflow
 
-Mezzanine includes a mezzanine_chassis_bridge package with deployment and rollback workflow facades plus root smoke tasks for mezzanine.workflow.dispatch and mezzanine.read.get. Mezzanine owns workflow truth; Chassis owns substrate effects.
+`Mezzanine.Workflow.ChassisDeploymentWorkflow` is the Truth/Workflow/Read
+entry point for Chassis deployment intent. Mezzanine records the deployment
+intent, coordinates workflow state, reduces Chassis receipts, and publishes
+operator read projections. Chassis remains the substrate owner that performs
+release placement, node mesh changes, host provisioning, health checks, and
+rollback side effects.
+
+The deployment workflow contract is documented in
+`../j/jido_brainstorm/nshkrdotcom/docs/20260529/chassis_impl/0517_mezzanine_deployment_workflow_spec.md`.
 
 ## Chassis Evolution Workflows
 
-The bridge package contains the nine Chassis Evolution workflow facades, Truth record structs, and read projection facades required for failure batches, trials, scoring, consent, promotion, model materialization, and tensor reload.
+Mezzanine owns the Chassis Evolution workflow layer and exposes the nine
+workflow families specified for Chassis:
+
+- `FailureBatchWorkflow`
+- `CandidatePatchWorkflow`
+- `TrialReplayWorkflow`
+- `CandidateScoringWorkflow`
+- `PromotionConsentWorkflow`
+- `PromotionApplyWorkflow`
+- `SwapRollbackWorkflow`
+- `ModelMaterializationWorkflow`
+- `TensorPatchReloadWorkflow`
+
+Those workflows coordinate failure batches, candidate patch proposals, trial
+replay, scoring, promotion consent, promotion apply, swap rollback, model
+weight materialization, and tensor patch reload. They do not execute Docker,
+systemd, SSH, or host swaps; those effects remain Chassis substrate actions.
+
+The workflow catalogue is documented in
+`../j/jido_brainstorm/nshkrdotcom/docs/20260529/chassis_impl/0530_chassis_evolution_mezzanine_workflows.md`.
+
+## Truth / Workflow / Read Ownership For Chassis
+
+Mezzanine owns Chassis Truth records such as `EvolutionIntentRecord`,
+`FailureBatchIntent`, `CandidatePromotionIntent`, `OperatorConsentRecord`,
+`ModelMaterializationIntent`, and `TensorReloadIntent`. It also owns read
+projections such as `evolution_batch_projection`, `candidate_projection`,
+`trial_projection`, `score_projection`, `swap_projection`, and model/tensor
+operation readbacks.
+
+Chassis owns substrate receipts and physical side effects. Mezzanine does not
+run Docker, systemd, SSH, or host swaps.
