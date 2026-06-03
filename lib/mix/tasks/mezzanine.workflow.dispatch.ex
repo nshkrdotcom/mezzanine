@@ -4,13 +4,17 @@ defmodule Mix.Tasks.Mezzanine.Workflow.Dispatch do
   @moduledoc "Dispatches Mezzanine workflows backed by lower-plane bridge modules."
   @shortdoc "Dispatch a Mezzanine workflow"
 
+  alias Mezzanine.Workflow.Chassis.Evolution.FailureBatchWorkflow
+  alias Mezzanine.Workflow.ChassisDeploymentWorkflow
+  alias Mezzanine.Workflow.ChassisRollbackWorkflow
+
   @impl true
   def run(["chassis_materialize_deployment" | args]) do
     Mix.Task.run("app.start")
 
     args
     |> attrs()
-    |> Mezzanine.Workflow.ChassisDeploymentWorkflow.dispatch()
+    |> ChassisDeploymentWorkflow.dispatch()
     |> case do
       {:ok, result} ->
         Mix.shell().info(
@@ -29,7 +33,7 @@ defmodule Mix.Tasks.Mezzanine.Workflow.Dispatch do
 
     attrs
     |> Map.put(:app_ref, app_ref)
-    |> Mezzanine.Workflow.ChassisRollbackWorkflow.dispatch()
+    |> ChassisRollbackWorkflow.dispatch()
     |> case do
       {:ok, result} ->
         Mix.shell().info(
@@ -38,6 +42,23 @@ defmodule Mix.Tasks.Mezzanine.Workflow.Dispatch do
 
       {:error, reason} ->
         Mix.raise("chassis_rollback_deployment failed: #{inspect(reason)}")
+    end
+  end
+
+  def run(["chassis_failure_batch" | args]) do
+    Mix.Task.run("app.start")
+
+    args
+    |> attrs()
+    |> FailureBatchWorkflow.dispatch()
+    |> case do
+      {:ok, result} ->
+        Mix.shell().info(
+          "workflow=chassis_failure_batch status=#{result.status} failure_batch_ref=#{result.failure_batch_ref} receipt_ref=#{result.receipt_ref} outbox_delivered=#{result.outbox_delivered}"
+        )
+
+      {:error, reason} ->
+        Mix.raise("chassis_failure_batch failed: #{inspect(reason)}")
     end
   end
 
@@ -52,8 +73,23 @@ defmodule Mix.Tasks.Mezzanine.Workflow.Dispatch do
   defp parse_args(["--tenant-ref", value | rest], acc),
     do: parse_args(rest, Map.put(acc, :tenant_ref, value))
 
+  defp parse_args(["--tenant", value | rest], acc),
+    do: parse_args(rest, Map.put(acc, :tenant_ref, value))
+
   defp parse_args(["--installation-ref", value | rest], acc),
     do: parse_args(rest, Map.put(acc, :installation_ref, value))
+
+  defp parse_args(["--installation", value | rest], acc),
+    do: parse_args(rest, Map.put(acc, :installation_ref, value))
+
+  defp parse_args(["--evidence", value | rest], acc),
+    do: parse_args(rest, Map.update(acc, :evidence_refs, [value], &[value | &1]))
+
+  defp parse_args(["--summary", value | rest], acc),
+    do: parse_args(rest, Map.put(acc, :summary, value))
+
+  defp parse_args(["--redaction-posture", value | rest], acc),
+    do: parse_args(rest, Map.put(acc, :redaction_posture, value))
 
   defp parse_args(["--app-ref", value | rest], acc),
     do: parse_args(rest, Map.put(acc, :app_ref, value))

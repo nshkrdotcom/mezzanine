@@ -3,8 +3,23 @@ defmodule Mezzanine.ChassisWorkflowsTest do
 
   alias Mezzanine.Outbox.ChassisDrainWorker
   alias Mezzanine.Read.ChassisDeploymentProjection
+  alias Mezzanine.Read.ChassisEvolutionProjection
   alias Mezzanine.Workflow.ChassisDeploymentWorkflow
   alias Mezzanine.Workflow.ChassisRollbackWorkflow
+
+  alias Mezzanine.Workflow.Chassis.Evolution.{
+    CandidatePatchWorkflow,
+    CandidateScoringWorkflow,
+    FailureBatchWorkflow,
+    ModelMaterializationWorkflow,
+    PromotionApplyWorkflow,
+    PromotionConsentWorkflow,
+    SwapRollbackWorkflow,
+    TensorPatchReloadWorkflow,
+    TrialReplayWorkflow
+  }
+
+  alias Mezzanine.Workflow.Chassis.Evolution.Engine
 
   defmodule RecordingBoundary do
     def dispatch(envelope, opts) do
@@ -13,7 +28,16 @@ defmodule Mezzanine.ChassisWorkflowsTest do
         {:boundary_dispatch, envelope.protocol_ref, Keyword.fetch!(opts, :protocol_module)}
       )
 
-      Chassis.Boundary.dispatch(envelope, opts)
+      case envelope.protocol_ref do
+        "boundary:mezzanine.chassis.evolution." <> _ ->
+          Chassis.Mezzanine.Bridge.Evolution.LocalDispatcher.dispatch(envelope, opts)
+
+        "boundary:chassis.model." <> _ ->
+          Chassis.Mezzanine.Bridge.Evolution.LocalDispatcher.dispatch(envelope, opts)
+
+        _other ->
+          Chassis.Boundary.dispatch(envelope, opts)
+      end
     end
   end
 
@@ -25,8 +49,9 @@ defmodule Mezzanine.ChassisWorkflowsTest do
     on_exit(fn -> File.rm(projection_file) end)
 
     {:ok, read_store} = ChassisDeploymentProjection.start_link(name: nil)
+    {:ok, evolution_store} = ChassisEvolutionProjection.start_link(name: nil)
 
-    %{projection_file: projection_file, read_store: read_store}
+    %{projection_file: projection_file, read_store: read_store, evolution_store: evolution_store}
   end
 
   test "deployment workflow dispatches through Chassis boundary and drains a projection", ctx do
@@ -137,12 +162,116 @@ defmodule Mezzanine.ChassisWorkflowsTest do
     assert [%{status: :delivered}] = Chassis.Mezzanine.Bridge.Outbox.list(good_outbox)
   end
 
-  test "future Chassis evolution placeholders fail closed" do
-    assert {:error, {:not_implemented, Mezzanine.Workflow.Chassis.Evolution.FailureBatchWorkflow}} =
-             Mezzanine.Workflow.Chassis.Evolution.FailureBatchWorkflow.dispatch()
+  test "failure batch workflow dispatches the Chassis boundary and reduces evolution projection",
+       ctx do
+    assert {:ok, result} =
+             FailureBatchWorkflow.dispatch(evolution_attrs(),
+               boundary_dispatcher: RecordingBoundary,
+               read_store: ctx.evolution_store
+             )
 
-    assert {:error, {:not_implemented, Mezzanine.Read.ChassisEvolutionProjection}} =
-             Mezzanine.Read.ChassisEvolutionProjection.last()
+    assert_receive {:boundary_dispatch,
+                    "boundary:mezzanine.chassis.evolution.create_failure_batch:v1",
+                    Chassis.Mezzanine.Bridge.Evolution.CreateFailureBatch}
+
+    assert result.workflow == :chassis_failure_batch
+    assert result.failure_batch_ref =~ "failure-batch:"
+    assert result.outbox_delivered == 1
+
+    assert {:ok, projection} =
+             ChassisEvolutionProjection.latest(ctx.evolution_store,
+               projection: :chassis_evolution,
+               primary_ref: result.failure_batch_ref
+             )
+
+    assert projection.state_or_outcome == "created"
+    assert projection.summary.failure_batch_ref == result.failure_batch_ref
+  end
+
+  test "all evolution workflows drive boundary protocols and reduce read projections", ctx do
+    cases = [
+      {CandidatePatchWorkflow, %{failure_batch_ref: "failure-batch:phase35"},
+       ["boundary:mezzanine.chassis.evolution.start:v1"], :chassis_candidate},
+      {TrialReplayWorkflow, %{candidate_ref: "candidate:phase35"},
+       [
+         "boundary:mezzanine.chassis.evolution.provision_trial_node:v1",
+         "boundary:mezzanine.chassis.evolution.run_trial_replay:v1"
+       ], :chassis_trial},
+      {CandidateScoringWorkflow, %{trial_run_ref: "trial-run:phase35"},
+       ["boundary:mezzanine.chassis.evolution.score_candidate:v1"], :chassis_score_matrix},
+      {PromotionConsentWorkflow, %{candidate_ref: "candidate:phase35"},
+       ["boundary:mezzanine.chassis.evolution.request_promotion:v1"], :chassis_promotion},
+      {PromotionApplyWorkflow, %{candidate_ref: "candidate:phase35"},
+       ["boundary:mezzanine.chassis.evolution.promote_candidate:v1"], :chassis_swap},
+      {SwapRollbackWorkflow, %{swap_ref: "swap:phase35"},
+       ["boundary:mezzanine.chassis.evolution.rollback_candidate:v1"], :chassis_swap},
+      {ModelMaterializationWorkflow, %{model_ref: "model:hf:qwen3-small-fixture"},
+       ["boundary:chassis.model.materialize_weight:v1"], :chassis_model_materialization},
+      {TensorPatchReloadWorkflow, %{patch_ref: "patch:fixture:lora_001"},
+       ["boundary:chassis.model.reload_tensor_patch:v1"], :chassis_tensor_reload}
+    ]
+
+    for {workflow, attrs, expected_protocols, projection_kind} <- cases do
+      assert {:ok, result} =
+               workflow.dispatch(Map.merge(evolution_attrs(), attrs),
+                 boundary_dispatcher: RecordingBoundary,
+                 read_store: ctx.evolution_store
+               )
+
+      assert result.status in ["accepted", "completed", "committed", "rolled_back"]
+
+      for protocol_ref <- expected_protocols do
+        assert_receive {:boundary_dispatch, ^protocol_ref, _module}
+      end
+
+      assert {:ok, projection} =
+               ChassisEvolutionProjection.latest(ctx.evolution_store,
+                 projection: projection_kind,
+                 tenant_ref: "tenant:dev"
+               )
+
+      assert projection.projection == projection_kind
+      assert projection.primary_ref
+    end
+  end
+
+  test "promotion consent timeout transitions to stopped", ctx do
+    assert {:ok, result} =
+             PromotionConsentWorkflow.dispatch(
+               Map.merge(evolution_attrs(), %{candidate_ref: "candidate:timeout"}),
+               boundary_dispatcher: RecordingBoundary,
+               read_store: ctx.evolution_store,
+               consent_timeout_ms: 0,
+               signals: []
+             )
+
+    assert result.status == "stopped"
+    assert result.stop_reason == "operator_consent_timeout"
+
+    assert_receive {:boundary_dispatch,
+                    "boundary:mezzanine.chassis.evolution.request_promotion:v1", _module}
+
+    assert_receive {:boundary_dispatch, "boundary:mezzanine.chassis.evolution.stop:v1", _module}
+
+    assert {:ok, projection} =
+             ChassisEvolutionProjection.latest(ctx.evolution_store,
+               projection: :chassis_promotion,
+               primary_ref: result.promotion_intent_ref
+             )
+
+    assert projection.state_or_outcome == "stopped"
+  end
+
+  test "evolution idempotency keys use sha256 workflow step input digest" do
+    attrs = Map.merge(evolution_attrs(), %{failure_batch_ref: "failure-batch:idem"})
+    input_digest = Engine.input_digest(attrs)
+
+    expected =
+      "idem:" <>
+        (:crypto.hash(:sha256, "candidate_patch_workflow||start||#{input_digest}")
+         |> Base.encode16(case: :lower))
+
+    assert Engine.idempotency_key(:candidate_patch_workflow, :start, attrs) == expected
   end
 
   defp default_attrs do
@@ -159,6 +288,20 @@ defmodule Mezzanine.ChassisWorkflowsTest do
       environment: :dev,
       git_sha: "abcdef",
       release_version: "v1"
+    }
+  end
+
+  defp evolution_attrs do
+    %{
+      tenant_ref: "tenant:dev",
+      installation_ref: "installation:acme:demo",
+      actor_ref: "actor:operator",
+      authority_ref: "authority:decision:phase35",
+      evidence_refs: ["ev:smoke:1"],
+      summary: "bounded smoke",
+      redaction_posture: "default",
+      target_installation_ref: "installation:acme:demo",
+      trace_id: "trace:phase35"
     }
   end
 
