@@ -19,6 +19,7 @@ defmodule Mezzanine.ChassisBridge.MixProject do
 
   defp deps do
     [
+      {:chassis_mezzanine_bridge, path: "../../../chassis/governance/chassis_mezzanine_bridge"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.40.1", only: :dev, runtime: false}
