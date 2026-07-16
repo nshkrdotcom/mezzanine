@@ -23,93 +23,29 @@ defmodule Mezzanine.WorkflowRuntime.OutboxPersistence do
   end
 
   defp store do
-    :mezzanine_workflow_runtime
-    |> Mezzanine.RuntimeProfileStore.keyword_config(:outbox_persistence, [])
-    |> Keyword.get(:store, Mezzanine.WorkflowRuntime.OutboxPersistence.Memory)
-  end
-end
+    case :mezzanine_workflow_runtime
+         |> Mezzanine.RuntimeProfileStore.keyword_config(:outbox_persistence, [])
+         |> Keyword.fetch(:store) do
+      {:ok, Mezzanine.WorkflowRuntime.OutboxPersistence.SQL} ->
+        Mezzanine.WorkflowRuntime.OutboxPersistence.SQL
 
-defmodule Mezzanine.WorkflowRuntime.OutboxPersistence.Memory do
-  @moduledoc """
-  Memory-only outbox outcome persistence.
+      {:ok, test_store}
+      when is_atom(test_store) ->
+        if Application.get_env(
+             :mezzanine_workflow_runtime,
+             :allow_test_outbox_store?,
+             false
+           ) do
+          test_store
+        else
+          raise "non-production workflow outbox store configured: #{inspect(test_store)}"
+        end
 
-  This adapter is the default for Mickey Mouse mode and carries no restart
-  durability claim.
-  """
+      {:ok, forbidden} ->
+        raise "non-production workflow outbox store configured: #{inspect(forbidden)}"
 
-  @behaviour Mezzanine.WorkflowRuntime.OutboxPersistence
-
-  alias Mezzanine.Persistence.MemoryStore
-
-  @start_namespace :mezzanine_workflow_start_outbox_outcomes
-  @signal_namespace :mezzanine_workflow_signal_outbox_outcomes
-
-  @impl true
-  def record_start_outcome(original_row, outcome_row) do
-    original_row = normalize(original_row)
-    outcome_row = normalize(outcome_row)
-    outbox_id = fetch!(original_row, :outbox_id)
-
-    attrs =
-      outcome_row
-      |> Map.put(:outbox_id, outbox_id)
-      |> Map.put_new(:id, outbox_id)
-
-    case MemoryStore.fetch(@start_namespace, outbox_id) do
-      {:ok, _row} -> MemoryStore.update(@start_namespace, outbox_id, attrs)
-      {:error, :not_found} -> MemoryStore.put(@start_namespace, attrs, id: outbox_id)
-    end
-
-    :ok
-  end
-
-  @impl true
-  def record_signal_outcome(original_row, outcome_row) do
-    original_row = normalize(original_row)
-    outcome_row = normalize(outcome_row)
-    outbox_id = fetch!(original_row, :outbox_id)
-
-    attrs =
-      outcome_row
-      |> Map.put(:outbox_id, outbox_id)
-      |> Map.put_new(:id, outbox_id)
-
-    case MemoryStore.fetch(@signal_namespace, outbox_id) do
-      {:ok, _row} -> MemoryStore.update(@signal_namespace, outbox_id, attrs)
-      {:error, :not_found} -> MemoryStore.put(@signal_namespace, attrs, id: outbox_id)
-    end
-
-    :ok
-  end
-
-  def fetch_start_outcome(outbox_id), do: MemoryStore.fetch(@start_namespace, outbox_id)
-  def fetch_signal_outcome(outbox_id), do: MemoryStore.fetch(@signal_namespace, outbox_id)
-
-  def reset! do
-    MemoryStore.reset!(@start_namespace)
-    MemoryStore.reset!(@signal_namespace)
-  end
-
-  defp normalize(attrs) when is_list(attrs), do: attrs |> Map.new() |> normalize()
-  defp normalize(%_{} = struct), do: struct |> Map.from_struct() |> normalize()
-
-  defp normalize(map) when is_map(map) do
-    Map.new(map, fn
-      {key, value} when is_binary(key) -> {string_key(key), value}
-      {key, value} -> {key, value}
-    end)
-  end
-
-  defp string_key("dispatch_state"), do: :dispatch_state
-  defp string_key("id"), do: :id
-  defp string_key("outbox_id"), do: :outbox_id
-  defp string_key("workflow_run_id"), do: :workflow_run_id
-  defp string_key(key), do: key
-
-  defp fetch!(map, key) do
-    case Map.fetch(map, key) do
-      {:ok, value} when value not in [nil, ""] -> value
-      _missing -> raise ArgumentError, "missing required outbox field #{inspect(key)}"
+      :error ->
+        raise "missing durable workflow outbox store configuration"
     end
   end
 end
@@ -211,7 +147,7 @@ defmodule Mezzanine.WorkflowRuntime.OutboxPersistence.SQL do
   defp repo do
     :mezzanine_workflow_runtime
     |> Mezzanine.RuntimeProfileStore.keyword_config(:outbox_persistence, [])
-    |> Keyword.get(:repo, Mezzanine.Execution.Repo)
+    |> Keyword.fetch!(:repo)
   end
 
   defp normalize(attrs) when is_list(attrs), do: attrs |> Map.new() |> normalize_keys()

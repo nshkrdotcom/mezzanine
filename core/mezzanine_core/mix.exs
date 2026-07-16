@@ -28,7 +28,7 @@ defmodule MezzanineCore.MixProject do
   def application do
     [
       mod: {Mezzanine.Core.Application, []},
-      extra_applications: [:crypto, :logger]
+      extra_applications: [:crypto, :logger, :ecto_sql]
     ]
   end
 
@@ -53,6 +53,9 @@ defmodule MezzanineCore.MixProject do
     [
       {:mezzanine_runtime_profile, path: "../runtime_profile"},
       DependencySources.dep(:ground_plane_persistence_policy, @repo_root, override: true),
+      {:ecto_sql, "~> 3.13"},
+      {:jason, "~> 1.4"},
+      {:postgrex, "~> 0.21"},
       {:telemetry, "~> 1.3"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},

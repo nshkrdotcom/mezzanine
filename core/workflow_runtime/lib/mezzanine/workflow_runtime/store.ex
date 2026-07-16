@@ -1,24 +1,48 @@
 defmodule Mezzanine.WorkflowRuntime.Store do
-  @moduledoc "Persistence facade for workflow runtime state."
+  @moduledoc "Durable persistence facade for canonical Mezzanine run state."
 
-  alias Mezzanine.WorkflowRuntime.Store.Memory
   alias Mezzanine.WorkflowRuntime.Store.Postgres
 
   @callback capabilities() :: Mezzanine.Persistence.store_capability()
-  @callback preflight(keyword() | map()) :: :ok | {:error, term()}
-  @callback put_record(map(), keyword()) :: {:ok, map()} | {:error, term()}
-  @callback fetch_record(term(), keyword()) :: {:ok, map()} | {:error, term()}
-  @callback update_record(term(), map(), keyword()) :: {:ok, map()} | {:error, term()}
-  @callback append_event(term(), map(), keyword()) :: {:ok, map()} | {:error, term()}
+  @callback preflight(keyword()) :: :ok | {:error, term()}
+  @callback accept_run(Mezzanine.Runs.AcceptCommand.t(), keyword()) ::
+              {:ok, Mezzanine.Runs.Acceptance.t()} | {:error, term()}
+  @callback fetch_acceptance(String.t(), keyword()) ::
+              {:ok, Mezzanine.Runs.Acceptance.t()} | {:error, term()}
+  @callback fetch_projection(String.t(), keyword()) :: {:ok, map()} | {:error, term()}
+  @callback list_events(String.t(), Mezzanine.Runs.EventCursor.t() | nil, keyword()) ::
+              {:ok, [Mezzanine.Runs.Event.t()]} | {:error, term()}
+  @callback read_cursor(String.t(), keyword()) ::
+              {:ok, Mezzanine.Runs.EventCursor.t()} | {:error, term()}
+  @callback claim_workflow_handoffs(String.t(), pos_integer(), keyword()) ::
+              {:ok, [Mezzanine.Runs.WorkflowHandoff.t()]} | {:error, term()}
+  @callback complete_workflow_handoff(String.t(), String.t(), String.t() | nil, keyword()) ::
+              {:ok, Mezzanine.Runs.WorkflowHandoff.t()} | {:error, term()}
   @callback health(keyword()) :: {:ok, map()} | {:error, term()}
 
-  def adapter(opts \\ []), do: Mezzanine.Persistence.adapter_for(opts, Memory, Postgres)
+  def adapter do
+    case Application.fetch_env!(:mezzanine_core, :run_store) do
+      Postgres -> Postgres
+      forbidden -> raise "non-production Mezzanine run store configured: #{inspect(forbidden)}"
+    end
+  end
 
-  def capabilities, do: Memory.capabilities()
-  def preflight(opts \\ []), do: adapter(opts).preflight(opts)
-  def put_record(attrs, opts \\ []), do: adapter(opts).put_record(attrs, opts)
-  def fetch_record(id, opts \\ []), do: adapter(opts).fetch_record(id, opts)
-  def update_record(id, attrs, opts \\ []), do: adapter(opts).update_record(id, attrs, opts)
-  def append_event(id, event, opts \\ []), do: adapter(opts).append_event(id, event, opts)
-  def health(opts \\ []), do: adapter(opts).health(opts)
+  def capabilities, do: adapter().capabilities()
+  def preflight(opts \\ []), do: adapter().preflight(opts)
+  def accept_run(command, opts \\ []), do: adapter().accept_run(command, opts)
+  def fetch_acceptance(command_ref, opts \\ []), do: adapter().fetch_acceptance(command_ref, opts)
+  def fetch_projection(run_ref, opts \\ []), do: adapter().fetch_projection(run_ref, opts)
+
+  def list_events(run_ref, cursor \\ nil, opts \\ []),
+    do: adapter().list_events(run_ref, cursor, opts)
+
+  def read_cursor(run_ref, opts \\ []), do: adapter().read_cursor(run_ref, opts)
+
+  def claim_workflow_handoffs(lock_owner, limit, opts \\ []),
+    do: adapter().claim_workflow_handoffs(lock_owner, limit, opts)
+
+  def complete_workflow_handoff(outbox_ref, state, error_ref \\ nil, opts \\ []),
+    do: adapter().complete_workflow_handoff(outbox_ref, state, error_ref, opts)
+
+  def health(opts \\ []), do: adapter().health(opts)
 end

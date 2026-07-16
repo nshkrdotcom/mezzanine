@@ -7,6 +7,10 @@ The package stores refs, lifecycle states, and safe summaries only. It rejects
 raw prompts, provider payloads, model outputs, auth material, memory bodies,
 tool bodies, and operator-private payloads.
 
+Every envelope requires an explicit durable persistence profile. Omission,
+`:mickey_mouse`, and memory tiers fail closed. The normal NSHKR profile uses
+`:ops_durable` with `:postgres_shared` Mezzanine storage.
+
 ## Persistence Documentation
 
 See `docs/persistence.md` for tiers, defaults, adapters, unsupported selections, config examples, restart claims, durability claims, debug sidecar behavior, redaction guarantees, migration or preflight behavior, and no-bypass scope when applicable.

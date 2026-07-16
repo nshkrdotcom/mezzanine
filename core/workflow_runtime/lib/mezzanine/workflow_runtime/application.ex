@@ -5,6 +5,15 @@ defmodule Mezzanine.WorkflowRuntime.Application do
 
   alias Mezzanine.WorkflowRuntime.TemporalSupervisor
 
+  @doc "Production children selected explicitly by the NSHKR composition root."
+  def production_child_specs(opts) do
+    temporal = Keyword.fetch!(opts, :temporal)
+    dispatcher = Keyword.fetch!(opts, :outbox_dispatcher)
+
+    TemporalSupervisor.child_specs(temporal) ++
+      [{Mezzanine.WorkflowRuntime.RunOutboxDispatcher, dispatcher}]
+  end
+
   @impl true
   def start(_type, _args) do
     Supervisor.start_link(

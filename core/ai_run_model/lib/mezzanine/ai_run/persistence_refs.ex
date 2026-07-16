@@ -1,8 +1,9 @@
 defmodule Mezzanine.AIRun.PersistenceRefs do
   @moduledoc """
-  Persistence profile refs for AI run envelopes.
+  Explicit durable persistence profile refs for AI run envelopes.
 
-  Defaults are memory-only and carry no restart-safety claim.
+  A run envelope cannot select a backend by omission. Production callers must
+  inject the immutable durable profile chosen by the NSHKR runtime.
   """
 
   defmodule Profile do
@@ -35,115 +36,73 @@ defmodule Mezzanine.AIRun.PersistenceRefs do
           }
   end
 
-  defmodule BootPosture do
-    @moduledoc "Default boot posture for memory-only AI run paths."
-    @enforce_keys [
-      :profile_id,
-      :store_tiers,
-      :disabled_substrates,
-      :restart_safe?,
-      :debug_capture?
-    ]
-    defstruct @enforce_keys
-
-    @type t :: %__MODULE__{
-            profile_id: atom(),
-            store_tiers: [atom()],
-            disabled_substrates: [atom()],
-            restart_safe?: boolean(),
-            debug_capture?: boolean()
-          }
-  end
-
   @durable_profiles [:local_restart_safe, :integration_postgres, :ops_durable]
-  @debug_profiles [:memory_debug, :full_debug_tracked]
+  @durable_tiers [:postgres_shared, :temporal_postgres]
 
-  @spec default_profile() :: Profile.t()
-  def default_profile do
+  @spec production_profile(keyword() | map()) :: {:ok, Profile.t()} | {:error, term()}
+  def production_profile(attrs) when is_list(attrs),
+    do: attrs |> Map.new() |> production_profile()
+
+  def production_profile(attrs) when is_map(attrs) do
     %Profile{
-      id: :mickey_mouse,
+      id: get(attrs, :id) || :ops_durable,
       store_category: :ai_run_envelope,
-      selected_tier: :memory_ephemeral,
-      capture_level: :minimal_refs,
-      store_ref: "store://memory/ai_run_envelope",
-      partition_ref: "partition://memory/default",
-      retention_ref: "retention://memory/session",
-      debug_tap_ref: nil,
-      restart_safe?: false,
-      durable?: false
+      selected_tier: get(attrs, :selected_tier) || :postgres_shared,
+      capture_level: get(attrs, :capture_level) || :standard_redacted,
+      store_ref: get(attrs, :store_ref) || "store://mezzanine/postgres/ai-run-envelope",
+      partition_ref: get(attrs, :partition_ref) || "partition://mezzanine/ai-runs",
+      retention_ref: get(attrs, :retention_ref) || "retention://mezzanine/standard",
+      debug_tap_ref: get(attrs, :debug_tap_ref),
+      restart_safe?: true,
+      durable?: true
     }
-  end
-
-  @spec memory_default_boot() :: BootPosture.t()
-  def memory_default_boot do
-    %BootPosture{
-      profile_id: :mickey_mouse,
-      store_tiers: [:memory_ephemeral],
-      disabled_substrates: [:postgres, :temporal, :object_store, :debug_sidecar],
-      restart_safe?: false,
-      debug_capture?: false
-    }
+    |> validate_resolved()
   end
 
   @spec resolve(nil | map() | Profile.t()) :: {:ok, Profile.t()} | {:error, term()}
-  def resolve(nil), do: {:ok, default_profile()}
+  def resolve(nil), do: {:error, :persistence_profile_required}
   def resolve(%Profile{} = profile), do: validate_resolved(profile)
 
   def resolve(profile) when is_map(profile) do
-    id = get(profile, :id) || :mickey_mouse
+    id = get(profile, :id)
 
-    if unavailable_durable?(id, profile) do
-      {:error, {:durable_profile_unavailable, id}}
+    if id in @durable_profiles and get(profile, :available?) != false do
+      resolved_profile(profile, id) |> validate_resolved()
     else
-      profile
-      |> resolved_profile(id)
-      |> validate_resolved()
+      {:error, {:durable_profile_unavailable, id}}
     end
   end
 
   def resolve(_profile), do: {:error, :invalid_persistence_profile_ref}
 
-  defp validate_resolved(%Profile{id: id} = profile) when is_atom(id), do: {:ok, profile}
-  defp validate_resolved(_profile), do: {:error, :invalid_persistence_profile_ref}
-
-  defp unavailable_durable?(id, profile) do
-    durable_profile?(id) and get(profile, :available?) == false
+  defp validate_resolved(%Profile{} = profile) do
+    if profile.id in @durable_profiles and profile.selected_tier in @durable_tiers and
+         profile.restart_safe? and profile.durable? and safe_ref?(profile.store_ref) and
+         safe_ref?(profile.partition_ref) and safe_ref?(profile.retention_ref) do
+      {:ok, profile}
+    else
+      {:error, :invalid_persistence_profile_ref}
+    end
   end
 
-  defp resolved_profile(profile, id) do
-    selected_tier = get(profile, :selected_tier) || default_selected_tier(id)
+  defp validate_resolved(_profile), do: {:error, :invalid_persistence_profile_ref}
 
+  defp resolved_profile(profile, id) do
     %Profile{
       id: id,
       store_category: get(profile, :store_category) || :ai_run_envelope,
-      selected_tier: selected_tier,
-      capture_level: get(profile, :capture_level) || default_capture_level(id),
-      store_ref: get(profile, :store_ref) || default_store_ref(selected_tier),
-      partition_ref: get(profile, :partition_ref) || "partition://memory/default",
-      retention_ref: get(profile, :retention_ref) || default_retention_ref(id),
+      selected_tier: get(profile, :selected_tier) || :postgres_shared,
+      capture_level: get(profile, :capture_level) || :standard_redacted,
+      store_ref: get(profile, :store_ref) || "store://mezzanine/postgres/ai-run-envelope",
+      partition_ref: get(profile, :partition_ref) || "partition://mezzanine/ai-runs",
+      retention_ref: get(profile, :retention_ref) || "retention://mezzanine/standard",
       debug_tap_ref: get(profile, :debug_tap_ref),
-      restart_safe?: durable_profile?(id),
-      durable?: durable_profile?(id)
+      restart_safe?: true,
+      durable?: true
     }
   end
 
-  defp durable_profile?(id), do: id in @durable_profiles
-  defp debug_profile?(id), do: id in @debug_profiles
-
-  defp default_selected_tier(id) do
-    if durable_profile?(id), do: :durable_explicit, else: :memory_ephemeral
-  end
-
-  defp default_capture_level(id) do
-    if debug_profile?(id), do: :debug_redacted, else: :minimal_refs
-  end
-
-  defp default_store_ref(:memory_ephemeral), do: "store://memory/ai_run_envelope"
-  defp default_store_ref(selected_tier), do: "store://#{selected_tier}/ai_run_envelope"
-
-  defp default_retention_ref(id) do
-    if durable_profile?(id), do: "retention://explicit", else: "retention://memory/session"
-  end
+  defp safe_ref?(value), do: is_binary(value) and String.contains?(value, "://")
 
   defp get(map, key) do
     case Map.fetch(map, key) do

@@ -12,7 +12,7 @@ defmodule Mezzanine.AIRun.EnvelopeTest do
                subject_ref: "subject://role-pack/demo",
                authority_ref: "authority://decision/1",
                actor_ref: "actor://operator/1",
-               persistence_profile_ref: %{id: :mickey_mouse},
+               persistence_profile_ref: durable_profile(),
                memory_ref_set: ["memory://working/1"],
                prompt_ref_set: ["prompt://role/1"],
                model_profile_ref_set: ["model://mock/evaluator"],
@@ -40,7 +40,7 @@ defmodule Mezzanine.AIRun.EnvelopeTest do
                tenant_ref: "tenant://demo",
                authority_ref: "authority://decision/1",
                actor_ref: "actor://operator/1",
-               persistence_profile_ref: %{id: :mickey_mouse},
+               persistence_profile_ref: durable_profile(),
                prompt_ref_set: [%{raw_prompt: "do not store this"}]
              })
   end
@@ -52,7 +52,22 @@ defmodule Mezzanine.AIRun.EnvelopeTest do
                run_class: :coordination_run,
                authority_ref: "authority://decision/1",
                actor_ref: "actor://operator/1",
-               persistence_profile_ref: %{id: :mickey_mouse}
+               persistence_profile_ref: durable_profile()
              })
+  end
+
+  test "rejects an omitted persistence profile" do
+    assert {:error, :persistence_profile_required} =
+             Envelope.new(%{
+               ai_run_ref: "ai_run://missing-persistence",
+               run_class: :inference_call,
+               tenant_ref: "tenant://demo",
+               authority_ref: "authority://decision/1",
+               actor_ref: "actor://operator/1"
+             })
+  end
+
+  defp durable_profile do
+    %{id: :ops_durable, selected_tier: :postgres_shared}
   end
 end

@@ -14,6 +14,10 @@ defmodule Mezzanine.WorkflowRuntime.TemporalSupervisor do
   @default_namespace "default"
   @default_instance_base Mezzanine.WorkflowRuntime.Temporal
   @task_queue_instance_modules [
+    {Mezzanine.WorkflowRuntime.Temporal, "nshkr.mezzanine.agent-run.v1",
+     Mezzanine.WorkflowRuntime.Temporal.NshkrAgentRun},
+    {Mezzanine.WorkflowRuntime.TestTemporal, "nshkr.mezzanine.agent-run.v1",
+     Mezzanine.WorkflowRuntime.TestTemporal.NshkrAgentRun},
     {Mezzanine.WorkflowRuntime.Temporal, "mezzanine.agentic",
      Mezzanine.WorkflowRuntime.Temporal.MezzanineAgentic},
     {Mezzanine.WorkflowRuntime.Temporal, "mezzanine.hazmat",
@@ -132,7 +136,7 @@ defmodule Mezzanine.WorkflowRuntime.TemporalSupervisor do
   def task_queue_specs(config \\ runtime_config()) do
     config = runtime_config(config)
 
-    DurableOrchestrationDecision.task_queues()
+    Keyword.get(config, :task_queues, DurableOrchestrationDecision.task_queues())
     |> Enum.map(&task_queue_spec(&1, config))
   end
 
@@ -198,15 +202,27 @@ defmodule Mezzanine.WorkflowRuntime.TemporalSupervisor do
   end
 
   defp workflows_for(task_queue) do
-    DurableOrchestrationDecision.workflow_types()
-    |> Enum.filter(&(&1.task_queue == task_queue))
-    |> Enum.map(& &1.module)
+    case task_queue do
+      "nshkr.mezzanine.agent-run.v1" ->
+        [Mezzanine.Workflows.NshkrAgentRun]
+
+      _other ->
+        DurableOrchestrationDecision.workflow_types()
+        |> Enum.filter(&(&1.task_queue == task_queue))
+        |> Enum.map(& &1.module)
+    end
   end
 
   defp activities_for(task_queue) do
-    DurableOrchestrationDecision.activity_registrations()
-    |> Enum.filter(&(&1.task_queue == task_queue))
-    |> Enum.map(& &1.module)
+    case task_queue do
+      "nshkr.mezzanine.agent-run.v1" ->
+        []
+
+      _other ->
+        DurableOrchestrationDecision.activity_registrations()
+        |> Enum.filter(&(&1.task_queue == task_queue))
+        |> Enum.map(& &1.module)
+    end
   end
 
   defp temporalex_address("http://" <> _rest = address), do: address

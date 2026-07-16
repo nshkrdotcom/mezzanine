@@ -3,13 +3,16 @@ defmodule Mezzanine.AIRun.PersistencePostureTest do
 
   alias Mezzanine.AIRun.{Envelope, PersistenceRefs}
 
-  test "resolves default AI run persistence posture before retained writes" do
-    assert profile = PersistenceRefs.default_profile()
-    assert profile.id == :mickey_mouse
+  test "requires an explicit durable AI run persistence posture before retained writes" do
+    assert {:error, :persistence_profile_required} = PersistenceRefs.resolve(nil)
+
+    assert {:ok, profile} = PersistenceRefs.production_profile(%{})
+    assert profile.id == :ops_durable
     assert profile.store_category == :ai_run_envelope
-    assert profile.selected_tier == :memory_ephemeral
-    assert profile.capture_level == :minimal_refs
-    refute profile.restart_safe?
+    assert profile.selected_tier == :postgres_shared
+    assert profile.capture_level == :standard_redacted
+    assert profile.restart_safe?
+    assert profile.durable?
 
     assert {:ok, envelope} =
              Envelope.new(%{
@@ -21,7 +24,14 @@ defmodule Mezzanine.AIRun.PersistencePostureTest do
                persistence_profile_ref: profile
              })
 
-    assert envelope.persistence_profile_ref.selected_tier == :memory_ephemeral
+    assert envelope.persistence_profile_ref.selected_tier == :postgres_shared
+  end
+
+  test "memory and omitted profile identifiers fail closed" do
+    assert {:error, {:durable_profile_unavailable, :mickey_mouse}} =
+             PersistenceRefs.resolve(%{id: :mickey_mouse, selected_tier: :memory_ephemeral})
+
+    assert {:error, {:durable_profile_unavailable, nil}} = PersistenceRefs.resolve(%{})
   end
 
   test "explicit unavailable durable profile fails closed" do

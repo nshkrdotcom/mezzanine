@@ -3,17 +3,20 @@ defmodule Mezzanine.WorkflowRuntime.StoreTest do
 
   alias Mezzanine.WorkflowRuntime.Store
 
-  test "memory adapter is the default workflow runtime store" do
-    assert Store.adapter([]) == Mezzanine.WorkflowRuntime.Store.Memory
-    assert :ok = Store.preflight([])
-    assert Store.capabilities().tier == :memory_ephemeral
+  test "only the configured Postgres owner store is selectable" do
+    assert Store.adapter() == Mezzanine.WorkflowRuntime.Store.Postgres
+    assert Store.capabilities().tier == :postgres_shared
+    assert Store.capabilities().restart_safe?
   end
 
-  test "postgres workflow runtime store fails early without a migration proof" do
-    assert Store.adapter(profile: :integration_postgres) ==
-             Mezzanine.WorkflowRuntime.Store.Postgres
+  test "production memory selection fails closed" do
+    previous = Application.fetch_env!(:mezzanine_core, :run_store)
+    Application.put_env(:mezzanine_core, :run_store, Mezzanine.Persistence.MemoryStore)
 
-    assert {:error, {:missing_migration_proof, :workflow_runtime}} =
-             Store.preflight(profile: :integration_postgres)
+    on_exit(fn -> Application.put_env(:mezzanine_core, :run_store, previous) end)
+
+    assert_raise RuntimeError, ~r/non-production Mezzanine run store configured/, fn ->
+      Store.adapter()
+    end
   end
 end

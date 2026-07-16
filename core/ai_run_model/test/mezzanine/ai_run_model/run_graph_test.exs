@@ -39,7 +39,7 @@ defmodule Mezzanine.AIRun.RunGraphTest do
           tenant_ref: "tenant://demo",
           authority_ref: "authority://decision/1",
           actor_ref: "actor://operator/1",
-          persistence_profile_ref: %{id: :mickey_mouse}
+          persistence_profile_ref: %{id: :ops_durable, selected_tier: :postgres_shared}
         },
         Map.new(overrides)
       )
