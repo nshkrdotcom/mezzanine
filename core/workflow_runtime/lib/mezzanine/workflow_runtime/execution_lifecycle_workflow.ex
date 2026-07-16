@@ -1526,7 +1526,6 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     |> normalize_store_opts()
     |> maybe_put_store_opt(:profile, Map.get(attrs, :persistence_profile))
     |> maybe_put_store_opt(:profile, Map.get(attrs, :lineage_store_profile))
-    |> maybe_put_store_opt(:migration_proof, Map.get(attrs, :migration_proof))
   end
 
   defp normalize_store_opts(opts) when is_list(opts), do: opts

@@ -49,24 +49,4 @@ defmodule Mezzanine.Persistence do
     profile = resolve!(attrs)
     PersistencePolicy.preflight(profile, capabilities, fn _capability -> :ok end)
   end
-
-  @spec postgres_preflight(atom(), keyword() | map()) :: :ok | {:error, term()}
-  def postgres_preflight(component, attrs) when is_atom(component) do
-    profile = resolve!(attrs)
-
-    if profile.default_tier == :postgres_shared,
-      do: require_migration_proof(component, attrs),
-      else: {:error, {:unsupported_persistence_tier, component, profile.default_tier}}
-  end
-
-  defp require_migration_proof(component, attrs) do
-    attrs = Map.new(attrs)
-
-    case Map.get(attrs, :migration_proof) || Map.get(attrs, "migration_proof") do
-      :present -> :ok
-      true -> :ok
-      paths when is_list(paths) and paths != [] -> :ok
-      _missing -> {:error, {:missing_migration_proof, component}}
-    end
-  end
 end
