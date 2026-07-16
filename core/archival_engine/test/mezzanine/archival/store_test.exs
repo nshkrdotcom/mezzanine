@@ -1,18 +1,26 @@
 defmodule Mezzanine.Archival.StoreTest do
-  use ExUnit.Case, async: false
+  use Mezzanine.Archival.DataCase, async: false
 
   alias Mezzanine.Archival.Store
 
-  test "memory adapter is the default archival store" do
-    assert Store.adapter([]) == Mezzanine.Archival.Store.Memory
+  test "omitted options select the live durable archival store" do
+    assert Store.adapter([]) == Mezzanine.Archival.Store.AshPostgres
     assert :ok = Store.preflight([])
-    assert Store.capabilities().tier == :memory_ephemeral
+    assert Store.capabilities().tier == :postgres_shared
+    assert Store.capabilities().restart_safe?
+    assert Store.resource_modules() != []
+
+    assert {:ok, health} = Store.health([])
+    assert health.adapter == :ash_postgres
+    assert health.tier == :postgres_shared
+    assert health.restart_safe?
   end
 
-  test "postgres archival store fails early without a migration proof" do
-    assert Store.adapter(profile: :integration_postgres) == Mezzanine.Archival.Store.AshPostgres
-
-    assert {:error, {:missing_migration_proof, :archival}} =
-             Store.preflight(profile: :integration_postgres)
+  test "production facade rejects memory profile selection" do
+    for profile <- [:mickey_mouse, :memory_debug, "mickey_mouse", "memory_debug"] do
+      assert_raise ArgumentError, ~r/production archival store cannot select/, fn ->
+        Store.adapter(profile: profile)
+      end
+    end
   end
 end

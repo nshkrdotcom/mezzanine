@@ -3,16 +3,24 @@ defmodule Mezzanine.Operator.StoreTest do
 
   alias Mezzanine.Operator.Store
 
-  test "memory adapter is the default operator store" do
-    assert Store.adapter([]) == Mezzanine.Operator.Store.Memory
+  test "omitted options select the live durable operator store" do
+    assert Store.adapter([]) == Mezzanine.Operator.Store.AshPostgres
     assert :ok = Store.preflight([])
-    assert Store.capabilities().tier == :memory_ephemeral
+    assert Store.capabilities().tier == :postgres_shared
+    assert Store.capabilities().restart_safe?
+    assert Store.resource_modules() != []
+
+    assert {:ok, health} = Store.health([])
+    assert health.adapter == :ash_postgres
+    assert health.tier == :postgres_shared
+    assert health.restart_safe?
   end
 
-  test "postgres operator store fails early without a migration proof" do
-    assert Store.adapter(profile: :integration_postgres) == Mezzanine.Operator.Store.AshPostgres
-
-    assert {:error, {:missing_migration_proof, :operator}} =
-             Store.preflight(profile: :integration_postgres)
+  test "production facade rejects memory profile selection" do
+    for profile <- [:mickey_mouse, :memory_debug, "mickey_mouse", "memory_debug"] do
+      assert_raise ArgumentError, ~r/production operator store cannot select/, fn ->
+        Store.adapter(profile: profile)
+      end
+    end
   end
 end

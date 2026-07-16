@@ -5,9 +5,9 @@ Neutral subject ledger and lifecycle engine for the Mezzanine rebuild.
 ## Persistence Posture
 
 Object lifecycle state now enters through `Mezzanine.Objects.Store`. The
-default adapter is `Mezzanine.Objects.Store.Memory`, which is memory-only and
-has no restart durability claim. The AshPostgres adapter is adapter-local and
-requires explicit durable profile selection plus migration proof.
+default and only production adapter is AshPostgres. Omitted options select it,
+live preflight verifies the owner migration, and memory profiles are rejected.
+The deterministic memory adapter is compiled only from `test/support`.
 
 This package now owns the Phase `2.4.3` durable subject-ledger slice:
 

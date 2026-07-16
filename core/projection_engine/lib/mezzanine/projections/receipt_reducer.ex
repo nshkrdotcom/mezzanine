@@ -1052,7 +1052,6 @@ defmodule Mezzanine.Projections.ReceiptReducer do
     |> normalize_store_opts()
     |> maybe_put_store_opt(:profile, value(attrs, :persistence_profile))
     |> maybe_put_store_opt(:profile, value(attrs, :lineage_store_profile))
-    |> maybe_put_store_opt(:migration_proof, value(attrs, :migration_proof))
   end
 
   defp normalize_store_opts(nil), do: []

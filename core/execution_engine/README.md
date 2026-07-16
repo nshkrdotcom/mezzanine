@@ -5,11 +5,11 @@ Mezzanine rebuild.
 
 ## Persistence Posture
 
-Execution state now enters through `Mezzanine.Execution.Store`. The default
-adapter is `Mezzanine.Execution.Store.Memory`, which is process-lifetime memory
-and does not start `Mezzanine.Execution.Repo`, Oban, or AshPostgres children.
-The Postgres path is explicit through `Mezzanine.Execution.Store.AshPostgres`
-and fails preflight without migration proof.
+Execution state now enters through `Mezzanine.Execution.Store`. The default and
+only production adapter is `Mezzanine.Execution.Store.AshPostgres`. Omitted
+options select it, live preflight verifies the owner migration, and memory
+profiles are rejected. The deterministic memory adapter is compiled only from
+`test/support`.
 
 This package now owns the Phase `2.4.4` durable execution slice:
 

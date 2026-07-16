@@ -3,17 +3,24 @@ defmodule Mezzanine.Projections.StoreTest do
 
   alias Mezzanine.Projections.Store
 
-  test "memory adapter is the default projection store" do
-    assert Store.adapter([]) == Mezzanine.Projections.Store.Memory
+  test "omitted options select the live durable projection store" do
+    assert Store.adapter([]) == Mezzanine.Projections.Store.AshPostgres
     assert :ok = Store.preflight([])
-    assert Store.capabilities().tier == :memory_ephemeral
+    assert Store.capabilities().tier == :postgres_shared
+    assert Store.capabilities().restart_safe?
+    assert Store.resource_modules() != []
+
+    assert {:ok, health} = Store.health([])
+    assert health.adapter == :ash_postgres
+    assert health.tier == :postgres_shared
+    assert health.restart_safe?
   end
 
-  test "postgres projection store fails early without a migration proof" do
-    assert Store.adapter(profile: :integration_postgres) ==
-             Mezzanine.Projections.Store.AshPostgres
-
-    assert {:error, {:missing_migration_proof, :projections}} =
-             Store.preflight(profile: :integration_postgres)
+  test "production facade rejects memory profile selection" do
+    for profile <- [:mickey_mouse, :memory_debug, "mickey_mouse", "memory_debug"] do
+      assert_raise ArgumentError, ~r/production projection store cannot select/, fn ->
+        Store.adapter(profile: profile)
+      end
+    end
   end
 end

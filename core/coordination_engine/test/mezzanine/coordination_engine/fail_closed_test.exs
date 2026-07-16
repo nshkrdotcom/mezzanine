@@ -61,7 +61,7 @@ defmodule Mezzanine.CoordinationEngine.FailClosedTest do
       authority_ref: "authority://coordination",
       actor_ref: "actor://operator",
       subject_ref: "subject://ticket",
-      persistence_profile_ref: "persistence://memory",
+      persistence_profile_ref: "persistence://mezzanine/ops-durable",
       router_session_ref: "trinity-session://fail-closed",
       router_config_ref: "trinity-config://fail-closed",
       provider_pool_ref: "provider-pool://fail-closed",

@@ -3,9 +3,9 @@ defmodule Mezzanine.Projections.StorePostgresTest do
 
   alias Mezzanine.Projections.Store
 
-  @store_opts [profile: :integration_postgres, migration_proof: :present]
+  @store_opts [profile: :integration_postgres]
 
-  test "postgres adapter preserves memory store record and event contract" do
+  test "postgres adapter persists the generic lineage outbox contract" do
     attrs = %{
       id: "projection://tenant-a/subject-a",
       projection_ref: "projection://tenant-a/subject-a",

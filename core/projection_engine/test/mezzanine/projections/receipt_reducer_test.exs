@@ -424,7 +424,7 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
         )
       end)
 
-    store_opts = [profile: :integration_postgres, migration_proof: :present]
+    store_opts = [profile: :integration_postgres]
 
     assert {:ok, reduced} =
              ReceiptReducer.reduce(
@@ -478,7 +478,7 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
       |> Map.fetch!(:lower_receipt)
       |> Map.put("provider_object_refs", ["linear://issue/LIN-095"])
 
-    store_opts = [profile: :integration_postgres, migration_proof: :present]
+    store_opts = [profile: :integration_postgres]
 
     attrs =
       subject

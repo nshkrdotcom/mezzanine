@@ -72,9 +72,9 @@ defmodule Mezzanine.CoordinationEngine.RunSpec do
       authority_ref: spec.authority_ref,
       actor_ref: spec.actor_ref,
       persistence_profile_ref: %{
-        id: :mickey_mouse,
+        id: :ops_durable,
         store_ref: spec.persistence_profile_ref,
-        selected_tier: :memory_ephemeral
+        selected_tier: :temporal_postgres
       },
       memory_ref_set: spec.memory_ref_set,
       prompt_ref_set: spec.prompt_ref_set,

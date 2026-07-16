@@ -7,7 +7,7 @@ defmodule Mezzanine.EvidenceLedger.ProviderAdapters.GitHub.PrEvidence do
   evidence metadata without exposing provider tokens or raw SDK responses.
   """
 
-  alias Mezzanine.EvidenceLedger.Store
+  alias Mezzanine.EvidenceLedger.{EvidenceRecord, Store}
 
   @evidence_kind "github_pr"
 
@@ -28,8 +28,14 @@ defmodule Mezzanine.EvidenceLedger.ProviderAdapters.GitHub.PrEvidence do
 
   @spec collect(map() | [map()], map() | keyword(), keyword()) :: {:ok, map()} | {:error, term()}
   def collect(dispatch_or_dispatches, attrs \\ %{}, opts \\ []) when is_list(opts) do
-    with {:ok, evidence} <- materialize(dispatch_or_dispatches, attrs) do
-      Store.put_record(evidence, opts)
+    attrs = normalize_attrs(attrs)
+
+    with {:ok, evidence} <- materialize(dispatch_or_dispatches, attrs),
+         :ok <- Store.preflight(opts) do
+      evidence
+      |> Map.delete(:id)
+      |> Map.put(:actor_ref, Map.get(attrs, :actor_ref, %{kind: :provider_evidence_collector}))
+      |> EvidenceRecord.collect()
     end
   end
 

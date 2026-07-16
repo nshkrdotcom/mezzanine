@@ -1,13 +1,22 @@
-defmodule Mezzanine.Projections.Store.Memory do
-  @moduledoc "Memory-only projection store adapter."
-  @behaviour Mezzanine.Projections.Store
+defmodule Mezzanine.Operator.Store.Memory do
+  @moduledoc "Deterministic operator adapter compiled only for tests."
+  @behaviour Mezzanine.Operator.Store
 
   alias Mezzanine.Persistence.MemoryStore
 
-  @namespace :mezzanine_projections_store
+  @namespace :mezzanine_operator_store
 
-  def capabilities, do: Mezzanine.Persistence.memory_capability(:projections, [:projections])
-  def preflight(opts), do: Mezzanine.Persistence.preflight(opts, [capabilities()])
+  def capabilities do
+    Mezzanine.Persistence.capability!(
+      store_ref: :operator,
+      tier: :memory_ephemeral,
+      data_classes: [:operator],
+      adapter: :memory,
+      restart_safe?: false
+    )
+  end
+  def resource_modules, do: []
+  def preflight(_opts), do: :ok
   def put_record(attrs, opts), do: MemoryStore.put(@namespace, attrs, opts)
   def fetch_record(id, _opts), do: MemoryStore.fetch(@namespace, id)
   def update_record(id, attrs, _opts), do: MemoryStore.update(@namespace, id, attrs)

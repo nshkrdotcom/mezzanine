@@ -7,6 +7,8 @@ defmodule Mezzanine.CoordinationEngine.StateMachineTest do
     assert {:ok, run} = CoordinationEngine.admit(run_attrs())
     assert run.state == :created
     assert run.ai_run_envelope.run_class == :coordination_run
+    assert run.ai_run_envelope.persistence_profile_ref.id == :ops_durable
+    assert run.ai_run_envelope.persistence_profile_ref.selected_tier == :temporal_postgres
 
     assert {:ok, run} =
              CoordinationEngine.router_ready(run, %{
@@ -117,7 +119,7 @@ defmodule Mezzanine.CoordinationEngine.StateMachineTest do
       authority_ref: "authority://coordination",
       actor_ref: "actor://operator",
       subject_ref: "subject://ticket",
-      persistence_profile_ref: "persistence://memory",
+      persistence_profile_ref: "persistence://mezzanine/ops-durable",
       router_session_ref: "trinity-session://phase10",
       router_config_ref: "trinity-config://phase10",
       provider_pool_ref: "provider-pool://coordination-run/phase10",

@@ -1,20 +1,48 @@
 defmodule Mezzanine.Decisions.Store.AshPostgres do
-  @moduledoc "Adapter-local descriptor for decision AshPostgres state."
+  @moduledoc "Durable decision owner profile backed by AshPostgres."
   @behaviour Mezzanine.Decisions.Store
 
-  def capabilities, do: Mezzanine.Persistence.postgres_capability(:decisions, [:decisions])
-  def preflight(opts), do: Mezzanine.Persistence.postgres_preflight(:decisions, opts)
-  def repo, do: Mezzanine.Decisions.Repo
-  def resource_modules, do: [Mezzanine.Decisions.DecisionRecord]
-  def health(opts), do: with(:ok <- preflight(opts), do: {:ok, %{adapter: :ash_postgres}})
-  def put_record(_attrs, opts), do: durable_mutation(:put_record, opts)
-  def fetch_record(_id, opts), do: durable_mutation(:fetch_record, opts)
-  def update_record(_id, _attrs, opts), do: durable_mutation(:update_record, opts)
-  def append_event(_id, _event, opts), do: durable_mutation(:append_event, opts)
+  alias Ecto.Adapters.SQL
 
-  defp durable_mutation(operation, opts) do
-    with :ok <- preflight(opts) do
-      {:error, {:adapter_local_implementation_required, :decisions, operation}}
+  @migration_version 20_260_419_010_000
+
+  def capabilities, do: Mezzanine.Persistence.postgres_capability(:decisions, [:decisions])
+
+  def preflight(opts) do
+    selected_repo = configured_repo(opts)
+
+    with {:ok, %{rows: [[1]]}} <- SQL.query(selected_repo, "SELECT 1", []),
+         {:ok, %{rows: [[true]]}} <-
+           SQL.query(
+             selected_repo,
+             "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1)",
+             [@migration_version]
+           ) do
+      :ok
+    else
+      {:ok, %{rows: [[false]]}} -> {:error, {:required_migration_missing, @migration_version}}
+      {:error, reason} -> {:error, {:postgres_unavailable, reason}}
+      other -> {:error, {:postgres_preflight_failed, other}}
     end
   end
+
+  def repo, do: Mezzanine.Decisions.Repo
+  def resource_modules, do: [Mezzanine.Decisions.DecisionRecord]
+
+  def health(opts) do
+    with :ok <- preflight(opts) do
+      {:ok,
+       %{
+         adapter: :ash_postgres,
+         capability: capabilities(),
+         migration_version: @migration_version,
+         repo: configured_repo(opts),
+         restart_safe?: true,
+         tier: :postgres_shared
+       }}
+    end
+  end
+
+  defp configured_repo(opts) when is_list(opts), do: Keyword.get(opts, :repo, repo())
+  defp configured_repo(opts) when is_map(opts), do: Map.get(opts, :repo, repo())
 end

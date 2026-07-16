@@ -4,16 +4,49 @@ defmodule Mezzanine.Projections.Store.AshPostgres do
 
   import Ecto.Query, only: [from: 2]
 
+  alias Ecto.Adapters.SQL
   alias Mezzanine.Projections.Repo
 
+  @migration_version 20_260_517_121_000
+
   def capabilities, do: Mezzanine.Persistence.postgres_capability(:projections, [:projections])
-  def preflight(opts), do: Mezzanine.Persistence.postgres_preflight(:projections, opts)
+
+  def preflight(opts) do
+    selected_repo = configured_repo(opts)
+
+    with {:ok, %{rows: [[1]]}} <- SQL.query(selected_repo, "SELECT 1", []),
+         {:ok, %{rows: [[true]]}} <-
+           SQL.query(
+             selected_repo,
+             "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1)",
+             [@migration_version]
+           ) do
+      :ok
+    else
+      {:ok, %{rows: [[false]]}} -> {:error, {:required_migration_missing, @migration_version}}
+      {:error, reason} -> {:error, {:postgres_unavailable, reason}}
+      other -> {:error, {:postgres_preflight_failed, other}}
+    end
+  end
+
   def repo, do: Mezzanine.Projections.Repo
 
   def resource_modules,
     do: [Mezzanine.Projections.ProjectionRow, Mezzanine.Projections.MaterializedProjection]
 
-  def health(opts), do: with(:ok <- preflight(opts), do: {:ok, %{adapter: :ash_postgres}})
+  def health(opts) do
+    with :ok <- preflight(opts) do
+      {:ok,
+       %{
+         adapter: :ash_postgres,
+         capability: capabilities(),
+         migration_version: @migration_version,
+         repo: configured_repo(opts),
+         restart_safe?: true,
+         tier: :postgres_shared
+       }}
+    end
+  end
 
   def put_record(attrs, opts) when is_map(attrs) and is_list(opts) do
     with :ok <- preflight(opts) do
@@ -240,4 +273,7 @@ defmodule Mezzanine.Projections.Store.AshPostgres do
 
   defp transaction_result({:ok, value}), do: {:ok, value}
   defp transaction_result({:error, reason}), do: {:error, reason}
+
+  defp configured_repo(opts) when is_list(opts), do: Keyword.get(opts, :repo, repo())
+  defp configured_repo(opts) when is_map(opts), do: Map.get(opts, :repo, repo())
 end

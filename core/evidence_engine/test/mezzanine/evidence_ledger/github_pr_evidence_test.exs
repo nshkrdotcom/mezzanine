@@ -1,14 +1,11 @@
 defmodule Mezzanine.EvidenceLedger.ProviderAdapters.GitHub.PrEvidenceTest do
-  use ExUnit.Case, async: true
+  use Mezzanine.EvidenceLedger.DataCase, async: false
 
+  alias Mezzanine.EvidenceLedger.EvidenceRecord
   alias Mezzanine.EvidenceLedger.ProviderAdapters.GitHub.PrEvidence, as: GitHubPrEvidence
-  alias Mezzanine.EvidenceLedger.Store
-  alias Mezzanine.EvidenceLedger.Store.Memory
 
-  setup do
-    Memory.reset!()
-    :ok
-  end
+  @subject_id "00000000-0000-0000-0000-000000000101"
+  @execution_id "00000000-0000-0000-0000-000000000201"
 
   test "materializes GitHub PR evidence from governed lower dispatches" do
     assert {:ok, evidence} =
@@ -42,8 +39,8 @@ defmodule Mezzanine.EvidenceLedger.ProviderAdapters.GitHub.PrEvidenceTest do
     assert evidence.evidence_kind == "github_pr"
     assert evidence.content_ref == "github-pr://nshkrdotcom/sample-app/17"
     assert evidence.installation_id == "inst-1"
-    assert evidence.subject_id == "subject-1"
-    assert evidence.execution_id == "exec-1"
+    assert evidence.subject_id == @subject_id
+    assert evidence.execution_id == @execution_id
     assert evidence.trace_id == "trace-1"
 
     metadata = evidence.metadata
@@ -88,13 +85,20 @@ defmodule Mezzanine.EvidenceLedger.ProviderAdapters.GitHub.PrEvidenceTest do
     assert metadata.cleanup_policy.governed_operations == ["github.git.ref.delete"]
   end
 
-  test "collect stores materialized GitHub PR evidence in the configured store" do
+  test "collect stores materialized GitHub PR evidence in the durable owner store" do
     assert {:ok, stored} =
              GitHubPrEvidence.collect(dispatch("github.pr.fetch", pr_output()), evidence_attrs())
 
-    assert {:ok, fetched} = Store.fetch_record(stored.id)
+    assert {:ok, fetched} =
+             EvidenceRecord.by_subject_execution_kind(
+               @subject_id,
+               @execution_id,
+               "github_pr"
+             )
+
+    assert fetched.id == stored.id
     assert fetched.evidence_kind == "github_pr"
-    assert fetched.metadata.content_ref == "github-pr://nshkrdotcom/sample-app/17"
+    assert fetched.metadata["content_ref"] == "github-pr://nshkrdotcom/sample-app/17"
   end
 
   test "fails closed when dispatches contain no PR evidence" do
@@ -105,10 +109,11 @@ defmodule Mezzanine.EvidenceLedger.ProviderAdapters.GitHub.PrEvidenceTest do
   defp evidence_attrs do
     %{
       installation_id: "inst-1",
-      subject_id: "subject-1",
-      execution_id: "exec-1",
+      subject_id: @subject_id,
+      execution_id: @execution_id,
       trace_id: "trace-1",
-      causation_id: "cause-1"
+      causation_id: "cause-1",
+      actor_ref: %{kind: :provider_evidence_collector}
     }
   end
 
