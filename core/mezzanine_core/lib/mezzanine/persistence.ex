@@ -9,7 +9,6 @@ defmodule Mezzanine.Persistence do
   alias GroundPlane.PersistencePolicy
   alias GroundPlane.PersistencePolicy.StoreCapability
 
-  @memory_tiers [:off, :memory_ephemeral]
   @restart_safe_claims [:restart_safe, :durable, :durable_workflow, :durable_artifact]
 
   @type profile :: PersistencePolicy.Profile.t()
@@ -21,26 +20,9 @@ defmodule Mezzanine.Persistence do
   @spec resolve!(keyword() | map()) :: PersistencePolicy.Profile.t()
   def resolve!(attrs), do: PersistencePolicy.resolve!(attrs)
 
-  @spec memory_profile?(keyword() | map() | PersistencePolicy.Profile.t()) :: boolean()
-  def memory_profile?(%PersistencePolicy.Profile{} = profile),
-    do: profile.default_tier in @memory_tiers
-
-  def memory_profile?(attrs), do: attrs |> resolve!() |> memory_profile?()
-
   @spec restart_safe?(PersistencePolicy.Profile.t()) :: boolean()
   def restart_safe?(%PersistencePolicy.Profile{metadata: metadata}) do
     Map.get(metadata, :restart_claim) in @restart_safe_claims
-  end
-
-  @spec memory_capability(atom(), [atom()]) :: StoreCapability.t()
-  def memory_capability(component, data_classes \\ [:runtime_state]) when is_atom(component) do
-    capability!(
-      store_ref: component,
-      tier: :memory_ephemeral,
-      data_classes: data_classes,
-      adapter: :memory,
-      restart_safe?: false
-    )
   end
 
   @spec postgres_capability(atom(), [atom()]) :: StoreCapability.t()
@@ -68,31 +50,13 @@ defmodule Mezzanine.Persistence do
     PersistencePolicy.preflight(profile, capabilities, fn _capability -> :ok end)
   end
 
-  @spec adapter_for(keyword() | map(), module(), module()) :: module()
-  def adapter_for(attrs, memory_adapter, durable_adapter) do
-    profile = resolve!(attrs)
-
-    if memory_profile?(profile) do
-      memory_adapter
-    else
-      durable_adapter
-    end
-  end
-
   @spec postgres_preflight(atom(), keyword() | map()) :: :ok | {:error, term()}
   def postgres_preflight(component, attrs) when is_atom(component) do
     profile = resolve!(attrs)
 
-    cond do
-      memory_profile?(profile) ->
-        :ok
-
-      profile.default_tier == :postgres_shared ->
-        require_migration_proof(component, attrs)
-
-      true ->
-        {:error, {:unsupported_persistence_tier, component, profile.default_tier}}
-    end
+    if profile.default_tier == :postgres_shared,
+      do: require_migration_proof(component, attrs),
+      else: {:error, {:unsupported_persistence_tier, component, profile.default_tier}}
   end
 
   defp require_migration_proof(component, attrs) do

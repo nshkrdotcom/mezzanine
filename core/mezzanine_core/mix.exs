@@ -27,7 +27,6 @@ defmodule MezzanineCore.MixProject do
 
   def application do
     [
-      mod: {Mezzanine.Core.Application, []},
       extra_applications: [:crypto, :logger, :ecto_sql]
     ]
   end
