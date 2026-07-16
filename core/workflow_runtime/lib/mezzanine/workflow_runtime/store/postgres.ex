@@ -30,12 +30,16 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
     repo = repo(opts)
 
     with {:ok, %{rows: [[1]]}} <- SQL.query(repo, "SELECT 1", []),
-         {:ok, %{rows: [[head]]}} <-
-           SQL.query(repo, "SELECT max(version) FROM schema_migrations", []),
-         true <- head == @migration_version do
+         {:ok, %{rows: [[present?]]}} <-
+           SQL.query(
+             repo,
+             "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1)",
+             [@migration_version]
+           ),
+         true <- present? do
       :ok
     else
-      false -> {:error, {:migration_head_mismatch, @migration_version}}
+      false -> {:error, {:required_migration_missing, @migration_version}}
       {:error, reason} -> {:error, {:postgres_unavailable, reason}}
       other -> {:error, {:postgres_preflight_failed, other}}
     end
@@ -258,7 +262,7 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
 
   defp existing_acceptance!(command, opts) do
     sql = """
-    SELECT command_ref, request_hash, acceptance
+    SELECT request_hash, acceptance
     FROM mezzanine_run_commands
     WHERE tenant_ref = $1 AND installation_ref = $2 AND idempotency_key = $3
     FOR UPDATE
@@ -269,14 +273,13 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
            command.installation_ref,
            command.idempotency_key
          ]).rows do
-      [[stored_command_ref, stored_hash, acceptance]]
-      when stored_command_ref == command.command_ref and stored_hash == command.request_hash ->
+      [[stored_hash, acceptance]] when stored_hash == command.request_hash ->
         case Acceptance.new(acceptance) do
           {:ok, value} -> value
           {:error, reason} -> repo(opts).rollback({:corrupt_acceptance, reason})
         end
 
-      [[_stored_command_ref, _stored_hash, _acceptance]] ->
+      [[_stored_hash, _acceptance]] ->
         repo(opts).rollback(:idempotency_conflict)
 
       [] ->

@@ -68,11 +68,23 @@ defmodule Mezzanine.WorkflowRuntime.StorePostgresTest do
     assert {:ok, []} = Postgres.list_events(command.run_ref, cursor, repo: Mezzanine.Repo)
   end
 
-  test "returns the committed acceptance for an exact duplicate and rejects hash conflicts" do
+  test "returns the committed acceptance for a stable-identity replay and rejects hash conflicts" do
     command = command("duplicate")
 
     assert {:ok, first} = Postgres.accept_run(command, repo: Mezzanine.Repo)
     assert {:ok, ^first} = Postgres.accept_run(command, repo: Mezzanine.Repo)
+
+    %AcceptCommand{} = reissued_command = command("reissued")
+
+    reissued = %{
+      reissued_command
+      | idempotency_key: command.idempotency_key,
+        request_hash: command.request_hash,
+        tenant_ref: command.tenant_ref,
+        installation_ref: command.installation_ref
+    }
+
+    assert {:ok, ^first} = Postgres.accept_run(reissued, repo: Mezzanine.Repo)
 
     %AcceptCommand{} = conflict_command = command("conflict")
 
@@ -89,6 +101,16 @@ defmodule Mezzanine.WorkflowRuntime.StorePostgresTest do
 
     assert %{rows: [[1]]} =
              SQL.query!(Mezzanine.Repo, "SELECT count(*) FROM mezzanine_run_commands", [])
+  end
+
+  test "preflight requires this store migration without rejecting later owner migrations" do
+    SQL.query!(
+      Mezzanine.Repo,
+      "INSERT INTO schema_migrations (version, inserted_at) VALUES ($1, now())",
+      [20_260_715_999_999]
+    )
+
+    assert :ok = Postgres.preflight(repo: Mezzanine.Repo)
   end
 
   test "claims only committed outbox rows and durably records the Temporal outcome" do
