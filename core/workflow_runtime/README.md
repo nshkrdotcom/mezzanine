@@ -6,7 +6,7 @@ Temporal worker and post-commit workflow dispatch boundary for Mezzanine.
 
 The normal NSHKR release composes:
 
-- `Mezzanine.Repo`
+- `Mezzanine.OpsDomain.Repo`
 - `Mezzanine.WorkflowRuntime.Store.Postgres`
 - `Mezzanine.WorkflowRuntime.RunOutboxDispatcher`
 - `Mezzanine.WorkflowRuntime.TemporalSupervisor`

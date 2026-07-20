@@ -2,18 +2,18 @@
 
 Reusable business-semantics and canonical run contracts for Mezzanine.
 
-## Durable run truth
+## Durable run contracts
 
-`Mezzanine.Repo` owns the Postgres schema for canonical run commands, runs,
-first turns, ordered events, read projections, durable cursors, and workflow
-start outbox rows. The migration sequence lives in `priv/repo/migrations`.
+This package owns the frozen command, event, cursor, acceptance, and workflow
+handoff types under `Mezzanine.Runs`. It owns no database or run lifecycle.
 
-The production runtime starts the Repo explicitly and selects
-`Mezzanine.WorkflowRuntime.Store.Postgres`. `Mezzanine.Core.Application` does
-not start a memory store. Production readiness must call the store preflight,
-which reaches Postgres and verifies migration `20260715100000`.
+Canonical `WorkObject`, `WorkPlan`, `RunSeries`, and `Run` persistence belongs
+to `Mezzanine.OpsDomain.Repo`. The workflow runtime adds first-turn, ordered
+event, projection, cursor, and workflow-outbox records in that same owner-local
+database transaction. Production readiness calls the workflow store preflight,
+which verifies the Ops Domain migration `20260720111500`.
 
 The frozen public command/result types are under `Mezzanine.Runs`. They contain
 only opaque refs, hashes, scalar state, and bounded metadata.
 
-See `docs/persistence.md` for the package persistence contract.
+See `docs/persistence.md` for the ownership contract.

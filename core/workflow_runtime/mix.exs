@@ -52,6 +52,7 @@ defmodule MezzanineWorkflowRuntime.MixProject do
   defp deps do
     [
       {:mezzanine_core, path: "../mezzanine_core"},
+      {:mezzanine_execution_engine, path: "../execution_engine"},
       {:mezzanine_runtime_profile, path: "../runtime_profile"},
       {:mezzanine_citadel_bridge, path: "../../bridges/citadel_bridge"},
       {:mezzanine_workspace_engine, path: "../workspace_engine"},

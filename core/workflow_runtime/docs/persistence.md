@@ -3,11 +3,11 @@
 The production store is `Mezzanine.WorkflowRuntime.Store.Postgres`; there is no
 production memory default or request-level backend selection.
 
-The store uses `Mezzanine.Repo` and verifies migration `20260715100000` through
-`Store.preflight/1`. It exposes the exact operations required by the first
-Synapse run journey:
+The store uses `Mezzanine.OpsDomain.Repo` and verifies migration
+`20260720111500` through `Store.preflight/1`. It exposes the exact operations
+required by the first Synapse run journey:
 
-- atomic run and first-turn acceptance;
+- atomic canonical work/run-lineage and first-turn acceptance;
 - idempotent command replay and hash-conflict rejection;
 - durable projection and cursor readback;
 - ordered event listing;

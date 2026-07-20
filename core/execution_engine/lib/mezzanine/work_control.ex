@@ -54,7 +54,7 @@ defmodule Mezzanine.WorkControl do
     with {:ok, program_id} <- required_string(attrs, :program_id, :missing_program_id),
          {:ok, work_class_id} <- required_string(attrs, :work_class_id, :missing_work_class_id),
          {:ok, work_object} <- ingest_work_object(attrs, tenant_id, program_id, work_class_id),
-         {:ok, planned_work_object} <- compile_plan(work_object, tenant_id),
+         {:ok, planned_work_object} <- compile_plan(work_object, tenant_id, attrs),
          {:ok, plan} <- fetch_current_plan(tenant_id, planned_work_object.current_plan_id) do
       {:ok, %{work_object: planned_work_object, plan: plan}}
     end
@@ -67,10 +67,11 @@ defmodule Mezzanine.WorkControl do
     attrs = Map.new(attrs)
 
     with {:ok, work_object} <- fetch_work_object(tenant_id, work_object_id),
-         {:ok, ensured_work_object} <- ensure_current_plan(tenant_id, work_object),
+         {:ok, ensured_work_object} <- ensure_current_plan(tenant_id, work_object, attrs),
          {:ok, plan} <- fetch_current_plan(tenant_id, ensured_work_object.current_plan_id),
-         {:ok, control_session} <- ensure_control_session(tenant_id, ensured_work_object),
-         {:ok, run_series} <- ensure_run_series(tenant_id, ensured_work_object, control_session),
+         {:ok, control_session} <- ensure_control_session(tenant_id, ensured_work_object, attrs),
+         {:ok, run_series} <-
+           ensure_run_series(tenant_id, ensured_work_object, control_session, attrs),
          {:ok, run, review_unit, scheduled?} <-
            ensure_active_run(tenant_id, ensured_work_object, plan, run_series, attrs),
          :ok <-
@@ -114,7 +115,11 @@ defmodule Mezzanine.WorkControl do
   @spec ensure_control_session(String.t(), work_object_record()) ::
           {:ok, control_session_record()} | {:error, term()}
   def ensure_control_session(tenant_id, %WorkObject{} = work_object)
-      when is_binary(tenant_id) do
+      when is_binary(tenant_id),
+      do: ensure_control_session(tenant_id, work_object, %{})
+
+  defp ensure_control_session(tenant_id, %WorkObject{} = work_object, attrs)
+       when is_binary(tenant_id) do
     case control_session_for_work(tenant_id, work_object.id) do
       {:ok, %ControlSession{} = control_session} ->
         {:ok, control_session}
@@ -122,9 +127,9 @@ defmodule Mezzanine.WorkControl do
       {:ok, nil} ->
         ControlSession.open(
           %{program_id: work_object.program_id, work_object_id: work_object.id},
-          actor: actor(tenant_id),
-          tenant: tenant_id
+          mutation_opts(tenant_id, attrs)
         )
+        |> normalize_result(:control_session_create_failed)
 
       {:error, reason} ->
         {:error, reason}
@@ -157,24 +162,23 @@ defmodule Mezzanine.WorkControl do
         payload: payload(attrs),
         normalized_payload: map_value(attrs, :normalized_payload) || payload(attrs)
       },
-      actor: actor(tenant_id),
-      tenant: tenant_id
+      mutation_opts(tenant_id, attrs)
     )
     |> normalize_result(:invalid_work_request)
   end
 
-  defp compile_plan(work_object, tenant_id) do
-    WorkObject.compile_plan(work_object, %{}, actor: actor(tenant_id), tenant: tenant_id)
+  defp compile_plan(work_object, tenant_id, attrs) do
+    WorkObject.compile_plan(work_object, %{}, mutation_opts(tenant_id, attrs))
     |> normalize_result(:plan_compile_failed)
   end
 
-  defp ensure_current_plan(tenant_id, %WorkObject{current_plan_id: nil} = work_object),
-    do: compile_plan(work_object, tenant_id)
+  defp ensure_current_plan(tenant_id, %WorkObject{current_plan_id: nil} = work_object, attrs),
+    do: compile_plan(work_object, tenant_id, attrs)
 
-  defp ensure_current_plan(tenant_id, %WorkObject{} = work_object) do
+  defp ensure_current_plan(tenant_id, %WorkObject{} = work_object, attrs) do
     case fetch_current_plan(tenant_id, work_object.current_plan_id) do
       {:ok, _plan} -> {:ok, work_object}
-      {:error, _reason} -> compile_plan(work_object, tenant_id)
+      {:error, _reason} -> compile_plan(work_object, tenant_id, attrs)
     end
   end
 
@@ -207,7 +211,7 @@ defmodule Mezzanine.WorkControl do
     end
   end
 
-  defp ensure_run_series(tenant_id, %WorkObject{} = work_object, control_session) do
+  defp ensure_run_series(tenant_id, %WorkObject{} = work_object, control_session, attrs) do
     case RunSeries.list_for_work_object(work_object.id,
            actor: actor(tenant_id),
            tenant: tenant_id
@@ -220,9 +224,9 @@ defmodule Mezzanine.WorkControl do
           nil ->
             RunSeries.open_series(
               %{work_object_id: work_object.id, control_session_id: control_session.id},
-              actor: actor(tenant_id),
-              tenant: tenant_id
+              mutation_opts(tenant_id, attrs)
             )
+            |> normalize_result(:run_series_create_failed)
         end
 
       {:error, _reason} ->
@@ -291,18 +295,21 @@ defmodule Mezzanine.WorkControl do
              %{
                run_series_id: run_series.id,
                attempt: attempt,
+               external_ref: map_value(attrs, :run_ref),
                runtime_profile: runtime_profile(plan, attrs),
                placement_profile_id: placement_profile_id(plan),
                grant_profile: grant_profile(plan, attrs)
              },
-             actor: actor(tenant_id),
-             tenant: tenant_id
-           ),
+             mutation_opts(tenant_id, attrs)
+           )
+           |> normalize_result(:run_schedule_failed),
          {:ok, _run_series} <-
-           RunSeries.attach_current_run(run_series, %{current_run_id: run.id},
-             actor: actor(tenant_id),
-             tenant: tenant_id
-           ),
+           RunSeries.attach_current_run(
+             run_series,
+             %{current_run_id: run.id},
+             mutation_opts(tenant_id, attrs)
+           )
+           |> normalize_result(:run_series_update_failed),
          {:ok, review_unit} <-
            ensure_review_unit(tenant_id, work_object, plan, run, attrs) do
       {:ok, run, review_unit, true}
@@ -378,20 +385,20 @@ defmodule Mezzanine.WorkControl do
         decision_profile: decision_profile(plan),
         reviewer_actor: reviewer_actor(plan, attrs)
       },
-      actor: actor(tenant_id),
-      tenant: tenant_id
+      mutation_opts(tenant_id, attrs)
     )
     |> normalize_result(:review_unit_create_failed)
   end
 
-  defp maybe_mark_running(tenant_id, %WorkObject{} = work_object, nil) do
-    case WorkObject.mark_running(work_object, actor: actor(tenant_id), tenant: tenant_id) do
+  defp maybe_mark_running(tenant_id, %WorkObject{} = work_object, nil, attrs) do
+    case WorkObject.mark_running(work_object, mutation_opts(tenant_id, attrs))
+         |> normalize_result(:work_state_update_failed) do
       {:ok, _updated_work_object} -> :ok
-      {:error, _reason} -> {:error, :work_state_update_failed}
+      {:error, reason} -> {:error, reason}
     end
   end
 
-  defp maybe_mark_running(_tenant_id, _work_object, _review_unit), do: :ok
+  defp maybe_mark_running(_tenant_id, _work_object, _review_unit, _attrs), do: :ok
 
   defp maybe_finalize_run_schedule(false, _tenant_id, _work_object, _run, _review_unit, _attrs),
     do: :ok
@@ -404,17 +411,28 @@ defmodule Mezzanine.WorkControl do
          review_unit,
          attrs
        ) do
-    with :ok <- maybe_mark_running(tenant_id, work_object, review_unit),
-         {:ok, _audit_event} <-
-           record_run_scheduled_event(
-             tenant_id,
-             work_object,
-             run,
-             run.attempt,
-             map_value(attrs, :trace_id),
-             map_value(attrs, :recipe_ref)
-           ) do
+    with :ok <- maybe_mark_running(tenant_id, work_object, review_unit, attrs),
+         :ok <- maybe_record_run_scheduled_event(tenant_id, work_object, run, attrs) do
       :ok
+    end
+  end
+
+  defp maybe_record_run_scheduled_event(tenant_id, work_object, run, attrs) when is_map(attrs) do
+    if map_value(attrs, :owner_transaction?) do
+      :ok
+    else
+      record_run_scheduled_event(
+        tenant_id,
+        work_object,
+        run,
+        run.attempt,
+        map_value(attrs, :trace_id),
+        map_value(attrs, :recipe_ref)
+      )
+      |> case do
+        {:ok, _audit_event} -> :ok
+        {:error, reason} -> {:error, reason}
+      end
     end
   end
 
@@ -579,7 +597,23 @@ defmodule Mezzanine.WorkControl do
   defp map_value(map, key), do: ServiceSupport.map_value(map, key)
   defp actor(tenant_id), do: ServiceSupport.actor(tenant_id)
 
+  defp mutation_opts(tenant_id, attrs) do
+    [actor: actor(tenant_id), tenant: tenant_id]
+    |> maybe_return_notifications(attrs)
+  end
+
+  # The owner transaction commits a durable outbox row as its post-commit signal.
+  # Returning Ash notifications prevents them from escaping before that commit.
+  defp maybe_return_notifications(opts, attrs) do
+    if map_value(attrs, :owner_transaction?) do
+      Keyword.put(opts, :return_notifications?, true)
+    else
+      opts
+    end
+  end
+
   defp normalize_result({:ok, value}, _fallback), do: {:ok, value}
+  defp normalize_result({:ok, value, _notifications}, _fallback), do: {:ok, value}
   defp normalize_result({:error, _reason}, fallback), do: {:error, fallback}
   defp normalize_result(other, _fallback), do: other
 end

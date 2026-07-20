@@ -1,15 +1,16 @@
-# Mezzanine Core Persistence
+# Mezzanine Core Persistence Ownership
 
-Mezzanine run truth is Postgres-only in normal production composition.
+`mezzanine_core` owns reusable run contracts and no persistence repository.
+Canonical run truth is Postgres-only in normal production composition.
 
-- Repo: `Mezzanine.Repo`
-- database selected by NSHKR: `nshkr_mezzanine`
-- migration owner: `core/mezzanine_core/priv/repo/migrations`
-- current required migration: `20260715100000`
+- Repo: `Mezzanine.OpsDomain.Repo`
+- migration owner: `core/ops_domain/priv/repo/migrations`
+- current required migration: `20260720111500`
 - adapter: `Mezzanine.WorkflowRuntime.Store.Postgres`
 
-One transaction inserts the idempotent command, run, first turn, first ordered
-event, materialized projection, durable cursor, and pending workflow outbox.
+One Ops Domain transaction inserts the idempotent command, canonical work and
+run lineage, first turn, first ordered event, materialized projection, durable
+cursor, and pending workflow outbox.
 An exact duplicate returns the original acceptance. Reuse of the same scoped
 idempotency key with a different command or request hash is rejected.
 

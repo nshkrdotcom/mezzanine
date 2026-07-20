@@ -28,7 +28,15 @@ defmodule Mezzanine.Runs.Run do
     end
 
     create :schedule do
-      accept [:run_series_id, :attempt, :runtime_profile, :placement_profile_id, :grant_profile]
+      accept [
+        :run_series_id,
+        :attempt,
+        :external_ref,
+        :runtime_profile,
+        :placement_profile_id,
+        :grant_profile
+      ]
+
       change set_attribute(:status, :scheduled)
     end
 
@@ -107,6 +115,10 @@ defmodule Mezzanine.Runs.Run do
       public? true
     end
 
+    attribute :external_ref, :string do
+      public? true
+    end
+
     attribute :status, :atom do
       allow_nil? false
       default :pending
@@ -166,6 +178,13 @@ defmodule Mezzanine.Runs.Run do
       public? true
     end
 
+    attribute :row_version, :integer do
+      allow_nil? false
+      default 1
+      public? true
+      writable? false
+    end
+
     timestamps()
   end
 
@@ -193,5 +212,9 @@ defmodule Mezzanine.Runs.Run do
     has_many :review_units, Mezzanine.Review.ReviewUnit do
       destination_attribute :run_id
     end
+  end
+
+  identities do
+    identity :unique_external_ref, [:external_ref], all_tenants?: true
   end
 end

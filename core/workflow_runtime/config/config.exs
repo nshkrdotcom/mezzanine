@@ -1,11 +1,10 @@
 import Config
 
 config :mezzanine_core,
-  ecto_repos: [Mezzanine.Repo],
   run_store: Mezzanine.WorkflowRuntime.Store.Postgres,
   workflow_runtime_impl: Mezzanine.WorkflowRuntime.TemporalexAdapter
 
-config :mezzanine_workflow_runtime, ecto_repos: [Mezzanine.Repo]
+config :mezzanine_workflow_runtime, ecto_repos: [Mezzanine.OpsDomain.Repo]
 
 config :mezzanine_workflow_runtime, :temporal,
   enabled?: false,
@@ -17,7 +16,7 @@ config :mezzanine_workflow_runtime, :temporal,
   headers: []
 
 config :mezzanine_workflow_runtime, :outbox_persistence,
-  repo: Mezzanine.Repo,
+  repo: Mezzanine.Execution.Repo,
   store: Mezzanine.WorkflowRuntime.OutboxPersistence.SQL
 
 import_config "#{config_env()}.exs"

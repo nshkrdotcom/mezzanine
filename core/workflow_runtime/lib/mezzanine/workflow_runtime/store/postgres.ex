@@ -5,8 +5,9 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
 
   alias Ecto.Adapters.SQL
   alias Mezzanine.Runs.{AcceptCommand, Acceptance, Event, EventCursor, WorkflowHandoff}
+  alias Mezzanine.WorkControl
 
-  @migration_version 20_260_715_100_000
+  @migration_version 20_260_720_111_500
   @default_namespace "nshkr-production"
   @default_task_queue "nshkr.mezzanine.agent-run.v1"
   @default_workflow_type "mezzanine.agent-run.v1"
@@ -62,9 +63,7 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
   @impl true
   def accept_run(command, opts) do
     with {:ok, command} <- AcceptCommand.new(command) do
-      facts = acceptance_facts(command, opts)
-
-      case transact(repo(opts), fn -> persist_acceptance(command, facts, opts) end) do
+      case transact(repo(opts), fn -> persist_acceptance(command, opts) end) do
         {:ok, acceptance} -> {:ok, acceptance}
         {:error, reason} -> {:error, reason}
       end
@@ -73,7 +72,7 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
 
   @impl true
   def fetch_acceptance(command_ref, opts) when is_binary(command_ref) do
-    sql = "SELECT acceptance FROM mezzanine_run_commands WHERE command_ref = $1"
+    sql = "SELECT acceptance FROM agent_run_commands WHERE command_ref = $1"
 
     case SQL.query(repo(opts), sql, [command_ref]) do
       {:ok, %{rows: [[attrs]]}} -> Acceptance.new(attrs)
@@ -85,9 +84,9 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
   @impl true
   def fetch_projection(run_ref, opts) when is_binary(run_ref) do
     sql = """
-    SELECT run_ref, tenant_ref, subject_ref, latest_turn_ref, latest_event_ref,
+    SELECT run_ref, tenant_id, subject_ref, latest_turn_ref, latest_event_ref,
            status, event_sequence, run_revision, projection, updated_at
-    FROM mezzanine_run_projections
+    FROM agent_run_projections
     WHERE run_ref = $1
     """
 
@@ -105,10 +104,10 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
            SQL.query(
              repo(opts),
              """
-             SELECT event_ref, run_ref, tenant_ref, event_type, event_version, sequence,
+             SELECT event_ref, run_ref, tenant_id, event_type, event_version, sequence,
                     command_ref, causation_ref, correlation_ref, payload_ref,
                     payload_digest, recorded_at, row_version
-             FROM mezzanine_run_events
+             FROM agent_run_events
              WHERE run_ref = $1 AND sequence > $2
              ORDER BY sequence ASC
              LIMIT $3
@@ -125,7 +124,7 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
   def read_cursor(run_ref, opts) when is_binary(run_ref) do
     case SQL.query(
            repo(opts),
-           "SELECT run_ref, last_event_ref, sequence FROM mezzanine_run_cursors WHERE run_ref = $1",
+           "SELECT run_ref, last_event_ref, sequence FROM agent_run_cursors WHERE run_ref = $1",
            [run_ref]
          ) do
       {:ok, %{rows: [[stored_run_ref, event_ref, sequence]]}} ->
@@ -143,7 +142,7 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
   def claim_workflow_handoffs(lock_owner, limit, opts)
       when is_binary(lock_owner) and is_integer(limit) and limit > 0 do
     expired_dispatch_sql = """
-    UPDATE mezzanine_workflow_outbox
+    UPDATE agent_workflow_outbox
     SET state = 'ambiguous',
         last_error_ref = 'error://mezzanine/temporal/dispatcher-lost',
         lock_owner = NULL,
@@ -156,7 +155,7 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
     sql = """
     WITH claimable AS (
       SELECT outbox_ref
-      FROM mezzanine_workflow_outbox
+      FROM agent_workflow_outbox
       WHERE state = 'pending'
         AND available_at <= now()
         AND (lock_expires_at IS NULL OR lock_expires_at < now())
@@ -164,7 +163,7 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
       FOR UPDATE SKIP LOCKED
       LIMIT $2
     )
-    UPDATE mezzanine_workflow_outbox AS outbox
+    UPDATE agent_workflow_outbox AS outbox
     SET state = 'dispatched',
         attempt = outbox.attempt + 1,
         lock_owner = $1,
@@ -197,7 +196,7 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
   def complete_workflow_handoff(outbox_ref, next_state, error_ref, opts)
       when is_binary(outbox_ref) and next_state in ["acknowledged", "ambiguous"] do
     sql = """
-    UPDATE mezzanine_workflow_outbox
+    UPDATE agent_workflow_outbox
     SET state = $2,
         last_error_ref = $3,
         lock_owner = NULL,
@@ -216,15 +215,17 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
     end
   end
 
-  defp persist_acceptance(command, facts, opts) do
-    case insert_command(command, facts, opts) do
+  defp persist_acceptance(command, opts) do
+    case insert_command(command, opts) do
       :inserted ->
-        insert_run!(command, facts, opts)
-        insert_turn!(command, facts, opts)
-        insert_event!(command, facts, opts)
-        insert_projection!(command, facts, opts)
-        insert_cursor!(facts, opts)
-        insert_handoff!(facts, opts)
+        started = create_canonical_run!(command, opts)
+        facts = acceptance_facts(command, started, opts)
+        insert_turn!(command, started, facts, opts)
+        insert_event!(started, facts, opts)
+        insert_projection!(command, started, facts, opts)
+        insert_cursor!(started, facts, opts)
+        insert_handoff!(started, facts, opts)
+        complete_command!(command, started, facts, opts)
         facts.acceptance
 
       :duplicate ->
@@ -232,13 +233,13 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
     end
   end
 
-  defp insert_command(command, facts, opts) do
+  defp insert_command(command, opts) do
     sql = """
-    INSERT INTO mezzanine_run_commands
-      (command_ref, tenant_ref, installation_ref, idempotency_key, request_hash,
+    INSERT INTO agent_run_commands
+      (command_ref, tenant_id, installation_ref, idempotency_key, request_hash,
        run_ref, authority_context_ref, state, acceptance, row_version, inserted_at, updated_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, 'accepted', $8, 1, $9, $9)
-    ON CONFLICT (tenant_ref, installation_ref, idempotency_key) DO NOTHING
+    VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, 1, $9, $9)
+    ON CONFLICT (tenant_id, installation_ref, idempotency_key) DO NOTHING
     RETURNING command_ref
     """
 
@@ -250,8 +251,8 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
       command.request_hash,
       command.run_ref,
       command.authority_context_ref,
-      Acceptance.dump(facts.acceptance),
-      facts.now
+      %{},
+      now(opts)
     ]
 
     case SQL.query!(repo(opts), sql, params).rows do
@@ -263,8 +264,8 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
   defp existing_acceptance!(command, opts) do
     sql = """
     SELECT request_hash, acceptance
-    FROM mezzanine_run_commands
-    WHERE tenant_ref = $1 AND installation_ref = $2 AND idempotency_key = $3
+    FROM agent_run_commands
+    WHERE tenant_id = $1 AND installation_ref = $2 AND idempotency_key = $3
     FOR UPDATE
     """
 
@@ -287,48 +288,67 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
     end
   end
 
-  defp insert_run!(command, facts, opts) do
-    SQL.query!(
-      repo(opts),
-      """
-      INSERT INTO mezzanine_runs
-        (run_ref, tenant_ref, installation_ref, actor_ref, subject_ref, trace_ref,
-         correlation_ref, authority_context_ref, runtime_profile_ref, tool_catalog_ref,
-         budget_ref, deadline_at, status, revision, inserted_at, updated_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'accepted',1,$13,$13)
-      """,
-      [
-        command.run_ref,
-        command.tenant_ref,
-        command.installation_ref,
-        command.actor_ref,
-        command.subject_ref,
-        command.trace_ref,
-        command.correlation_ref,
-        command.authority_context_ref,
-        command.runtime_profile_ref,
-        command.tool_catalog_ref,
-        command.budget_ref,
-        command.deadline_at,
-        facts.now
-      ]
-    )
+  defp create_canonical_run!(command, opts) do
+    attrs = %{
+      program_id: command.program_id,
+      work_class_id: command.work_class_id,
+      external_ref: command.subject_ref,
+      title: "Synapse agent run",
+      description: "Accepted through the AppKit agent-intake boundary",
+      source_kind: "app_kit_agent_intake",
+      payload: acceptance_payload(command),
+      normalized_payload: acceptance_payload(command),
+      trace_id: command.trace_ref,
+      actor_ref: command.actor_ref,
+      installation_ref: command.installation_ref,
+      idempotency_key: command.idempotency_key,
+      runtime_profile_ref: command.runtime_profile_ref,
+      run_ref: command.run_ref,
+      owner_transaction?: true
+    }
+
+    with {:ok, prepared} <- WorkControl.prepare_run_request(command.tenant_ref, attrs),
+         {:ok, started} <-
+           WorkControl.start_run_for_subject(command.tenant_ref, prepared.work_object.id, attrs),
+         true <- started.run.external_ref == command.run_ref do
+      started
+    else
+      false -> repo(opts).rollback(:run_identity_conflict)
+      {:error, reason} -> repo(opts).rollback(reason)
+    end
   end
 
-  defp insert_turn!(command, facts, opts) do
+  defp acceptance_payload(command) do
+    %{
+      "subject_ref" => command.subject_ref,
+      "initial_input_artifact_ref" => command.first_turn.input_artifact_ref,
+      "actor_ref" => command.actor_ref,
+      "correlation_ref" => command.correlation_ref,
+      "runtime_profile_ref" => command.runtime_profile_ref,
+      "tool_catalog_ref" => command.tool_catalog_ref,
+      "budget_ref" => command.budget_ref,
+      "authority_context_ref" => command.authority_context_ref,
+      "deadline_at" => deadline_value(command.deadline_at),
+      "expected_revision" => command.expected_revision
+    }
+  end
+
+  defp insert_turn!(command, started, facts, opts) do
     turn = command.first_turn
 
     SQL.query!(
       repo(opts),
       """
-      INSERT INTO mezzanine_turns
-        (turn_ref, run_ref, subject_ref, input_artifact_ref, payload_digest,
-         idempotency_key, sequence, row_version, inserted_at, updated_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)
+      INSERT INTO agent_turns
+        (turn_ref, run_id, tenant_id, subject_ref, input_artifact_ref, payload_digest,
+         idempotency_key, sequence, status, provider_attempt_ref, row_version,
+         inserted_at, updated_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'accepted',NULL,$9,$10,$10)
       """,
       [
         turn.turn_ref,
-        command.run_ref,
+        dump_uuid(started.run.id),
+        command.tenant_ref,
         turn.subject_ref,
         turn.input_artifact_ref,
         turn.payload_digest,
@@ -340,20 +360,21 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
     )
   end
 
-  defp insert_event!(_command, facts, opts) do
+  defp insert_event!(started, facts, opts) do
     event = facts.event
 
     SQL.query!(
       repo(opts),
       """
-      INSERT INTO mezzanine_run_events
-        (event_ref, run_ref, tenant_ref, event_type, event_version, sequence,
+      INSERT INTO agent_run_events
+        (event_ref, run_id, run_ref, tenant_id, event_type, event_version, sequence,
          command_ref, causation_ref, correlation_ref, payload_ref, payload_digest,
          recorded_at, row_version)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
       """,
       [
         event.event_ref,
+        dump_uuid(started.run.id),
         event.run_ref,
         event.tenant_ref,
         event.event_type,
@@ -370,7 +391,7 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
     )
   end
 
-  defp insert_projection!(command, facts, opts) do
+  defp insert_projection!(command, started, facts, opts) do
     projection = %{
       "acceptance" => Acceptance.dump(facts.acceptance),
       "input_artifact_ref" => command.first_turn.input_artifact_ref,
@@ -381,14 +402,17 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
     SQL.query!(
       repo(opts),
       """
-      INSERT INTO mezzanine_run_projections
-        (run_ref, tenant_ref, subject_ref, latest_turn_ref, latest_event_ref, status,
-         event_sequence, run_revision, projection, inserted_at, updated_at)
-      VALUES ($1,$2,$3,$4,$5,'accepted',1,1,$6,$7,$7)
+      INSERT INTO agent_run_projections
+        (run_id, run_ref, tenant_id, work_object_id, subject_ref, latest_turn_ref,
+         latest_event_ref, status, event_sequence, run_revision, projection,
+         inserted_at, updated_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,'accepted',1,1,$8,$9,$9)
       """,
       [
+        dump_uuid(started.run.id),
         command.run_ref,
         command.tenant_ref,
+        dump_uuid(started.work_object.id),
         command.subject_ref,
         command.first_turn.turn_ref,
         facts.event.event_ref,
@@ -398,35 +422,42 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
     )
   end
 
-  defp insert_cursor!(facts, opts) do
+  defp insert_cursor!(started, facts, opts) do
     cursor = facts.acceptance.cursor
 
     SQL.query!(
       repo(opts),
       """
-      INSERT INTO mezzanine_run_cursors
-        (run_ref, last_event_ref, sequence, row_version, inserted_at, updated_at)
-      VALUES ($1,$2,$3,1,$4,$4)
+      INSERT INTO agent_run_cursors
+        (run_id, run_ref, last_event_ref, sequence, row_version, inserted_at, updated_at)
+      VALUES ($1,$2,$3,$4,1,$5,$5)
       """,
-      [cursor.run_ref, cursor.last_event_ref, cursor.sequence, facts.now]
+      [
+        dump_uuid(started.run.id),
+        cursor.run_ref,
+        cursor.last_event_ref,
+        cursor.sequence,
+        facts.now
+      ]
     )
   end
 
-  defp insert_handoff!(facts, opts) do
+  defp insert_handoff!(started, facts, opts) do
     handoff = facts.handoff
 
     SQL.query!(
       repo(opts),
       """
-      INSERT INTO mezzanine_workflow_outbox
-      (outbox_ref, event_ref, run_ref, workflow_ref, workflow_type,
+      INSERT INTO agent_workflow_outbox
+      (outbox_ref, event_ref, run_id, run_ref, workflow_ref, workflow_type,
        temporal_namespace, task_queue, idempotency_key, state, attempt,
        last_error_ref, available_at, row_version, inserted_at, updated_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now(),1,$12,$12)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now(),1,$13,$13)
       """,
       [
         handoff.outbox_ref,
         handoff.event_ref,
+        dump_uuid(started.run.id),
         handoff.run_ref,
         handoff.workflow_ref,
         handoff.workflow_type,
@@ -441,12 +472,33 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
     )
   end
 
-  defp acceptance_facts(command, opts) do
+  defp complete_command!(command, started, facts, opts) do
+    case SQL.query!(
+           repo(opts),
+           """
+           UPDATE agent_run_commands
+           SET run_id = $2, state = 'accepted', acceptance = $3, updated_at = $4
+           WHERE command_ref = $1 AND state = 'pending'
+           RETURNING command_ref
+           """,
+           [
+             command.command_ref,
+             dump_uuid(started.run.id),
+             Acceptance.dump(facts.acceptance),
+             facts.now
+           ]
+         ).rows do
+      [[_command_ref]] -> :ok
+      [] -> repo(opts).rollback(:command_state_conflict)
+    end
+  end
+
+  defp acceptance_facts(command, _started, opts) do
     token = digest_token({command.tenant_ref, command.installation_ref, command.idempotency_key})
     event_ref = "event://mezzanine/#{token}/1"
     outbox_ref = "outbox://mezzanine/#{token}/workflow-start"
     workflow_ref = "workflow://temporal/#{token}"
-    now = Keyword.get_lazy(opts, :now, &DateTime.utc_now/0)
+    now = now(opts)
 
     event =
       Event.new!(
@@ -567,6 +619,13 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
     |> Base.url_encode64(padding: false)
   end
 
+  defp now(opts), do: Keyword.get_lazy(opts, :now, &DateTime.utc_now/0)
+
+  defp deadline_value(nil), do: nil
+  defp deadline_value(%DateTime{} = deadline), do: DateTime.to_iso8601(deadline)
+
+  defp dump_uuid(value), do: Ecto.UUID.dump!(value)
+
   defp transact(repo, fun) do
     repo.transaction(fun)
   rescue
@@ -576,5 +635,5 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
     :exit, _reason -> {:error, :postgres_unavailable}
   end
 
-  defp repo(opts), do: Keyword.get(opts, :repo, Mezzanine.Repo)
+  defp repo(opts), do: Keyword.get(opts, :repo, Mezzanine.OpsDomain.Repo)
 end
