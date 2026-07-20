@@ -103,6 +103,7 @@ defmodule Mezzanine.WorkflowRuntime.StorePostgresTest do
     assert projection.latest_turn_ref == command.first_turn.turn_ref
     assert projection.latest_event_ref == acceptance.event_ref
     assert projection.event_sequence == 1
+    assert %DateTime{} = projection.updated_at
 
     assert {:ok, cursor} = Postgres.read_cursor(command.run_ref, repo: Repo)
     assert cursor == acceptance.cursor

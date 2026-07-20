@@ -586,7 +586,7 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
       event_sequence: sequence,
       run_revision: revision,
       projection: body,
-      updated_at: updated_at
+      updated_at: as_datetime(updated_at)
     }
   end
 
