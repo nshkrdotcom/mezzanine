@@ -7,6 +7,7 @@ defmodule Mezzanine.WorkflowRuntime.StorePostgresTest do
   alias Mezzanine.Programs.{PolicyBundle, Program}
   alias Mezzanine.Runs.AcceptCommand
   alias Mezzanine.Work.WorkClass
+  alias Mezzanine.WorkflowRuntime.{ModelTurnCompletion, ModelTurnStart, ProviderEvent}
   alias Mezzanine.WorkflowRuntime.Store.Postgres
 
   @hash "sha256:" <> String.duplicate("a", 64)
@@ -274,6 +275,199 @@ defmodule Mezzanine.WorkflowRuntime.StorePostgresTest do
     assert cursor == acceptance.cursor
   end
 
+  test "commits provisional provider boundaries before terminal model-turn projection", %{
+    lineage: lineage
+  } do
+    command = command("model-turn", lineage)
+    assert {:ok, _acceptance} = Postgres.accept_run(command, repo: Repo)
+
+    start = model_turn_start(command, "model-turn")
+    assert {:ok, running} = Postgres.start_model_turn(start, repo: Repo)
+    assert running.state == "running"
+    assert running.provider_attempt_ref == start.provider_attempt_ref
+    assert running.context_artifact_ref == start.context_artifact_ref
+    assert running.decision_ref == start.decision_ref
+    assert running.grant_ref == start.grant_ref
+
+    delta = provider_event(command, "model-turn", 1, "inference.response_delta")
+    assert {:ok, provisional} = Postgres.append_provider_event(delta, repo: Repo)
+    assert provisional.commit_state == "provisional"
+
+    assert {:error, :not_found} =
+             Postgres.read_model_turn_cursor(command.first_turn.turn_ref, repo: Repo)
+
+    assert {:ok, [listed_delta]} =
+             Postgres.list_provider_events(command.first_turn.turn_ref, 0, repo: Repo)
+
+    assert listed_delta.commit_state == "provisional"
+
+    assert {:ok, committed_delta} =
+             Postgres.commit_provider_event(delta.event_ref, repo: Repo)
+
+    assert committed_delta.commit_state == "committed"
+
+    assert {:ok, cursor} =
+             Postgres.read_model_turn_cursor(command.first_turn.turn_ref, repo: Repo)
+
+    assert cursor.sequence == 1
+    assert cursor.last_provider_event_ref == delta.event_ref
+
+    terminal = provider_event(command, "model-turn", 2, "inference.attempt_completed")
+    assert {:ok, provisional_terminal} = Postgres.append_provider_event(terminal, repo: Repo)
+    assert provisional_terminal.commit_state == "provisional"
+
+    completion = model_turn_completion(command, "model-turn")
+
+    assert {:error, :provisional_provider_events_present} =
+             Postgres.complete_model_turn(completion, repo: Repo)
+
+    assert {:ok, committed_terminal} =
+             Postgres.commit_provider_event(terminal.event_ref, repo: Repo)
+
+    assert committed_terminal.commit_state == "committed"
+    assert {:ok, completed} = Postgres.complete_model_turn(completion, repo: Repo)
+    assert completed.state == "completed"
+    assert completed.reply_publication_ref == completion.reply_publication_ref
+    assert completed.reply_artifact_ref == completion.reply_artifact_ref
+    assert completed.continuation_context_ref == completion.continuation_context_ref
+    assert completed.cursor.sequence == 2
+
+    assert {:ok, ^completed} = Postgres.fetch_model_turn(command.first_turn.turn_ref, repo: Repo)
+
+    assert {:ok, [^committed_terminal]} =
+             Postgres.list_provider_events(command.first_turn.turn_ref, 1, repo: Repo)
+
+    assert {:ok, projection} = Postgres.fetch_projection(command.run_ref, repo: Repo)
+    assert projection.status == "completed"
+    assert projection.projection["model_turn"]["state"] == "completed"
+
+    assert %{rows: [["completed", "completed"]]} =
+             SQL.query!(
+               Repo,
+               """
+               SELECT turns.status, runs.status
+               FROM agent_turns AS turns
+               JOIN runs ON runs.id = turns.run_id
+               WHERE turns.turn_ref = $1
+               """,
+               [command.first_turn.turn_ref]
+             )
+  end
+
+  test "fails closed on non-canonical, out-of-order, or non-terminal model lineage", %{
+    lineage: lineage
+  } do
+    command = command("model-negative", lineage)
+    assert {:ok, _acceptance} = Postgres.accept_run(command, repo: Repo)
+
+    wrong_tenant = %{
+      model_turn_start(command, "model-negative")
+      | tenant_ref: "tenant://mezzanine/other"
+    }
+
+    assert {:error, :canonical_turn_not_found} =
+             Postgres.start_model_turn(wrong_tenant, repo: Repo)
+
+    start = model_turn_start(command, "model-negative")
+    assert {:ok, _running} = Postgres.start_model_turn(start, repo: Repo)
+    assert {:ok, _same_running} = Postgres.start_model_turn(start, repo: Repo)
+
+    out_of_order = provider_event(command, "model-negative", 2, "inference.attempt_completed")
+
+    assert {:error, :provider_event_binding_conflict} =
+             Postgres.append_provider_event(out_of_order, repo: Repo)
+
+    delta = provider_event(command, "model-negative", 1, "inference.response_delta")
+    assert {:ok, stored_delta} = Postgres.append_provider_event(delta, repo: Repo)
+    assert {:ok, ^stored_delta} = Postgres.append_provider_event(delta, repo: Repo)
+
+    conflicting_delta = %{delta | payload_ref: "artifact://jido/provider-event/conflict"}
+
+    assert {:error, :provider_event_identity_conflict} =
+             Postgres.append_provider_event(conflicting_delta, repo: Repo)
+
+    terminal = provider_event(command, "model-negative", 2, "inference.attempt_completed")
+    assert {:ok, _provisional_terminal} = Postgres.append_provider_event(terminal, repo: Repo)
+
+    assert {:error, :non_contiguous_provider_event_commit} =
+             Postgres.commit_provider_event(terminal.event_ref, repo: Repo)
+
+    assert {:ok, _committed_delta} = Postgres.commit_provider_event(delta.event_ref, repo: Repo)
+
+    assert {:error, :provisional_provider_events_present} =
+             Postgres.complete_model_turn(
+               model_turn_completion(command, "model-negative"),
+               repo: Repo
+             )
+
+    assert {:ok, _committed_terminal} =
+             Postgres.commit_provider_event(terminal.event_ref, repo: Repo)
+
+    wrong_attempt = %{
+      model_turn_completion(command, "model-negative")
+      | provider_attempt_ref: "attempt://jido/gemini/wrong"
+    }
+
+    assert {:error, :provider_attempt_binding_conflict} =
+             Postgres.complete_model_turn(wrong_attempt, repo: Repo)
+  end
+
+  test "does not convert a committed delta into terminal success", %{lineage: lineage} do
+    command = command("non-terminal", lineage)
+    assert {:ok, _acceptance} = Postgres.accept_run(command, repo: Repo)
+
+    assert {:ok, _running} =
+             Postgres.start_model_turn(model_turn_start(command, "non-terminal"), repo: Repo)
+
+    delta = provider_event(command, "non-terminal", 1, "inference.response_delta")
+    assert {:ok, _provisional} = Postgres.append_provider_event(delta, repo: Repo)
+    assert {:ok, _committed} = Postgres.commit_provider_event(delta.event_ref, repo: Repo)
+
+    assert {:error, :terminal_success_event_required} =
+             Postgres.complete_model_turn(
+               model_turn_completion(command, "non-terminal"),
+               repo: Repo
+             )
+
+    assert {:ok, running} = Postgres.fetch_model_turn(command.first_turn.turn_ref, repo: Repo)
+    assert running.state == "running"
+  end
+
+  @tag :repo_restart
+  test "completed model-turn lineage and committed cursor survive repository restart", %{
+    lineage: lineage
+  } do
+    command = command("model-restart", lineage)
+    assert {:ok, _acceptance} = Postgres.accept_run(command, repo: Repo)
+
+    assert {:ok, _running} =
+             Postgres.start_model_turn(model_turn_start(command, "model-restart"), repo: Repo)
+
+    terminal = provider_event(command, "model-restart", 1, "inference.attempt_completed")
+    assert {:ok, _provisional} = Postgres.append_provider_event(terminal, repo: Repo)
+
+    assert {:ok, committed_terminal} =
+             Postgres.commit_provider_event(terminal.event_ref, repo: Repo)
+
+    completion = model_turn_completion(command, "model-restart")
+    assert {:ok, completed} = Postgres.complete_model_turn(completion, repo: Repo)
+
+    :ok = Supervisor.stop(Repo)
+    {:ok, pid} = Repo.start_link()
+    Process.unlink(pid)
+
+    assert {:ok, ^completed} = Postgres.fetch_model_turn(command.first_turn.turn_ref, repo: Repo)
+
+    assert {:ok, [^committed_terminal]} =
+             Postgres.list_provider_events(command.first_turn.turn_ref, 0, repo: Repo)
+
+    assert {:ok, cursor} =
+             Postgres.read_model_turn_cursor(command.first_turn.turn_ref, repo: Repo)
+
+    assert cursor.sequence == 1
+    assert cursor.last_provider_event_ref == terminal.event_ref
+  end
+
   defp lineage_fixture do
     suffix = Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
     tenant_id = "tenant://mezzanine/store/#{suffix}"
@@ -354,6 +548,49 @@ defmodule Mezzanine.WorkflowRuntime.StorePostgresTest do
         sequence: 1,
         row_version: 1
       }
+    })
+  end
+
+  defp model_turn_start(command, suffix) do
+    ModelTurnStart.new!(%{
+      tenant_ref: command.tenant_ref,
+      run_ref: command.run_ref,
+      turn_ref: command.first_turn.turn_ref,
+      context_artifact_ref: "artifact://outer-brain/context/#{suffix}",
+      context_digest: @hash,
+      prompt_artifact_ref: "artifact://outer-brain/prompt/#{suffix}",
+      decision_ref: "decision://citadel/model/#{suffix}",
+      grant_ref: "grant://citadel/model/#{suffix}",
+      provider_attempt_ref: "attempt://jido/gemini/#{suffix}",
+      provider_family: "gemini",
+      model_ref: "model://google/gemini-2.5-flash",
+      operation_ref: "operation://gemini/stream-generate"
+    })
+  end
+
+  defp provider_event(command, suffix, sequence, event_type) do
+    ProviderEvent.new!(%{
+      event_ref: "event://jido/gemini/#{suffix}/#{sequence}",
+      run_ref: command.run_ref,
+      turn_ref: command.first_turn.turn_ref,
+      provider_attempt_ref: "attempt://jido/gemini/#{suffix}",
+      sequence: sequence,
+      event_type: event_type,
+      stream: "assistant",
+      payload_ref: "artifact://jido/provider-event/#{suffix}/#{sequence}",
+      payload_digest: @hash,
+      observed_at: DateTime.add(~U[2026-08-01 00:00:00Z], sequence, :second)
+    })
+  end
+
+  defp model_turn_completion(command, suffix) do
+    ModelTurnCompletion.new!(%{
+      turn_ref: command.first_turn.turn_ref,
+      provider_attempt_ref: "attempt://jido/gemini/#{suffix}",
+      reply_publication_ref: "publication://outer-brain/#{suffix}",
+      reply_artifact_ref: "artifact://outer-brain/reply/#{suffix}",
+      continuation_context_ref: "artifact://outer-brain/context/#{suffix}/next",
+      continuation_context_digest: @hash
     })
   end
 

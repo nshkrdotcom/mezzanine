@@ -7,7 +7,14 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
   alias Mezzanine.Runs.{AcceptCommand, Acceptance, Event, EventCursor, WorkflowHandoff}
   alias Mezzanine.WorkControl
 
-  @migration_version 20_260_720_111_500
+  alias Mezzanine.WorkflowRuntime.{
+    ModelTurnCompletion,
+    ModelTurnCursor,
+    ModelTurnStart,
+    ProviderEvent
+  }
+
+  @migration_version 20_260_720_233_000
   @default_namespace "nshkr-production"
   @default_task_queue "nshkr.mezzanine.agent-run.v1"
   @default_workflow_type "mezzanine.agent-run.v1"
@@ -22,7 +29,9 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
       :events,
       :projections,
       :cursors,
-      :workflow_outbox
+      :workflow_outbox,
+      :model_turn_lineage,
+      :provider_events
     ])
   end
 
@@ -213,6 +222,624 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
       {:ok, %{rows: []}} -> {:error, :handoff_state_conflict}
       {:error, reason} -> {:error, reason}
     end
+  end
+
+  @impl true
+  def start_model_turn(start, opts) do
+    with {:ok, start} <- ModelTurnStart.new(start) do
+      case transact(repo(opts), fn -> persist_model_turn_start(start, opts) end) do
+        {:ok, projection} -> {:ok, projection}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @impl true
+  def append_provider_event(event, opts) do
+    with {:ok, event} <- ProviderEvent.new(event) do
+      case transact(repo(opts), fn -> persist_provider_event(event, opts) end) do
+        {:ok, stored_event} -> {:ok, stored_event}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @impl true
+  def commit_provider_event(event_ref, opts) when is_binary(event_ref) do
+    case transact(repo(opts), fn -> persist_provider_event_commit(event_ref, opts) end) do
+      {:ok, event} -> {:ok, event}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @impl true
+  def complete_model_turn(completion, opts) do
+    with {:ok, completion} <- ModelTurnCompletion.new(completion) do
+      case transact(repo(opts), fn -> persist_model_turn_completion(completion, opts) end) do
+        {:ok, projection} -> {:ok, projection}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @impl true
+  def fetch_model_turn(turn_ref, opts) when is_binary(turn_ref) do
+    case model_turn_for_ref(turn_ref, opts) do
+      {:ok, projection} -> {:ok, projection}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @impl true
+  def list_provider_events(turn_ref, after_sequence, opts)
+      when is_binary(turn_ref) and is_integer(after_sequence) and after_sequence >= 0 do
+    case SQL.query(
+           repo(opts),
+           """
+           SELECT event_ref, run_ref, turn_ref, provider_attempt_ref, sequence,
+                  event_type, stream, payload_ref, payload_digest, commit_state,
+                  observed_at, committed_at, row_version
+           FROM agent_provider_events
+           WHERE turn_ref = $1 AND sequence > $2
+           ORDER BY sequence ASC
+           LIMIT $3
+           """,
+           [turn_ref, after_sequence, Keyword.get(opts, :limit, 100)]
+         ) do
+      {:ok, %{rows: rows}} -> rows |> Enum.map(&provider_event_from_row/1) |> collect_results()
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @impl true
+  def read_model_turn_cursor(turn_ref, opts) when is_binary(turn_ref) do
+    case SQL.query(
+           repo(opts),
+           """
+           SELECT turn_ref, last_committed_provider_event_ref, committed_event_sequence
+           FROM agent_model_turn_lineage
+           WHERE turn_ref = $1 AND committed_event_sequence > 0
+           """,
+           [turn_ref]
+         ) do
+      {:ok, %{rows: [[stored_turn_ref, event_ref, sequence]]}} ->
+        ModelTurnCursor.new(
+          turn_ref: stored_turn_ref,
+          last_provider_event_ref: event_ref,
+          sequence: sequence
+        )
+
+      {:ok, %{rows: []}} ->
+        {:error, :not_found}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp persist_model_turn_start(start, opts) do
+    run_id = canonical_turn_run_id!(start, opts)
+    timestamp = now(opts)
+
+    inserted? =
+      case SQL.query!(
+             repo(opts),
+             """
+             INSERT INTO agent_model_turn_lineage
+               (turn_ref, run_id, run_ref, tenant_id, context_artifact_ref, context_digest,
+                prompt_artifact_ref, decision_ref, grant_ref, provider_attempt_ref,
+                provider_family, model_ref, operation_ref, state,
+                provisional_event_sequence, committed_event_sequence, row_version,
+                inserted_at, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'running',0,0,1,$14,$14)
+             ON CONFLICT (turn_ref) DO NOTHING
+             RETURNING turn_ref
+             """,
+             [
+               start.turn_ref,
+               run_id,
+               start.run_ref,
+               start.tenant_ref,
+               start.context_artifact_ref,
+               start.context_digest,
+               start.prompt_artifact_ref,
+               start.decision_ref,
+               start.grant_ref,
+               start.provider_attempt_ref,
+               start.provider_family,
+               start.model_ref,
+               start.operation_ref,
+               timestamp
+             ]
+           ).rows do
+        [[_turn_ref]] -> true
+        [] -> false
+      end
+
+    projection = model_turn_for_ref_locked!(start.turn_ref, opts)
+
+    if inserted? do
+      require_single_update!(
+        """
+        UPDATE agent_turns
+        SET status = 'running', provider_attempt_ref = $2,
+            row_version = row_version + 1, updated_at = $3
+        WHERE turn_ref = $1 AND status = 'accepted' AND provider_attempt_ref IS NULL
+        RETURNING turn_ref
+        """,
+        [start.turn_ref, start.provider_attempt_ref, timestamp],
+        :turn_state_conflict,
+        opts
+      )
+
+      write_model_run_projection!(projection, "model_running", timestamp, opts)
+      model_turn_for_ref_locked!(start.turn_ref, opts)
+    else
+      if model_turn_start_matches?(projection, start) do
+        projection
+      else
+        repo(opts).rollback(:model_turn_identity_conflict)
+      end
+    end
+  end
+
+  defp persist_provider_event(event, opts) do
+    case provider_event_for_ref_locked(event.event_ref, opts) do
+      {:ok, stored_event} ->
+        if provider_event_identity_matches?(stored_event, event) do
+          stored_event
+        else
+          repo(opts).rollback(:provider_event_identity_conflict)
+        end
+
+      {:error, :not_found} ->
+        projection = model_turn_for_ref_locked!(event.turn_ref, opts)
+
+        with true <- projection.state == "running",
+             true <- projection.run_ref == event.run_ref,
+             true <- projection.provider_attempt_ref == event.provider_attempt_ref,
+             true <- event.sequence == projection.provisional_event_sequence + 1 do
+          timestamp = now(opts)
+
+          SQL.query!(
+            repo(opts),
+            """
+            INSERT INTO agent_provider_events
+              (event_ref, run_ref, turn_ref, provider_attempt_ref, sequence, event_type,
+               stream, payload_ref, payload_digest, commit_state, observed_at,
+               row_version, inserted_at, updated_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'provisional',$10,1,$11,$11)
+            """,
+            [
+              event.event_ref,
+              event.run_ref,
+              event.turn_ref,
+              event.provider_attempt_ref,
+              event.sequence,
+              event.event_type,
+              event.stream,
+              event.payload_ref,
+              event.payload_digest,
+              event.observed_at,
+              timestamp
+            ]
+          )
+
+          require_single_update!(
+            """
+            UPDATE agent_model_turn_lineage
+            SET provisional_event_sequence = $2, row_version = row_version + 1,
+                updated_at = $3
+            WHERE turn_ref = $1 AND state = 'running'
+              AND provisional_event_sequence = $2 - 1
+            RETURNING turn_ref
+            """,
+            [event.turn_ref, event.sequence, timestamp],
+            :provider_event_sequence_conflict,
+            opts
+          )
+
+          updated = model_turn_for_ref_locked!(event.turn_ref, opts)
+          write_model_run_projection!(updated, "model_running", timestamp, opts)
+
+          case provider_event_for_ref_locked(event.event_ref, opts) do
+            {:ok, stored_event} -> stored_event
+            {:error, reason} -> repo(opts).rollback(reason)
+          end
+        else
+          false -> repo(opts).rollback(:provider_event_binding_conflict)
+        end
+    end
+  end
+
+  defp persist_provider_event_commit(event_ref, opts) do
+    with {:ok, event} <- provider_event_for_ref_locked(event_ref, opts) do
+      projection = model_turn_for_ref_locked!(event.turn_ref, opts)
+
+      cond do
+        event.commit_state == "committed" and
+            event.sequence <= projection.committed_event_sequence ->
+          event
+
+        projection.state != "running" ->
+          repo(opts).rollback(:model_turn_terminal)
+
+        event.provider_attempt_ref != projection.provider_attempt_ref ->
+          repo(opts).rollback(:provider_event_binding_conflict)
+
+        event.sequence != projection.committed_event_sequence + 1 ->
+          repo(opts).rollback(:non_contiguous_provider_event_commit)
+
+        true ->
+          timestamp = now(opts)
+
+          require_single_update!(
+            """
+            UPDATE agent_provider_events
+            SET commit_state = 'committed', committed_at = $2,
+                row_version = row_version + 1, updated_at = $2
+            WHERE event_ref = $1 AND commit_state = 'provisional'
+            RETURNING event_ref
+            """,
+            [event_ref, timestamp],
+            :provider_event_state_conflict,
+            opts
+          )
+
+          require_single_update!(
+            """
+            UPDATE agent_model_turn_lineage
+            SET committed_event_sequence = $2,
+                last_committed_provider_event_ref = $3,
+                row_version = row_version + 1, updated_at = $4
+            WHERE turn_ref = $1 AND state = 'running'
+              AND committed_event_sequence = $2 - 1
+              AND provisional_event_sequence >= $2
+            RETURNING turn_ref
+            """,
+            [event.turn_ref, event.sequence, event.event_ref, timestamp],
+            :provider_event_commit_conflict,
+            opts
+          )
+
+          updated = model_turn_for_ref_locked!(event.turn_ref, opts)
+          write_model_run_projection!(updated, "model_running", timestamp, opts)
+
+          case provider_event_for_ref_locked(event_ref, opts) do
+            {:ok, committed_event} -> committed_event
+            {:error, reason} -> repo(opts).rollback(reason)
+          end
+      end
+    else
+      {:error, reason} -> repo(opts).rollback(reason)
+    end
+  end
+
+  defp persist_model_turn_completion(completion, opts) do
+    projection = model_turn_for_ref_locked!(completion.turn_ref, opts)
+
+    cond do
+      projection.state == "completed" and completion_matches?(projection, completion) ->
+        projection
+
+      projection.state != "running" ->
+        repo(opts).rollback(:model_turn_state_conflict)
+
+      projection.provider_attempt_ref != completion.provider_attempt_ref ->
+        repo(opts).rollback(:provider_attempt_binding_conflict)
+
+      projection.committed_event_sequence == 0 ->
+        repo(opts).rollback(:committed_provider_event_required)
+
+      projection.provisional_event_sequence != projection.committed_event_sequence ->
+        repo(opts).rollback(:provisional_provider_events_present)
+
+      is_nil(projection.last_committed_provider_event_ref) ->
+        repo(opts).rollback(:terminal_provider_cursor_missing)
+
+      not terminal_success_event?(projection, opts) ->
+        repo(opts).rollback(:terminal_success_event_required)
+
+      true ->
+        timestamp = now(opts)
+
+        require_single_update!(
+          """
+          UPDATE agent_model_turn_lineage
+          SET state = 'completed', reply_publication_ref = $2, reply_artifact_ref = $3,
+              continuation_context_ref = $4, continuation_context_digest = $5,
+              row_version = row_version + 1, updated_at = $6
+          WHERE turn_ref = $1 AND state = 'running'
+            AND provider_attempt_ref = $7
+            AND provisional_event_sequence = committed_event_sequence
+            AND committed_event_sequence > 0
+            AND last_committed_provider_event_ref IS NOT NULL
+          RETURNING turn_ref
+          """,
+          [
+            completion.turn_ref,
+            completion.reply_publication_ref,
+            completion.reply_artifact_ref,
+            completion.continuation_context_ref,
+            completion.continuation_context_digest,
+            timestamp,
+            completion.provider_attempt_ref
+          ],
+          :model_turn_state_conflict,
+          opts
+        )
+
+        require_single_update!(
+          """
+          UPDATE agent_turns
+          SET status = 'completed', row_version = row_version + 1, updated_at = $2
+          WHERE turn_ref = $1 AND status = 'running'
+          RETURNING turn_ref
+          """,
+          [completion.turn_ref, timestamp],
+          :turn_state_conflict,
+          opts
+        )
+
+        require_single_update!(
+          """
+          UPDATE runs
+          SET status = 'completed', completed_at = $2, row_version = row_version + 1,
+              updated_at = $2
+          WHERE id = $1 AND status IN ('scheduled', 'running')
+          RETURNING id
+          """,
+          [projection.run_id, timestamp],
+          :run_state_conflict,
+          opts
+        )
+
+        completed = model_turn_for_ref_locked!(completion.turn_ref, opts)
+        write_model_run_projection!(completed, "completed", timestamp, opts)
+        completed
+    end
+  end
+
+  defp canonical_turn_run_id!(start, opts) do
+    case SQL.query!(
+           repo(opts),
+           """
+           SELECT turns.run_id
+           FROM agent_turns AS turns
+           JOIN agent_run_projections AS projection ON projection.run_id = turns.run_id
+           WHERE turns.turn_ref = $1 AND projection.run_ref = $2
+             AND projection.tenant_id = $3
+           FOR UPDATE OF turns, projection
+           """,
+           [start.turn_ref, start.run_ref, start.tenant_ref]
+         ).rows do
+      [[run_id]] -> run_id
+      [] -> repo(opts).rollback(:canonical_turn_not_found)
+    end
+  end
+
+  defp terminal_success_event?(projection, opts) do
+    case SQL.query!(
+           repo(opts),
+           "SELECT event_type FROM agent_provider_events WHERE event_ref = $1",
+           [projection.last_committed_provider_event_ref]
+         ).rows do
+      [["inference.attempt_completed"]] -> true
+      _other -> false
+    end
+  end
+
+  defp model_turn_for_ref(turn_ref, opts) do
+    case SQL.query(repo(opts), model_turn_select(), [turn_ref]) do
+      {:ok, %{rows: [row]}} -> {:ok, model_turn_from_row(row)}
+      {:ok, %{rows: []}} -> {:error, :not_found}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp model_turn_for_ref_locked!(turn_ref, opts) do
+    case SQL.query!(repo(opts), model_turn_select() <> " FOR UPDATE", [turn_ref]).rows do
+      [row] -> model_turn_from_row(row)
+      [] -> repo(opts).rollback(:model_turn_not_found)
+    end
+  end
+
+  defp model_turn_select do
+    """
+    SELECT turn_ref, run_id, run_ref, tenant_id, context_artifact_ref, context_digest,
+           prompt_artifact_ref, decision_ref, grant_ref, provider_attempt_ref,
+           provider_family, model_ref, operation_ref, state,
+           provisional_event_sequence, committed_event_sequence,
+           last_committed_provider_event_ref, reply_publication_ref, reply_artifact_ref,
+           continuation_context_ref, continuation_context_digest, row_version, updated_at
+    FROM agent_model_turn_lineage
+    WHERE turn_ref = $1
+    """
+  end
+
+  defp model_turn_from_row([
+         turn_ref,
+         run_id,
+         run_ref,
+         tenant_id,
+         context_artifact_ref,
+         context_digest,
+         prompt_artifact_ref,
+         decision_ref,
+         grant_ref,
+         provider_attempt_ref,
+         provider_family,
+         model_ref,
+         operation_ref,
+         state,
+         provisional_event_sequence,
+         committed_event_sequence,
+         last_committed_provider_event_ref,
+         reply_publication_ref,
+         reply_artifact_ref,
+         continuation_context_ref,
+         continuation_context_digest,
+         row_version,
+         updated_at
+       ]) do
+    %{
+      turn_ref: turn_ref,
+      run_id: run_id,
+      run_ref: run_ref,
+      tenant_ref: tenant_id,
+      context_artifact_ref: context_artifact_ref,
+      context_digest: context_digest,
+      prompt_artifact_ref: prompt_artifact_ref,
+      decision_ref: decision_ref,
+      grant_ref: grant_ref,
+      provider_attempt_ref: provider_attempt_ref,
+      provider_family: provider_family,
+      model_ref: model_ref,
+      operation_ref: operation_ref,
+      state: state,
+      provisional_event_sequence: provisional_event_sequence,
+      committed_event_sequence: committed_event_sequence,
+      last_committed_provider_event_ref: last_committed_provider_event_ref,
+      reply_publication_ref: reply_publication_ref,
+      reply_artifact_ref: reply_artifact_ref,
+      continuation_context_ref: continuation_context_ref,
+      continuation_context_digest: continuation_context_digest,
+      cursor:
+        model_turn_cursor(turn_ref, last_committed_provider_event_ref, committed_event_sequence),
+      row_version: row_version,
+      updated_at: as_datetime(updated_at)
+    }
+  end
+
+  defp provider_event_for_ref_locked(event_ref, opts) do
+    case SQL.query!(
+           repo(opts),
+           """
+           SELECT event_ref, run_ref, turn_ref, provider_attempt_ref, sequence,
+                  event_type, stream, payload_ref, payload_digest, commit_state,
+                  observed_at, committed_at, row_version
+           FROM agent_provider_events
+           WHERE event_ref = $1
+           FOR UPDATE
+           """,
+           [event_ref]
+         ).rows do
+      [row] -> provider_event_from_row(row)
+      [] -> {:error, :not_found}
+    end
+  end
+
+  defp provider_event_from_row([
+         event_ref,
+         run_ref,
+         turn_ref,
+         provider_attempt_ref,
+         sequence,
+         event_type,
+         stream,
+         payload_ref,
+         payload_digest,
+         commit_state,
+         observed_at,
+         committed_at,
+         row_version
+       ]) do
+    ProviderEvent.from_store(%{
+      event_ref: event_ref,
+      run_ref: run_ref,
+      turn_ref: turn_ref,
+      provider_attempt_ref: provider_attempt_ref,
+      sequence: sequence,
+      event_type: event_type,
+      stream: stream,
+      payload_ref: payload_ref,
+      payload_digest: payload_digest,
+      commit_state: commit_state,
+      observed_at: as_datetime(observed_at),
+      committed_at: if(committed_at, do: as_datetime(committed_at)),
+      row_version: row_version
+    })
+  end
+
+  defp write_model_run_projection!(model_turn, status, timestamp, opts) do
+    projection =
+      case SQL.query!(
+             repo(opts),
+             "SELECT projection FROM agent_run_projections WHERE run_ref = $1 FOR UPDATE",
+             [model_turn.run_ref]
+           ).rows do
+        [[projection]] -> projection
+        [] -> repo(opts).rollback(:run_projection_not_found)
+      end
+
+    body = Map.put(projection, "model_turn", model_turn_projection(model_turn))
+
+    require_single_update!(
+      """
+      UPDATE agent_run_projections
+      SET status = $2, projection = $3, run_revision = run_revision + 1,
+          updated_at = $4
+      WHERE run_ref = $1
+      RETURNING run_ref
+      """,
+      [model_turn.run_ref, status, body, timestamp],
+      :run_projection_state_conflict,
+      opts
+    )
+  end
+
+  defp model_turn_projection(model_turn) do
+    model_turn
+    |> Map.drop([:run_id, :updated_at])
+    |> Map.update(:cursor, nil, fn
+      nil -> nil
+      %ModelTurnCursor{} = cursor -> Map.from_struct(cursor)
+    end)
+    |> Map.new(fn {key, value} -> {Atom.to_string(key), value} end)
+  end
+
+  defp require_single_update!(sql, params, reason, opts) do
+    case SQL.query!(repo(opts), sql, params).rows do
+      [[_identity]] -> :ok
+      [] -> repo(opts).rollback(reason)
+    end
+  end
+
+  defp model_turn_start_matches?(projection, start) do
+    Enum.all?(Map.from_struct(start), fn {key, value} -> Map.fetch!(projection, key) == value end)
+  end
+
+  defp provider_event_identity_matches?(stored, event) do
+    keys = [
+      :event_ref,
+      :run_ref,
+      :turn_ref,
+      :provider_attempt_ref,
+      :sequence,
+      :event_type,
+      :stream,
+      :payload_ref,
+      :payload_digest
+    ]
+
+    Enum.all?(keys, &(Map.fetch!(stored, &1) == Map.fetch!(event, &1))) and
+      DateTime.compare(stored.observed_at, event.observed_at) == :eq
+  end
+
+  defp completion_matches?(projection, completion) do
+    Enum.all?(Map.from_struct(completion), fn {key, value} ->
+      Map.fetch!(projection, key) == value
+    end)
+  end
+
+  defp model_turn_cursor(_turn_ref, nil, 0), do: nil
+
+  defp model_turn_cursor(turn_ref, event_ref, sequence) do
+    ModelTurnCursor.new!(
+      turn_ref: turn_ref,
+      last_provider_event_ref: event_ref,
+      sequence: sequence
+    )
   end
 
   defp persist_acceptance(command, opts) do

@@ -18,6 +18,19 @@ defmodule Mezzanine.WorkflowRuntime.Store do
               {:ok, [Mezzanine.Runs.WorkflowHandoff.t()]} | {:error, term()}
   @callback complete_workflow_handoff(String.t(), String.t(), String.t() | nil, keyword()) ::
               {:ok, Mezzanine.Runs.WorkflowHandoff.t()} | {:error, term()}
+  @callback start_model_turn(Mezzanine.WorkflowRuntime.ModelTurnStart.t(), keyword()) ::
+              {:ok, map()} | {:error, term()}
+  @callback append_provider_event(Mezzanine.WorkflowRuntime.ProviderEvent.t(), keyword()) ::
+              {:ok, Mezzanine.WorkflowRuntime.ProviderEvent.t()} | {:error, term()}
+  @callback commit_provider_event(String.t(), keyword()) ::
+              {:ok, Mezzanine.WorkflowRuntime.ProviderEvent.t()} | {:error, term()}
+  @callback complete_model_turn(Mezzanine.WorkflowRuntime.ModelTurnCompletion.t(), keyword()) ::
+              {:ok, map()} | {:error, term()}
+  @callback fetch_model_turn(String.t(), keyword()) :: {:ok, map()} | {:error, term()}
+  @callback list_provider_events(String.t(), non_neg_integer(), keyword()) ::
+              {:ok, [Mezzanine.WorkflowRuntime.ProviderEvent.t()]} | {:error, term()}
+  @callback read_model_turn_cursor(String.t(), keyword()) ::
+              {:ok, Mezzanine.WorkflowRuntime.ModelTurnCursor.t()} | {:error, term()}
   @callback health(keyword()) :: {:ok, map()} | {:error, term()}
 
   def adapter do
@@ -43,6 +56,23 @@ defmodule Mezzanine.WorkflowRuntime.Store do
 
   def complete_workflow_handoff(outbox_ref, state, error_ref \\ nil, opts \\ []),
     do: adapter().complete_workflow_handoff(outbox_ref, state, error_ref, opts)
+
+  def start_model_turn(start, opts \\ []), do: adapter().start_model_turn(start, opts)
+  def append_provider_event(event, opts \\ []), do: adapter().append_provider_event(event, opts)
+
+  def commit_provider_event(event_ref, opts \\ []),
+    do: adapter().commit_provider_event(event_ref, opts)
+
+  def complete_model_turn(completion, opts \\ []),
+    do: adapter().complete_model_turn(completion, opts)
+
+  def fetch_model_turn(turn_ref, opts \\ []), do: adapter().fetch_model_turn(turn_ref, opts)
+
+  def list_provider_events(turn_ref, after_sequence \\ 0, opts \\ []),
+    do: adapter().list_provider_events(turn_ref, after_sequence, opts)
+
+  def read_model_turn_cursor(turn_ref, opts \\ []),
+    do: adapter().read_model_turn_cursor(turn_ref, opts)
 
   def health(opts \\ []), do: adapter().health(opts)
 end
