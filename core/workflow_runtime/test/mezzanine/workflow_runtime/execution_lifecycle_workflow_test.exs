@@ -790,6 +790,17 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     assert {:failure, %{reason: :approval_required, safe_action: :operator_review}} =
              ExecutionLifecycleWorkflow.turn_loop_decision(%{receipt_state: "approval_required"})
 
+    assert {:blocked, ambiguous} =
+             ExecutionLifecycleWorkflow.turn_loop_decision(%{
+               receipt_state: "outcome_unknown",
+               stalled?: true
+             })
+
+    assert ambiguous.reason == :ambiguous_effect_outcome
+    assert ambiguous.safe_action == :reconcile_effect_outcome
+    assert ambiguous.retry? == false
+    assert ambiguous.retry_posture == "reconciliation_only_effect_retry_prohibited"
+
     assert {:finalize, %{reason: :source_terminal, safe_action: :terminal_cleanup}} =
              ExecutionLifecycleWorkflow.turn_loop_decision(%{source_state: "terminal"})
 
@@ -862,6 +873,32 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflowTest do
     assert stalled.retry.attempt_ref == "attempt://neutral/stalled/2"
     assert stalled.retry.due_at == "2026-05-13T00:10:10Z"
     assert stalled.diagnostic.code == "runtime_stall_timeout"
+
+    assert {:blocked, ambiguous_effect} =
+             ExecutionLifecycleWorkflow.runtime_stall_decision(%{
+               now: now,
+               started_at: ~U[2026-05-13 00:01:00Z],
+               last_runtime_event_at: ~U[2026-05-13 00:04:30Z],
+               stall_timeout_ms: 300_000,
+               run_ref: "run://governed-effect/stalled",
+               session_ref: "session://governed-effect/stalled",
+               attempt_ref: "attempt://governed-effect/stalled/1",
+               effect_mode: "managed_account_local_effect",
+               effect_ref: "effect://governed-effect/stalled"
+             })
+
+    assert ambiguous_effect.reason == :ambiguous_effect_outcome
+    assert ambiguous_effect.safe_action == :reconcile_effect_outcome
+    assert ambiguous_effect.ambiguity_state == "outcome_unknown"
+    assert ambiguous_effect.effect_ref == "effect://governed-effect/stalled"
+    assert ambiguous_effect.cancel_lower_run? == true
+    assert ambiguous_effect.retry? == false
+    refute Map.has_key?(ambiguous_effect, :retry)
+
+    assert ambiguous_effect.retry_posture ==
+             "reconciliation_only_effect_retry_prohibited"
+
+    assert ambiguous_effect.diagnostic.code == "governed_effect_outcome_unknown"
   end
 
   test "source reconciliation decisions map source drift to workflow cancellation semantics" do

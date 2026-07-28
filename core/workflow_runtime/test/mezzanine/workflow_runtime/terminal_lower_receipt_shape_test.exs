@@ -65,6 +65,28 @@ defmodule Mezzanine.WorkflowRuntime.TerminalLowerReceiptShapeTest do
            ]
   end
 
+  test "ambiguous local effect receipts retain reconciliation posture" do
+    receipt =
+      TerminalLowerReceiptShape.from_workflow_signal(%{
+        signal_id: "receipt://p04/ambiguous",
+        receipt_state: "ambiguous",
+        lower_receipt_ref: "receipt://p04/ambiguous",
+        trace_id: "trace://p04",
+        correlation_id: "cause://p04",
+        idempotency_key: "p04-effect",
+        routing_facts: %{
+          ambiguity_state: "outcome_unknown",
+          continuation_ref: "continuation://p04/reconcile",
+          retry_posture: "reconciliation_only_effect_retry_prohibited"
+        }
+      })
+
+    assert receipt.ambiguity_state == "outcome_unknown"
+    assert receipt.continuation_ref == "continuation://p04/reconcile"
+    assert receipt.retry_posture == "reconciliation_only_effect_retry_prohibited"
+    assert TerminalLowerReceiptShape.missing_required_fields(receipt) == []
+  end
+
   defp live_signal_attrs do
     %{
       signal_id: "lower-receipt://deterministic/shared",
@@ -108,6 +130,9 @@ defmodule Mezzanine.WorkflowRuntime.TerminalLowerReceiptShapeTest do
   defp shared_routing_facts do
     %{
       provider_object_refs: ["provider-object://shared"],
+      ambiguity_state: "outcome_unknown",
+      continuation_ref: "continuation://shared/reconcile",
+      retry_posture: "reconciliation_only_effect_retry_prohibited",
       evidence_artifact_refs: [
         %{kind: "provider_evidence", content_ref: "artifact://github-pr/shared"}
       ],

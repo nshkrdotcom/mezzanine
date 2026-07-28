@@ -31,6 +31,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     "operator.replan",
     "operator.rework"
   ]
+  @ambiguous_effect_states ~w(ambiguous dispatch_unknown outcome_unknown receipt_missing)
   @normalizable_keys [
     :actor_ref,
     :allowed_operations,
@@ -64,6 +65,8 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     :credential,
     :evidence_artifact_refs,
     :evidence_ref,
+    :effect_mode,
+    :effect_ref,
     :execution_id,
     :expected_installation_revision,
     :failure,
@@ -697,6 +700,15 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
       Map.get(attrs, :receipt_state) == "approval_required" ->
         {:failure, %{reason: :approval_required, safe_action: :operator_review}}
 
+      Map.get(attrs, :receipt_state) in @ambiguous_effect_states ->
+        {:blocked,
+         %{
+           reason: :ambiguous_effect_outcome,
+           safe_action: :reconcile_effect_outcome,
+           retry?: false,
+           retry_posture: "reconciliation_only_effect_retry_prohibited"
+         }}
+
       max_turns_reached?(attrs) ->
         {:stop, %{reason: :max_turns_reached, safe_action: :finalize_or_review}}
 
@@ -712,7 +724,7 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
   end
 
   @doc "Deterministically maps runtime inactivity into a retry-safe stall decision."
-  @spec runtime_stall_decision(map() | keyword()) :: {:continue | :retry, map()}
+  @spec runtime_stall_decision(map() | keyword()) :: {:continue | :retry | :blocked, map()}
   def runtime_stall_decision(attrs) do
     attrs = normalize(attrs)
     timeout_ms = integer_value(Map.get(attrs, :stall_timeout_ms))
@@ -861,14 +873,25 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
         elapsed_ms = max(DateTime.diff(now, last_activity_at, :millisecond), 0)
 
         if elapsed_ms > timeout_ms do
-          {:retry,
-           stalled_runtime_fields(
-             attrs,
-             timeout_ms,
-             elapsed_ms,
-             last_activity_at,
-             activity_source
-           )}
+          if governed_local_effect?(attrs) do
+            {:blocked,
+             ambiguous_effect_stall_fields(
+               attrs,
+               timeout_ms,
+               elapsed_ms,
+               last_activity_at,
+               activity_source
+             )}
+          else
+            {:retry,
+             stalled_runtime_fields(
+               attrs,
+               timeout_ms,
+               elapsed_ms,
+               last_activity_at,
+               activity_source
+             )}
+          end
         else
           {:continue,
            attrs
@@ -911,15 +934,56 @@ defmodule Mezzanine.WorkflowRuntime.ExecutionLifecycleWorkflow do
     })
   end
 
+  defp ambiguous_effect_stall_fields(
+         attrs,
+         timeout_ms,
+         elapsed_ms,
+         last_activity_at,
+         activity_source
+       ) do
+    attrs
+    |> stall_common_fields(timeout_ms)
+    |> Map.merge(%{
+      reason: :ambiguous_effect_outcome,
+      safe_action: :reconcile_effect_outcome,
+      ambiguity_state: "outcome_unknown",
+      runtime_state: "stalled",
+      status_reason: "ambiguous_effect_outcome",
+      workflow_signal: "operator.cancel",
+      projection_mutation: "block_subject",
+      cancel_lower_run?: true,
+      cleanup_workspace?: false,
+      retry?: false,
+      retry_posture: "reconciliation_only_effect_retry_prohibited",
+      stalled?: true,
+      enabled?: true,
+      elapsed_ms: elapsed_ms,
+      last_activity_at: DateTime.to_iso8601(last_activity_at),
+      activity_source: activity_source,
+      diagnostic: %{
+        severity: :warning,
+        code: "governed_effect_outcome_unknown",
+        message: "governed local effect activity exceeded stall timeout; reconcile before retry"
+      }
+    })
+  end
+
   defp stall_common_fields(attrs, timeout_ms) do
     %{
       run_ref: Map.get(attrs, :run_ref),
       session_ref: Map.get(attrs, :session_ref),
       attempt_ref: Map.get(attrs, :attempt_ref),
+      effect_mode: Map.get(attrs, :effect_mode),
+      effect_ref: Map.get(attrs, :effect_ref),
       worker_ref: Map.get(attrs, :worker_ref),
       stall_timeout_ms: timeout_ms
     }
     |> Map.reject(fn {_key, value} -> is_nil(value) end)
+  end
+
+  defp governed_local_effect?(attrs) do
+    Map.get(attrs, :effect_mode) == "managed_account_local_effect" and
+      is_binary(Map.get(attrs, :effect_ref)) and Map.get(attrs, :effect_ref) != ""
   end
 
   defp stall_retry_fields(attrs) do

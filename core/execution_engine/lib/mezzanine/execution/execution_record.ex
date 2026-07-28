@@ -48,6 +48,7 @@ defmodule Mezzanine.Execution.ExecutionRecord do
     define(:record_completed, action: :record_completed)
     define(:record_failed_outcome, action: :record_failed_outcome)
     define(:record_cancelled_outcome, action: :record_cancelled_outcome)
+    define(:record_ambiguous_outcome, action: :record_ambiguous_outcome)
     define(:record_operator_cancelled, action: :record_operator_cancelled)
     define(:record_terminal_rejection, action: :record_terminal_rejection)
     define(:record_lookup_expired, action: :record_lookup_expired)
@@ -378,6 +379,63 @@ defmodule Mezzanine.Execution.ExecutionRecord do
                      receipt_id: Ash.Changeset.get_argument(changeset, :receipt_id),
                      normalized_outcome:
                        Ash.Changeset.get_argument(changeset, :normalized_outcome)
+                   }
+                 ) do
+            {:ok, execution}
+          end
+        end)
+      )
+    end
+
+    update :record_ambiguous_outcome do
+      accept([])
+      require_atomic?(false)
+
+      argument(:receipt_id, :string, allow_nil?: false)
+
+      argument(:ambiguity_state, :string, allow_nil?: false)
+
+      argument(:lower_receipt, :map, allow_nil?: false)
+      argument(:normalized_outcome, :map, allow_nil?: false)
+      argument(:artifact_refs, {:array, :string}, allow_nil?: false, default: [])
+      argument(:trace_id, :string, allow_nil?: false)
+      argument(:causation_id, :string, allow_nil?: false)
+      argument(:actor_ref, :map, allow_nil?: false)
+
+      change(fn changeset, _context ->
+        changeset
+        |> validate_ambiguity_state()
+        |> validate_payload_argument(:lower_receipt)
+        |> validate_payload_argument(:normalized_outcome, :last_dispatch_error_payload)
+      end)
+
+      change(optimistic_lock(:row_version))
+      change(set_attribute(:dispatch_state, :stalled))
+      change(set_attribute(:failure_kind, :infrastructure_error))
+      change(set_attribute(:lower_receipt, arg(:lower_receipt)))
+      change(set_attribute(:last_dispatch_error_kind, arg(:ambiguity_state)))
+      change(set_attribute(:last_dispatch_error_payload, arg(:normalized_outcome)))
+      change(set_attribute(:causation_id, arg(:causation_id)))
+      change(set_attribute(:next_dispatch_at, nil))
+      change(set_attribute(:terminal_rejection_reason, nil))
+
+      change(
+        after_action(fn changeset, execution, _context ->
+          with {:ok, _lineage} <-
+                 store_lineage_update(
+                   execution,
+                   artifact_refs: Ash.Changeset.get_argument(changeset, :artifact_refs)
+                 ),
+               {:ok, _fact} <-
+                 append_audit_fact(
+                   execution,
+                   Ash.Changeset.get_argument(changeset, :actor_ref),
+                   :execution_failed,
+                   %{
+                     classification: "ambiguous_outcome",
+                     receipt_id: Ash.Changeset.get_argument(changeset, :receipt_id),
+                     ambiguity_state: Ash.Changeset.get_argument(changeset, :ambiguity_state),
+                     retry_posture: "reconciliation_only_effect_retry_prohibited"
                    }
                  ) do
             {:ok, execution}
@@ -766,6 +824,22 @@ defmodule Mezzanine.Execution.ExecutionRecord do
 
   defp validate_payload_attributes(changeset, fields) do
     Enum.reduce(fields, changeset, &validate_payload_attribute(&2, &1))
+  end
+
+  defp validate_ambiguity_state(changeset) do
+    if Ash.Changeset.get_argument(changeset, :ambiguity_state) in [
+         "dispatch_unknown",
+         "outcome_unknown",
+         "receipt_missing"
+       ] do
+      changeset
+    else
+      Ash.Changeset.add_error(
+        changeset,
+        field: :ambiguity_state,
+        message: "is not a governed effect ambiguity state"
+      )
+    end
   end
 
   defp validate_payload_attribute(changeset, field) do

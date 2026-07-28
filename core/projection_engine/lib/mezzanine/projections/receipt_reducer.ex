@@ -24,6 +24,8 @@ defmodule Mezzanine.Projections.ReceiptReducer do
   @terminal_success_states ["completed", "success", "succeeded"]
   @terminal_cancel_states ["cancelled", "canceled"]
   @terminal_blocked_states ["input_required", "blocked"]
+  @ambiguity_states ["dispatch_unknown", "outcome_unknown", "receipt_missing"]
+  @terminal_ambiguous_states ["ambiguous" | @ambiguity_states]
   @terminal_failure_states ["failed", "failure", "approval_required", "semantic_failure"]
   @terminal_failed_or_blocked_states @terminal_blocked_states ++ @terminal_failure_states
   @decision_kind "operator_review_required"
@@ -177,6 +179,16 @@ defmodule Mezzanine.Projections.ReceiptReducer do
   end
 
   defp reduce_execution(execution, attrs, receipt_state)
+       when receipt_state in @terminal_ambiguous_states do
+    attrs =
+      attrs
+      |> execution_attrs()
+      |> Map.put(:ambiguity_state, ambiguity_state(attrs, receipt_state))
+
+    ExecutionRecord.record_ambiguous_outcome(execution, attrs)
+  end
+
+  defp reduce_execution(execution, attrs, receipt_state)
        when receipt_state in @terminal_failed_or_blocked_states do
     attrs =
       attrs
@@ -226,6 +238,14 @@ defmodule Mezzanine.Projections.ReceiptReducer do
        when receipt_state in @terminal_blocked_states do
     with {:ok, subject} <-
            block_subject(subject, attrs, value(attrs, :block_reason) || receipt_state) do
+      advance_subject(subject, attrs, "blocked")
+    end
+  end
+
+  defp reduce_subject(subject, attrs, receipt_state)
+       when receipt_state in @terminal_ambiguous_states do
+    with {:ok, subject} <-
+           block_subject(subject, attrs, "ambiguous_effect_outcome") do
       advance_subject(subject, attrs, "blocked")
     end
   end
@@ -282,6 +302,26 @@ defmodule Mezzanine.Projections.ReceiptReducer do
       end
     else
       {:ok, []}
+    end
+  end
+
+  defp reduce_decisions(subject, execution, attrs, receipt_state)
+       when receipt_state in @terminal_ambiguous_states do
+    attrs = %{
+      installation_id: subject.installation_id,
+      subject_id: subject.id,
+      execution_id: execution.id,
+      decision_kind: @decision_kind,
+      required_by: value(attrs, :review_required_by),
+      trace_id: required!(attrs, :trace_id),
+      causation_id: required!(attrs, :causation_id),
+      actor_ref: required!(attrs, :actor_ref)
+    }
+
+    case DecisionCommands.fetch_by_identity(attrs) do
+      {:ok, nil} -> create_pending_decision(attrs)
+      {:ok, decision} -> {:ok, [decision]}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -443,6 +483,9 @@ defmodule Mezzanine.Projections.ReceiptReducer do
       lower_receipt_ref: value(attrs, :lower_receipt_ref),
       run_id: map_value(lower_receipt, :run_id),
       attempt_id: map_value(lower_receipt, :attempt_id),
+      ambiguity_state: map_value(lower_receipt, :ambiguity_state),
+      continuation_ref: map_value(lower_receipt, :continuation_ref),
+      retry_posture: map_value(lower_receipt, :retry_posture),
       metadata: lower_receipt_metadata(lower_receipt)
     }
   end
@@ -1017,6 +1060,9 @@ defmodule Mezzanine.Projections.ReceiptReducer do
   defp operation_status(receipt_state) when receipt_state in @terminal_blocked_states,
     do: :blocked
 
+  defp operation_status(receipt_state) when receipt_state in @terminal_ambiguous_states,
+    do: :blocked
+
   defp operation_status(_receipt_state), do: :terminal_failure
 
   defp terminal_started_at(attrs) do
@@ -1277,6 +1323,7 @@ defmodule Mezzanine.Projections.ReceiptReducer do
   defp sort_key(subject, execution) do
     case {subject.lifecycle_state, execution.dispatch_state} do
       {"awaiting_review", _state} -> 10
+      {_state, :stalled} -> 15
       {_state, :failed} -> 20
       {_state, :cancelled} -> 30
       {_state, :completed} -> 40
@@ -1299,6 +1346,16 @@ defmodule Mezzanine.Projections.ReceiptReducer do
   defp failure_kind("blocked"), do: :semantic_failure
   defp failure_kind("semantic_failure"), do: :semantic_failure
   defp failure_kind(_state), do: :fatal_error
+
+  defp ambiguity_state(_attrs, receipt_state) when receipt_state in @ambiguity_states,
+    do: receipt_state
+
+  defp ambiguity_state(attrs, _receipt_state) do
+    value(attrs, :ambiguity_state) ||
+      attrs
+      |> value(:lower_receipt)
+      |> map_value(:ambiguity_state)
+  end
 
   defp fetch_execution(execution_id) do
     case Ash.get(ExecutionRecord, execution_id) do

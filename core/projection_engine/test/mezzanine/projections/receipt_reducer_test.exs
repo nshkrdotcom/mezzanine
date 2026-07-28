@@ -899,6 +899,7 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
       {"failed", :failed, "failed", nil},
       {"approval_required", :failed, "failed", nil},
       {"input_required", :failed, "blocked", "input_required"},
+      {"outcome_unknown", :stalled, "blocked", "ambiguous_effect_outcome"},
       {"cancelled", :cancelled, "cancelled", nil}
     ]
 
@@ -920,6 +921,12 @@ defmodule Mezzanine.Projections.ReceiptReducerTest do
         assert reduced.subject.block_reason == expected_block
       else
         assert is_nil(reduced.subject.block_reason)
+      end
+
+      if receipt_state == "outcome_unknown" do
+        assert reduced.execution.last_dispatch_error_kind == "outcome_unknown"
+        assert reduced.execution.next_dispatch_at == nil
+        assert [%{lifecycle_state: "pending"}] = reduced.decisions
       end
     end
   end
