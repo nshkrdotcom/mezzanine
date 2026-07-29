@@ -14,7 +14,7 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
     ProviderEvent
   }
 
-  @migration_version 20_260_720_233_000
+  @migration_version 20_260_728_130_000
   @default_namespace "nshkr-production"
   @default_task_queue "nshkr.mezzanine.agent-run.v1"
   @default_workflow_type "mezzanine.agent-run.v1"
@@ -31,7 +31,9 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
       :cursors,
       :workflow_outbox,
       :model_turn_lineage,
-      :provider_events
+      :provider_events,
+      :recovery_control,
+      :control_signal_outbox
     ])
   end
 
@@ -94,7 +96,13 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
   def fetch_projection(run_ref, opts) when is_binary(run_ref) do
     sql = """
     SELECT run_ref, tenant_id, subject_ref, latest_turn_ref, latest_event_ref,
-           status, event_sequence, run_revision, projection, updated_at
+           status, event_sequence, run_revision, projection, updated_at,
+           control_state, control_generation, control_attempt_sequence,
+           control_sequence, control_row_version, current_attempt_ref,
+           generation_ref, external_operation_ref, deadline_at, fence_epoch,
+           reconciliation_attempts, reconcile_owner, reconcile_lease_expires_at,
+           next_reconcile_at, terminal_receipt_ref, last_control_error,
+           control_updated_at
     FROM agent_run_projections
     WHERE run_ref = $1
     """
@@ -1032,8 +1040,8 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
       INSERT INTO agent_run_projections
         (run_id, run_ref, tenant_id, work_object_id, subject_ref, latest_turn_ref,
          latest_event_ref, status, event_sequence, run_revision, projection,
-         inserted_at, updated_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,'accepted',1,1,$8,$9,$9)
+         deadline_at, control_updated_at, inserted_at, updated_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,'accepted',1,1,$8,$9,$10,$10,$10)
       """,
       [
         dump_uuid(started.run.id),
@@ -1044,6 +1052,7 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
         command.first_turn.turn_ref,
         facts.event.event_ref,
         projection,
+        command.deadline_at,
         facts.now
       ]
     )
@@ -1201,7 +1210,24 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
          sequence,
          revision,
          body,
-         updated_at
+         updated_at,
+         control_state,
+         control_generation,
+         control_attempt_sequence,
+         control_sequence,
+         control_row_version,
+         current_attempt_ref,
+         generation_ref,
+         external_operation_ref,
+         deadline_at,
+         fence_epoch,
+         reconciliation_attempts,
+         reconcile_owner,
+         reconcile_lease_expires_at,
+         next_reconcile_at,
+         terminal_receipt_ref,
+         last_control_error,
+         control_updated_at
        ]) do
     %{
       run_ref: run_ref,
@@ -1213,7 +1239,27 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
       event_sequence: sequence,
       run_revision: revision,
       projection: body,
-      updated_at: as_datetime(updated_at)
+      updated_at: as_datetime(updated_at),
+      control: %{
+        state: control_state,
+        generation: control_generation,
+        attempt_sequence: control_attempt_sequence,
+        sequence: control_sequence,
+        row_version: control_row_version,
+        attempt_ref: current_attempt_ref,
+        generation_ref: generation_ref,
+        external_operation_ref: external_operation_ref,
+        deadline_at: if(deadline_at, do: as_datetime(deadline_at)),
+        fence_epoch: fence_epoch,
+        reconciliation_attempts: reconciliation_attempts,
+        reconcile_owner: reconcile_owner,
+        reconcile_lease_expires_at:
+          if(reconcile_lease_expires_at, do: as_datetime(reconcile_lease_expires_at)),
+        next_reconcile_at: if(next_reconcile_at, do: as_datetime(next_reconcile_at)),
+        terminal_receipt_ref: terminal_receipt_ref,
+        last_error: last_control_error,
+        updated_at: if(control_updated_at, do: as_datetime(control_updated_at))
+      }
     }
   end
 

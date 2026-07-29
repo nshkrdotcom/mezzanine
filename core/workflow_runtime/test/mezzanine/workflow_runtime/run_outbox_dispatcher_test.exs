@@ -111,7 +111,7 @@ defmodule Mezzanine.WorkflowRuntime.RunOutboxDispatcherTest do
   end
 
   test "production composition starts the Temporal worker before the outbox dispatcher" do
-    [worker_spec, dispatcher_spec] =
+    [worker_spec, dispatcher_spec, recovery_signal_dispatcher_spec] =
       RuntimeApplication.production_child_specs(
         temporal: [
           enabled?: true,
@@ -120,12 +120,16 @@ defmodule Mezzanine.WorkflowRuntime.RunOutboxDispatcherTest do
           address: "127.0.0.1:7233",
           namespace: "nshkr-production"
         ],
-        outbox_dispatcher: [schedule?: false]
+        outbox_dispatcher: [schedule?: false],
+        recovery_signal_dispatcher: [schedule?: false]
       )
 
     assert worker_spec.id == Mezzanine.WorkflowRuntime.TestTemporal.NshkrAgentRun
 
     assert dispatcher_spec ==
              {RunOutboxDispatcher, [schedule?: false]}
+
+    assert recovery_signal_dispatcher_spec ==
+             {Mezzanine.WorkflowRuntime.RecoverySignalDispatcher, [schedule?: false]}
   end
 end

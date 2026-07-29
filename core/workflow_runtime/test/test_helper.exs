@@ -9,3 +9,10 @@ Ecto.Migrator.run(
   :up,
   all: true
 )
+
+Ecto.Migrator.run(
+  Mezzanine.OpsDomain.Repo,
+  Application.app_dir(:mezzanine_workflow_runtime, "priv/repo/migrations"),
+  :up,
+  all: true
+)

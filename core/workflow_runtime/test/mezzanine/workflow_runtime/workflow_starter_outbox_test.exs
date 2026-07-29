@@ -56,9 +56,6 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowStarterOutboxTest do
       send(self(), {:record_start_outcome, original_row, outcome_row})
       :ok
     end
-
-    @impl true
-    def record_signal_outcome(_original_row, _outcome_row), do: {:error, :not_used}
   end
 
   defmodule FailingOutboxStore do
@@ -66,9 +63,6 @@ defmodule Mezzanine.WorkflowRuntime.WorkflowStarterOutboxTest do
 
     @impl true
     def record_start_outcome(_original_row, _outcome_row), do: {:error, :store_down}
-
-    @impl true
-    def record_signal_outcome(_original_row, _outcome_row), do: {:error, :not_used}
   end
 
   setup do

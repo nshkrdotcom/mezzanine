@@ -297,13 +297,6 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
       classification: :valid_outbox
     },
     %{
-      role: :workflow_signal_outbox,
-      queue: :workflow_signal_outbox,
-      worker: Mezzanine.WorkflowRuntime.WorkflowSignalOutboxWorker,
-      outcome_persistence: Mezzanine.WorkflowRuntime.OutboxPersistence,
-      classification: :valid_outbox
-    },
-    %{
       role: :claim_check_gc,
       queue: :claim_check_gc,
       worker: Mezzanine.WorkflowRuntime.ClaimCheckGcWorker,
@@ -317,12 +310,6 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
       queue: :workflow_start_outbox,
       classification: :valid_outbox,
       reason: "post-commit workflow start dispatcher, not workflow business state"
-    },
-    %{
-      worker: Mezzanine.WorkflowRuntime.WorkflowSignalOutboxWorker,
-      queue: :workflow_signal_outbox,
-      classification: :valid_outbox,
-      reason: "post-commit workflow signal dispatcher, not workflow business state"
     },
     %{
       worker: Mezzanine.WorkflowRuntime.ClaimCheckGcWorker,
@@ -379,7 +366,7 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
       retired_queue: :cancel,
       classification: :retired_temporal_saga,
       replacement_milestone: 31,
-      replacement: "Mezzanine.WorkflowRuntime.OperatorSignalControl operator.cancel",
+      replacement: "Mezzanine.WorkflowRuntime.RecoveryControl durable operator.cancel outbox",
       envelope: "Mezzanine.OperatorWorkflowSignal.v1"
     }
   ]
@@ -445,6 +432,11 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
       signal_name: "operator.retry",
       signal_version: "operator-retry.v1",
       handler: :handle_operator_retry
+    },
+    %{
+      signal_name: "operator.supersede",
+      signal_version: "operator-supersede.v1",
+      handler: :handle_operator_supersede
     },
     %{
       signal_name: "operator.replan",
@@ -630,7 +622,9 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
         "core/workflow_runtime/lib/mezzanine/workflow_runtime/workflow_starter_outbox.ex",
         "core/workflow_runtime/lib/mezzanine/workflow_runtime/execution_lifecycle_workflow.ex",
         "core/workflow_runtime/lib/mezzanine/workflow_runtime/agent_loop.ex",
-        "core/workflow_runtime/lib/mezzanine/workflow_runtime/operator_signal_control.ex",
+        "core/workflow_runtime/lib/mezzanine/workflow_runtime/control_signal_protocol.ex",
+        "core/workflow_runtime/lib/mezzanine/workflow_runtime/recovery_control.ex",
+        "core/workflow_runtime/lib/mezzanine/workflow_runtime/recovery_signal_dispatcher.ex",
         "core/workflow_runtime/test/mezzanine/workflow_runtime/temporal_supervisor_test.exs",
         "core/workflow_runtime/test/mezzanine/workflow_runtime/temporalex_adapter_test.exs",
         "core/workflow_runtime/test/mezzanine/workflow_runtime/operator_signal_control_test.exs",
@@ -647,7 +641,7 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
       integration_mode() == :direct_temporalex_beam_workers,
       length(workflow_types()) == 7,
       length(activity_registrations()) >= 6,
-      length(operator_signal_registry()) == 6,
+      length(operator_signal_registry()) == 7,
       decision_timer_policy().timer_semantics == :temporal_workflow_timer,
       runtime_adapter() == Mezzanine.WorkflowRuntime.TemporalexAdapter,
       temporal_supervision().supervisor == Mezzanine.WorkflowRuntime.TemporalSupervisor,
@@ -946,13 +940,13 @@ defmodule Mezzanine.Workflows.DecisionReview do
 
   use Temporalex.Workflow, task_queue: "mezzanine.review"
 
-  alias Mezzanine.WorkflowRuntime.OperatorSignalControl
+  alias Mezzanine.WorkflowRuntime.ControlSignalProtocol
   alias Mezzanine.Workflows.Support
 
   @impl Temporalex.Workflow
   def run(input) do
-    with {:ok, result} <- OperatorSignalControl.run_decision_review(input) do
-      set_state(Map.merge(OperatorSignalControl.initial_ordering_state(), result))
+    with {:ok, result} <- ControlSignalProtocol.run_decision_review(input) do
+      set_state(Map.merge(ControlSignalProtocol.initial_workflow_state(), result))
       {:ok, result}
     end
   end
@@ -964,8 +958,8 @@ defmodule Mezzanine.Workflows.DecisionReview do
       |> Support.normalize_payload()
       |> Map.put(:signal_name, signal_name)
 
-    case OperatorSignalControl.apply_ordered_signal(
-           state || OperatorSignalControl.initial_ordering_state(),
+    case ControlSignalProtocol.reduce_signal(
+           state || ControlSignalProtocol.initial_workflow_state(),
            attrs
          ) do
       {:ok, next_state} -> {:noreply, next_state}

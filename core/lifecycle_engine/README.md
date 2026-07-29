@@ -25,8 +25,7 @@ This package now owns the first real Stage `9.1` lifecycle slice:
   stale callers receive attempted/current revision diagnostics and no lower
   submission
 - old receipt, reconcile, join, and lifecycle continuation Oban saga workers
-  are blocked by `Mezzanine.WorkflowRuntime.FinalTemporalCutover` source scans;
-  no retired worker tombstone modules remain in runtime source
+  remain retired; the durable recovery-control row and outbox own restart work
 
 Primary modules:
 

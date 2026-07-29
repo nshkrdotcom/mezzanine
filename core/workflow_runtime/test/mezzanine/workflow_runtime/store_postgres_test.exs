@@ -104,6 +104,9 @@ defmodule Mezzanine.WorkflowRuntime.StorePostgresTest do
     assert projection.latest_turn_ref == command.first_turn.turn_ref
     assert projection.latest_event_ref == acceptance.event_ref
     assert projection.event_sequence == 1
+    assert projection.control.state == "accepted"
+    assert projection.control.row_version == 1
+    assert DateTime.compare(projection.control.deadline_at, command.deadline_at) == :eq
     assert %DateTime{} = projection.updated_at
 
     assert {:ok, cursor} = Postgres.read_cursor(command.run_ref, repo: Repo)
@@ -617,7 +620,8 @@ defmodule Mezzanine.WorkflowRuntime.StorePostgresTest do
       TRUNCATE programs, policy_bundles, work_classes, work_objects, work_plans,
                control_sessions, run_series, runs, agent_run_commands, agent_turns,
                agent_run_events, agent_run_projections, agent_run_cursors,
-               agent_workflow_outbox CASCADE
+               agent_workflow_outbox, agent_run_control_commands,
+               agent_run_control_events, agent_control_signal_outbox CASCADE
       """,
       []
     )

@@ -46,11 +46,13 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecisionTest do
       Code.eval_file(Path.join(@mezzanine_root, "build_support/dependency_sources.config.exs"))
 
     assert %{
-             path: @temporalex_root,
+             path: temporalex_path,
              github: %{repo: "nshkrdotcom/temporalex", branch: "main"},
              default_order: [:path, :github, :hex],
              publish_order: [:hex]
            } = dependency_sources[:deps][:temporalex]
+
+    assert Path.basename(temporalex_path) == "temporalex"
   end
 
   test "registers final workflow and activity modules through temporalex" do
@@ -233,13 +235,7 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecisionTest do
                  &1.classification == :valid_outbox)
            )
 
-    assert Enum.any?(
-             retained,
-             &(&1.role == :workflow_signal_outbox and
-                 &1.worker == Mezzanine.WorkflowRuntime.WorkflowSignalOutboxWorker and
-                 &1.outcome_persistence == Mezzanine.WorkflowRuntime.OutboxPersistence and
-                 &1.classification == :valid_outbox)
-           )
+    refute Enum.any?(retained, &(&1.role == :workflow_signal_outbox))
 
     assert Enum.any?(
              retained,
@@ -296,6 +292,14 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecisionTest do
     assert Enum.any?(
              registry,
              &match?(%{signal_name: "operator.retry", signal_version: "operator-retry.v1"}, &1)
+           )
+
+    assert Enum.any?(
+             registry,
+             &match?(
+               %{signal_name: "operator.supersede", signal_version: "operator-supersede.v1"},
+               &1
+             )
            )
 
     assert Enum.any?(

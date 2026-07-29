@@ -1,6 +1,6 @@
 defmodule Mezzanine.WorkflowRuntime.OutboxPersistence do
   @moduledoc """
-  Persistence boundary for retained workflow start/signal outboxes.
+  Persistence boundary for the retained workflow-start outbox.
 
   Oban workers remain local post-commit dispatchers. After a Temporal runtime
   outcome is known, the worker must record the new outbox row state before it
@@ -8,18 +8,11 @@ defmodule Mezzanine.WorkflowRuntime.OutboxPersistence do
   """
 
   @callback record_start_outcome(map(), map()) :: :ok | {:error, term()}
-  @callback record_signal_outcome(map(), map()) :: :ok | {:error, term()}
 
   @doc "Records the final workflow-start dispatcher row state."
   @spec record_start_outcome(map(), map()) :: :ok | {:error, term()}
   def record_start_outcome(original_row, outcome_row) do
     store().record_start_outcome(original_row, outcome_row)
-  end
-
-  @doc "Records the final workflow-signal dispatcher row state."
-  @spec record_signal_outcome(map(), map()) :: :ok | {:error, term()}
-  def record_signal_outcome(original_row, outcome_row) do
-    store().record_signal_outcome(original_row, outcome_row)
   end
 
   defp store do
@@ -78,26 +71,11 @@ defmodule Mezzanine.WorkflowRuntime.OutboxPersistence.SQL do
   WHERE outbox_id = $1
   """
 
-  @signal_outcome_sql """
-  UPDATE workflow_signal_outbox
-  SET
-    dispatch_state = $2,
-    workflow_effect_state = $3,
-    projection_state = $4,
-    dispatch_attempt_count = $5,
-    last_error_class = $6,
-    row_version = row_version + 1,
-    updated_at = now()
-  WHERE outbox_id = $1
-  """
   @normalizable_keys [
-    :dispatch_attempt_count,
     :dispatch_state,
     :last_error_class,
     :outbox_id,
-    :projection_state,
     :retry_count,
-    :workflow_effect_state,
     :workflow_run_id
   ]
   @key_lookup Map.new(@normalizable_keys, &{Atom.to_string(&1), &1})
@@ -116,23 +94,6 @@ defmodule Mezzanine.WorkflowRuntime.OutboxPersistence.SQL do
     ]
 
     query(@start_outcome_sql, params)
-  end
-
-  @impl true
-  def record_signal_outcome(original_row, outcome_row) do
-    original_row = normalize(original_row)
-    outcome_row = normalize(outcome_row)
-
-    params = [
-      fetch!(original_row, :outbox_id),
-      fetch!(outcome_row, :dispatch_state),
-      Map.get(outcome_row, :workflow_effect_state, "pending_ack"),
-      Map.get(outcome_row, :projection_state, "pending"),
-      Map.get(outcome_row, :dispatch_attempt_count, 0),
-      normalize_error_class(Map.get(outcome_row, :last_error_class, "none"))
-    ]
-
-    query(@signal_outcome_sql, params)
   end
 
   defp query(sql, params) do

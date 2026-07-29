@@ -8,10 +8,14 @@ defmodule Mezzanine.WorkflowRuntime.Application do
   @doc "Production children selected explicitly by the NSHKR composition root."
   def production_child_specs(opts) do
     temporal = Keyword.fetch!(opts, :temporal)
-    dispatcher = Keyword.fetch!(opts, :outbox_dispatcher)
+    run_dispatcher = Keyword.fetch!(opts, :outbox_dispatcher)
+    recovery_signal_dispatcher = Keyword.fetch!(opts, :recovery_signal_dispatcher)
 
     TemporalSupervisor.child_specs(temporal) ++
-      [{Mezzanine.WorkflowRuntime.RunOutboxDispatcher, dispatcher}]
+      [
+        {Mezzanine.WorkflowRuntime.RunOutboxDispatcher, run_dispatcher},
+        {Mezzanine.WorkflowRuntime.RecoverySignalDispatcher, recovery_signal_dispatcher}
+      ]
   end
 
   @impl true
