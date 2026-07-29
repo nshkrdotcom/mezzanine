@@ -149,6 +149,32 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
   end
 
   @impl true
+  def list_turns(run_ref, opts) when is_binary(run_ref) do
+    case SQL.query(
+           repo(opts),
+           """
+           SELECT turns.turn_ref, projections.run_ref, turns.tenant_id,
+                  turns.subject_ref, turns.input_artifact_ref, turns.payload_digest,
+                  turns.sequence, turns.status, turns.provider_attempt_ref,
+                  turns.row_version, turns.updated_at
+           FROM agent_turns AS turns
+           JOIN agent_run_projections AS projections ON projections.run_id = turns.run_id
+           WHERE projections.run_ref = $1
+           ORDER BY turns.sequence ASC
+           """,
+           [run_ref]
+         ) do
+      {:ok, %{rows: rows}} ->
+        rows
+        |> Enum.map(&turn_projection_from_row/1)
+        |> collect_results()
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  @impl true
   def list_events(run_ref, cursor, opts) when is_binary(run_ref) do
     with {:ok, sequence} <- cursor_sequence(run_ref, cursor),
          {:ok, %{rows: rows}} <-
@@ -1854,6 +1880,34 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
         updated_at: if(control_updated_at, do: as_datetime(control_updated_at))
       }
     }
+  end
+
+  defp turn_projection_from_row([
+         turn_ref,
+         run_ref,
+         tenant_ref,
+         subject_ref,
+         input_artifact_ref,
+         payload_digest,
+         sequence,
+         status,
+         provider_attempt_ref,
+         row_version,
+         updated_at
+       ]) do
+    Mezzanine.Runs.TurnProjection.new(%{
+      turn_ref: turn_ref,
+      run_ref: run_ref,
+      tenant_ref: tenant_ref,
+      subject_ref: subject_ref,
+      input_artifact_ref: input_artifact_ref,
+      payload_digest: payload_digest,
+      sequence: sequence,
+      status: status,
+      provider_attempt_ref: provider_attempt_ref,
+      row_version: row_version,
+      updated_at: as_datetime(updated_at)
+    })
   end
 
   defp cursor_sequence(_run_ref, nil), do: {:ok, 0}

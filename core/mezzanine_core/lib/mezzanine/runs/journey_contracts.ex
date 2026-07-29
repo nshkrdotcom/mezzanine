@@ -517,3 +517,89 @@ defmodule Mezzanine.Runs.Acceptance do
   defp bang({:ok, value}), do: value
   defp bang({:error, error}), do: raise(ArgumentError, Atom.to_string(error))
 end
+
+defmodule Mezzanine.Runs.TurnProjection do
+  @moduledoc """
+  Ordered durable turn state projected from the canonical run aggregate.
+
+  The projection contains refs and digests only. Turn input content remains in
+  its immutable artifact owner and is never copied into the run store.
+  """
+
+  alias Mezzanine.Runs.ContractSupport, as: S
+
+  @states ~w(accepted running completed failed cancelled)
+  @fields [
+    :turn_ref,
+    :run_ref,
+    :tenant_ref,
+    :subject_ref,
+    :input_artifact_ref,
+    :payload_digest,
+    :sequence,
+    :status,
+    :provider_attempt_ref,
+    :row_version,
+    :updated_at
+  ]
+  @required @fields -- [:provider_attempt_ref]
+  @enforce_keys @required
+  defstruct @fields
+
+  @type t :: %__MODULE__{}
+
+  def new(%__MODULE__{} = projection), do: validate(projection)
+
+  def new(attrs) when is_map(attrs) or is_list(attrs) do
+    attrs = S.attrs(attrs)
+
+    with :ok <-
+           S.validate_fields(attrs, @fields, @required, :invalid_turn_projection) do
+      %__MODULE__{
+        turn_ref: S.value(attrs, :turn_ref),
+        run_ref: S.value(attrs, :run_ref),
+        tenant_ref: S.value(attrs, :tenant_ref),
+        subject_ref: S.value(attrs, :subject_ref),
+        input_artifact_ref: S.value(attrs, :input_artifact_ref),
+        payload_digest: S.value(attrs, :payload_digest),
+        sequence: S.value(attrs, :sequence),
+        status: normalize_string(S.value(attrs, :status)),
+        provider_attempt_ref: S.value(attrs, :provider_attempt_ref),
+        row_version: S.value(attrs, :row_version),
+        updated_at: S.value(attrs, :updated_at)
+      }
+      |> validate()
+    end
+  end
+
+  def new(_attrs), do: {:error, :invalid_turn_projection}
+  def new!(attrs), do: bang(new(attrs))
+  def dump(%__MODULE__{} = projection), do: S.dump(projection)
+
+  defp validate(%__MODULE__{} = projection) do
+    refs = [
+      projection.turn_ref,
+      projection.run_ref,
+      projection.tenant_ref,
+      projection.subject_ref,
+      projection.input_artifact_ref
+    ]
+
+    provider_ref? =
+      is_nil(projection.provider_attempt_ref) or S.safe_ref?(projection.provider_attempt_ref)
+
+    if Enum.all?(refs, &S.safe_ref?/1) and S.hash?(projection.payload_digest) and
+         S.positive_integer?(projection.sequence) and projection.status in @states and
+         provider_ref? and S.positive_integer?(projection.row_version) and
+         S.datetime?(projection.updated_at) do
+      {:ok, projection}
+    else
+      {:error, :invalid_turn_projection}
+    end
+  end
+
+  defp normalize_string(value) when is_atom(value), do: Atom.to_string(value)
+  defp normalize_string(value), do: value
+  defp bang({:ok, value}), do: value
+  defp bang({:error, error}), do: raise(ArgumentError, Atom.to_string(error))
+end

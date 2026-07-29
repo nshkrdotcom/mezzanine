@@ -109,6 +109,14 @@ defmodule Mezzanine.WorkflowRuntime.StorePostgresTest do
     assert DateTime.compare(projection.control.deadline_at, command.deadline_at) == :eq
     assert %DateTime{} = projection.updated_at
 
+    assert {:ok, [turn]} = Postgres.list_turns(command.run_ref, repo: Repo)
+    assert turn.turn_ref == command.first_turn.turn_ref
+    assert turn.run_ref == command.run_ref
+    assert turn.tenant_ref == command.tenant_ref
+    assert turn.input_artifact_ref == command.first_turn.input_artifact_ref
+    assert turn.sequence == 1
+    assert turn.status == "accepted"
+
     assert {:ok, cursor} = Postgres.read_cursor(command.run_ref, repo: Repo)
     assert cursor == acceptance.cursor
 
@@ -188,6 +196,16 @@ defmodule Mezzanine.WorkflowRuntime.StorePostgresTest do
     assert projection.latest_event_ref == accepted.event_ref
     assert projection.event_sequence == 2
     assert projection.run_revision == 2
+
+    assert {:ok, [first_turn, follow_up_turn]} =
+             Postgres.list_turns(command.run_ref, repo: Repo)
+
+    assert first_turn.sequence == 1
+    assert first_turn.turn_ref == command.first_turn.turn_ref
+    assert follow_up_turn.sequence == 2
+    assert follow_up_turn.turn_ref == turn_command.turn_ref
+    assert follow_up_turn.input_artifact_ref == turn_command.payload_ref
+    assert follow_up_turn.status == "accepted"
 
     assert {:ok, [event]} = Postgres.list_events(command.run_ref, first.cursor, repo: Repo)
     assert event.event_type == "turn_accepted"

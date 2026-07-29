@@ -14,6 +14,8 @@ defmodule Mezzanine.WorkflowRuntime.Store do
   @callback fetch_turn_acceptance(String.t(), keyword()) ::
               {:ok, Mezzanine.Runs.TurnAcceptance.t()} | {:error, term()}
   @callback fetch_projection(String.t(), keyword()) :: {:ok, map()} | {:error, term()}
+  @callback list_turns(String.t(), keyword()) ::
+              {:ok, [Mezzanine.Runs.TurnProjection.t()]} | {:error, term()}
   @callback list_events(String.t(), Mezzanine.Runs.EventCursor.t() | nil, keyword()) ::
               {:ok, [Mezzanine.Runs.Event.t()]} | {:error, term()}
   @callback read_cursor(String.t(), keyword()) ::
@@ -54,6 +56,7 @@ defmodule Mezzanine.WorkflowRuntime.Store do
     do: adapter().fetch_turn_acceptance(command_ref, opts)
 
   def fetch_projection(run_ref, opts \\ []), do: adapter().fetch_projection(run_ref, opts)
+  def list_turns(run_ref, opts \\ []), do: adapter().list_turns(run_ref, opts)
 
   def list_events(run_ref, cursor \\ nil, opts \\ []),
     do: adapter().list_events(run_ref, cursor, opts)

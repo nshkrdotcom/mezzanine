@@ -1,7 +1,7 @@
 defmodule Mezzanine.Runs.TurnContractsTest do
   use ExUnit.Case, async: true
 
-  alias Mezzanine.Runs.{TurnAcceptance, TurnCommand}
+  alias Mezzanine.Runs.{TurnAcceptance, TurnCommand, TurnProjection}
 
   @hash "sha256:" <> String.duplicate("a", 64)
 
@@ -44,6 +44,33 @@ defmodule Mezzanine.Runs.TurnContractsTest do
              attrs
              |> put_in([:cursor, :run_ref], "run://mezzanine/other")
              |> TurnAcceptance.new()
+  end
+
+  test "validates refs-only ordered turn projection state" do
+    now = DateTime.utc_now()
+
+    attrs = %{
+      turn_ref: "turn://mezzanine/one/2",
+      run_ref: "run://mezzanine/one",
+      tenant_ref: "tenant://default",
+      subject_ref: "subject://synapse/one",
+      input_artifact_ref: "artifact://synapse/one/turn-2",
+      payload_digest: @hash,
+      sequence: 2,
+      status: :accepted,
+      provider_attempt_ref: nil,
+      row_version: 1,
+      updated_at: now
+    }
+
+    assert {:ok, projection} = TurnProjection.new(attrs)
+    assert projection.status == "accepted"
+    assert projection.updated_at == now
+
+    assert {:error, :invalid_turn_projection} =
+             attrs
+             |> Map.put(:input_artifact_ref, nil)
+             |> TurnProjection.new()
   end
 
   defp command_attrs do
