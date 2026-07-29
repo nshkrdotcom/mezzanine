@@ -9,6 +9,7 @@ defmodule Mezzanine.WorkflowRuntime.RecoveryControl do
   """
 
   alias Ecto.Adapters.SQL
+  alias Mezzanine.Runs.Event
   alias Mezzanine.WorkflowRuntime.ControlSignalProtocol
 
   @migration_version 20_260_728_130_000
@@ -521,6 +522,7 @@ defmodule Mezzanine.WorkflowRuntime.RecoveryControl do
 
         persist_projection!(row, updated, opts)
         persist_event!(row, updated, attrs, action, event_ref, request_digest, now, opts)
+        persist_timeline_event!(row, context, attrs, event_ref, request_digest, now, opts)
         if outbox, do: persist_outbox!(outbox, now, opts)
 
         result =
@@ -990,6 +992,101 @@ defmodule Mezzanine.WorkflowRuntime.RecoveryControl do
         now
       ]
     )
+  end
+
+  defp persist_timeline_event!(row, context, attrs, control_event_ref, digest, now, opts) do
+    case SQL.query!(
+           repo(opts),
+           """
+           SELECT run_id, latest_event_ref, event_sequence, projection
+           FROM agent_run_projections
+           WHERE run_ref = $1
+           FOR UPDATE
+           """,
+           [row.run_ref]
+         ).rows do
+      [[run_id, latest_event_ref, event_sequence, projection]] ->
+        event =
+          Event.new!(
+            event_ref:
+              "event://mezzanine/control-timeline/#{digest_token({control_event_ref, digest})}",
+            run_ref: row.run_ref,
+            tenant_ref: row.tenant_ref,
+            event_type: "run_control_updated",
+            event_version: 1,
+            sequence: event_sequence + 1,
+            command_ref: attrs.command_ref,
+            causation_ref: latest_event_ref,
+            correlation_ref: context.correlation_ref,
+            payload_ref: Map.get(attrs, :payload_ref, control_event_ref),
+            payload_digest: digest,
+            recorded_at: now,
+            row_version: 1
+          )
+
+        SQL.query!(
+          repo(opts),
+          """
+          INSERT INTO agent_run_events
+            (event_ref, run_id, run_ref, tenant_id, event_type, event_version, sequence,
+             command_ref, causation_ref, correlation_ref, payload_ref, payload_digest,
+             recorded_at, row_version)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+          """,
+          [
+            event.event_ref,
+            run_id,
+            event.run_ref,
+            event.tenant_ref,
+            event.event_type,
+            event.event_version,
+            event.sequence,
+            event.command_ref,
+            event.causation_ref,
+            event.correlation_ref,
+            event.payload_ref,
+            event.payload_digest,
+            event.recorded_at,
+            event.row_version
+          ]
+        )
+
+        require_timeline_update!(
+          """
+          UPDATE agent_run_cursors
+          SET last_event_ref = $2, sequence = $3, row_version = row_version + 1,
+              updated_at = $4
+          WHERE run_ref = $1 AND last_event_ref = $5 AND sequence = $6
+          RETURNING run_ref
+          """,
+          [row.run_ref, event.event_ref, event.sequence, now, latest_event_ref, event_sequence],
+          :run_cursor_conflict,
+          opts
+        )
+
+        require_timeline_update!(
+          """
+          UPDATE agent_run_projections
+          SET latest_event_ref = $2, event_sequence = $3,
+              projection = $4, run_revision = run_revision + 1, updated_at = $5
+          WHERE run_ref = $1 AND event_sequence = $6
+          RETURNING run_ref
+          """,
+          [row.run_ref, event.event_ref, event.sequence, projection, now, event_sequence],
+          :run_projection_state_conflict,
+          opts
+        )
+
+      [] ->
+        repo(opts).rollback(:run_projection_not_found)
+    end
+  end
+
+  defp require_timeline_update!(sql, params, reason, opts) do
+    case SQL.query!(repo(opts), sql, params).rows do
+      [[_identity]] -> :ok
+      [] -> repo(opts).rollback(reason)
+    end
   end
 
   defp persist_outbox!(outbox, now, opts) do

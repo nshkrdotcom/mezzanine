@@ -5,7 +5,7 @@ defmodule Mezzanine.WorkflowRuntime.StorePostgresTest do
   alias Ecto.Adapters.SQL.Sandbox
   alias Mezzanine.OpsDomain.Repo
   alias Mezzanine.Programs.{PolicyBundle, Program}
-  alias Mezzanine.Runs.AcceptCommand
+  alias Mezzanine.Runs.{AcceptCommand, TurnCommand}
   alias Mezzanine.Work.WorkClass
   alias Mezzanine.WorkflowRuntime.{ModelTurnCompletion, ModelTurnStart, ProviderEvent}
   alias Mezzanine.WorkflowRuntime.Store.Postgres
@@ -159,6 +159,92 @@ defmodule Mezzanine.WorkflowRuntime.StorePostgresTest do
              SQL.query!(Repo, "SELECT count(*) FROM runs WHERE tenant_id = $1", [
                lineage.tenant_id
              ])
+  end
+
+  test "atomically accepts a follow-up turn, advances the run cursor, and queues its signal", %{
+    lineage: lineage
+  } do
+    command = command("follow-up", lineage)
+    assert {:ok, first} = Postgres.accept_run(command, repo: Repo)
+    turn_command = turn_command(command, first, "follow-up")
+
+    assert {:ok, accepted} = Postgres.submit_turn(turn_command, repo: Repo)
+    assert accepted.state == "accepted"
+    refute accepted.idempotent_replay?
+    assert accepted.cursor.sequence == 2
+    assert accepted.run_revision == 2
+    assert {:ok, replayed} = Postgres.submit_turn(turn_command, repo: Repo)
+    assert replayed.idempotent_replay?
+    assert %{replayed | idempotent_replay?: false} == accepted
+
+    assert {:ok, persisted} =
+             Postgres.fetch_turn_acceptance(turn_command.command_ref, repo: Repo)
+
+    refute persisted.idempotent_replay?
+    assert persisted == accepted
+
+    assert {:ok, projection} = Postgres.fetch_projection(command.run_ref, repo: Repo)
+    assert projection.latest_turn_ref == turn_command.turn_ref
+    assert projection.latest_event_ref == accepted.event_ref
+    assert projection.event_sequence == 2
+    assert projection.run_revision == 2
+
+    assert {:ok, [event]} = Postgres.list_events(command.run_ref, first.cursor, repo: Repo)
+    assert event.event_type == "turn_accepted"
+    assert event.payload_ref == turn_command.payload_ref
+
+    assert %{rows: [[2]]} =
+             SQL.query!(Repo, "SELECT count(*) FROM agent_turns WHERE run_id = $1", [
+               run_id_for(command)
+             ])
+
+    assert %{rows: [["input", "queued", signal_payload]]} =
+             SQL.query!(
+               Repo,
+               """
+               SELECT signal_name, state, signal_payload
+               FROM agent_control_signal_outbox
+               WHERE outbox_ref = $1
+               """,
+               [accepted.signal_outbox_ref]
+             )
+
+    assert signal_payload["workflow_id"]
+    assert signal_payload["signal_payload_ref"] == turn_command.payload_ref
+
+    conflict = %{turn_command | request_hash: "sha256:" <> String.duplicate("b", 64)}
+    assert {:error, :idempotency_conflict} = Postgres.submit_turn(conflict, repo: Repo)
+  end
+
+  test "rejects stale, cross-tenant, and terminal follow-up turns", %{lineage: lineage} do
+    command = command("follow-up-negative", lineage)
+    assert {:ok, first} = Postgres.accept_run(command, repo: Repo)
+
+    stale = %{turn_command(command, first, "stale") | cursor_ref: "event://stale"}
+    assert {:error, :stale_turn_cursor} = Postgres.submit_turn(stale, repo: Repo)
+
+    cross_tenant = %{
+      turn_command(command, first, "cross-tenant")
+      | tenant_ref: "tenant://mezzanine/other"
+    }
+
+    assert {:error, :unauthorized_turn_submission} =
+             Postgres.submit_turn(cross_tenant, repo: Repo)
+
+    SQL.query!(
+      Repo,
+      """
+      UPDATE agent_run_projections
+      SET status = 'completed', control_state = 'completed'
+      WHERE run_ref = $1
+      """,
+      [command.run_ref]
+    )
+
+    assert {:error, :run_terminal} =
+             command
+             |> turn_command(first, "terminal")
+             |> Postgres.submit_turn(repo: Repo)
   end
 
   test "rolls back every acceptance row when canonical lineage is invalid", %{lineage: lineage} do
@@ -343,6 +429,20 @@ defmodule Mezzanine.WorkflowRuntime.StorePostgresTest do
     assert {:ok, projection} = Postgres.fetch_projection(command.run_ref, repo: Repo)
     assert projection.status == "completed"
     assert projection.projection["model_turn"]["state"] == "completed"
+    assert projection.event_sequence == 4
+
+    assert {:ok, timeline} = Postgres.list_events(command.run_ref, nil, repo: Repo)
+
+    assert Enum.map(timeline, & &1.event_type) == [
+             "run_accepted",
+             "provider_event_committed",
+             "provider_event_committed",
+             "turn_completed"
+           ]
+
+    assert {:ok, run_cursor} = Postgres.read_cursor(command.run_ref, repo: Repo)
+    assert run_cursor.sequence == 4
+    assert run_cursor.last_event_ref == List.last(timeline).event_ref
 
     assert %{rows: [["completed", "completed"]]} =
              SQL.query!(
@@ -571,6 +671,36 @@ defmodule Mezzanine.WorkflowRuntime.StorePostgresTest do
     })
   end
 
+  defp turn_command(command, first_acceptance, suffix) do
+    TurnCommand.new!(%{
+      command_ref: "command://mezzanine/turn/#{suffix}",
+      idempotency_key: "synapse:turn:#{suffix}",
+      request_hash: @hash,
+      tenant_ref: command.tenant_ref,
+      actor_ref: command.actor_ref,
+      authority_ref: "authority://mezzanine/agent-intake",
+      run_ref: command.run_ref,
+      turn_ref: "turn://synapse/#{suffix}/2",
+      trace_ref: command.trace_ref,
+      correlation_ref: command.correlation_ref,
+      kind: :user_input,
+      payload_ref: "payload://synapse/turn/#{suffix}",
+      payload_digest: @hash,
+      cursor_ref: first_acceptance.event_ref,
+      pending_ref: nil,
+      params: %{input_summary: "Continue"}
+    })
+  end
+
+  defp run_id_for(command) do
+    %{rows: [[run_id]]} =
+      SQL.query!(Repo, "SELECT run_id FROM agent_run_commands WHERE command_ref = $1", [
+        command.command_ref
+      ])
+
+    run_id
+  end
+
   defp provider_event(command, suffix, sequence, event_type) do
     ProviderEvent.new!(%{
       event_ref: "event://jido/gemini/#{suffix}/#{sequence}",
@@ -618,7 +748,8 @@ defmodule Mezzanine.WorkflowRuntime.StorePostgresTest do
       Repo,
       """
       TRUNCATE programs, policy_bundles, work_classes, work_objects, work_plans,
-               control_sessions, run_series, runs, agent_run_commands, agent_turns,
+               control_sessions, run_series, runs, agent_run_commands, agent_turn_commands,
+               agent_turns,
                agent_run_events, agent_run_projections, agent_run_cursors,
                agent_workflow_outbox, agent_run_control_commands,
                agent_run_control_events, agent_control_signal_outbox CASCADE

@@ -4,7 +4,17 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
   @behaviour Mezzanine.WorkflowRuntime.Store
 
   alias Ecto.Adapters.SQL
-  alias Mezzanine.Runs.{AcceptCommand, Acceptance, Event, EventCursor, WorkflowHandoff}
+
+  alias Mezzanine.Runs.{
+    AcceptCommand,
+    Acceptance,
+    Event,
+    EventCursor,
+    TurnAcceptance,
+    TurnCommand,
+    WorkflowHandoff
+  }
+
   alias Mezzanine.WorkControl
 
   alias Mezzanine.WorkflowRuntime.{
@@ -14,7 +24,7 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
     ProviderEvent
   }
 
-  @migration_version 20_260_728_130_000
+  @migration_version 20_260_728_160_000
   @default_namespace "nshkr-production"
   @default_task_queue "nshkr.mezzanine.agent-run.v1"
   @default_workflow_type "mezzanine.agent-run.v1"
@@ -26,6 +36,7 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
       :commands,
       :runs,
       :turns,
+      :turn_commands,
       :events,
       :projections,
       :cursors,
@@ -87,6 +98,29 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
 
     case SQL.query(repo(opts), sql, [command_ref]) do
       {:ok, %{rows: [[attrs]]}} -> Acceptance.new(attrs)
+      {:ok, %{rows: []}} -> {:error, :not_found}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @impl true
+  def submit_turn(command, opts) do
+    with {:ok, command} <- TurnCommand.new(command) do
+      case transact(repo(opts), fn -> persist_turn_submission(command, opts) end) do
+        {:ok, acceptance} -> {:ok, acceptance}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @impl true
+  def fetch_turn_acceptance(command_ref, opts) when is_binary(command_ref) do
+    case SQL.query(
+           repo(opts),
+           "SELECT acceptance FROM agent_turn_commands WHERE command_ref = $1",
+           [command_ref]
+         ) do
+      {:ok, %{rows: [[attrs]]}} -> TurnAcceptance.new(attrs)
       {:ok, %{rows: []}} -> {:error, :not_found}
       {:error, reason} -> {:error, reason}
     end
@@ -511,7 +545,7 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
           )
 
           updated = model_turn_for_ref_locked!(event.turn_ref, opts)
-          write_model_run_projection!(updated, "model_running", timestamp, opts)
+          append_provider_timeline_event!(updated, event, timestamp, opts)
 
           case provider_event_for_ref_locked(event_ref, opts) do
             {:ok, committed_event} -> committed_event
@@ -603,7 +637,7 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
         )
 
         completed = model_turn_for_ref_locked!(completion.turn_ref, opts)
-        write_model_run_projection!(completed, "completed", timestamp, opts)
+        append_turn_completed_timeline_event!(completed, completion, timestamp, opts)
         completed
     end
   end
@@ -796,6 +830,157 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
     )
   end
 
+  defp append_provider_timeline_event!(model_turn, provider_event, timestamp, opts) do
+    append_model_timeline_event!(
+      model_turn,
+      %{
+        event_ref:
+          "event://mezzanine/provider/#{digest_token({provider_event.event_ref, "committed"})}",
+        event_type: "provider_event_committed",
+        command_ref: provider_event.event_ref,
+        correlation_ref: provider_event.provider_attempt_ref,
+        payload_ref: provider_event.payload_ref,
+        payload_digest: provider_event.payload_digest,
+        status: "model_running"
+      },
+      timestamp,
+      opts
+    )
+  end
+
+  defp append_turn_completed_timeline_event!(model_turn, completion, timestamp, opts) do
+    append_model_timeline_event!(
+      model_turn,
+      %{
+        event_ref: "event://mezzanine/turn/#{digest_token({completion.turn_ref, "completed"})}",
+        event_type: "turn_completed",
+        command_ref: completion.provider_attempt_ref,
+        correlation_ref: completion.provider_attempt_ref,
+        payload_ref: completion.reply_artifact_ref,
+        payload_digest: completion.continuation_context_digest,
+        status: "completed"
+      },
+      timestamp,
+      opts
+    )
+  end
+
+  defp append_model_timeline_event!(model_turn, attrs, timestamp, opts) do
+    row = canonical_event_row!(model_turn.run_ref, opts)
+    event_sequence = row.event_sequence + 1
+
+    event =
+      Event.new!(
+        event_ref: attrs.event_ref,
+        run_ref: model_turn.run_ref,
+        tenant_ref: model_turn.tenant_ref,
+        event_type: attrs.event_type,
+        event_version: 1,
+        sequence: event_sequence,
+        command_ref: attrs.command_ref,
+        causation_ref: row.latest_event_ref,
+        correlation_ref: attrs.correlation_ref,
+        payload_ref: attrs.payload_ref,
+        payload_digest: attrs.payload_digest,
+        recorded_at: timestamp,
+        row_version: 1
+      )
+
+    SQL.query!(
+      repo(opts),
+      """
+      INSERT INTO agent_run_events
+        (event_ref, run_id, run_ref, tenant_id, event_type, event_version, sequence,
+         command_ref, causation_ref, correlation_ref, payload_ref, payload_digest,
+         recorded_at, row_version)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+      """,
+      [
+        event.event_ref,
+        row.run_id,
+        event.run_ref,
+        event.tenant_ref,
+        event.event_type,
+        event.event_version,
+        event.sequence,
+        event.command_ref,
+        event.causation_ref,
+        event.correlation_ref,
+        event.payload_ref,
+        event.payload_digest,
+        event.recorded_at,
+        event.row_version
+      ]
+    )
+
+    require_single_update!(
+      """
+      UPDATE agent_run_cursors
+      SET last_event_ref = $2, sequence = $3, row_version = row_version + 1,
+          updated_at = $4
+      WHERE run_ref = $1 AND last_event_ref = $5 AND sequence = $6
+      RETURNING run_ref
+      """,
+      [
+        model_turn.run_ref,
+        event.event_ref,
+        event.sequence,
+        timestamp,
+        row.latest_event_ref,
+        row.event_sequence
+      ],
+      :run_cursor_conflict,
+      opts
+    )
+
+    body = Map.put(row.projection, "model_turn", model_turn_projection(model_turn))
+
+    require_single_update!(
+      """
+      UPDATE agent_run_projections
+      SET latest_event_ref = $2, event_sequence = $3, status = $4,
+          projection = $5, run_revision = run_revision + 1, updated_at = $6
+      WHERE run_ref = $1 AND event_sequence = $7
+      RETURNING run_ref
+      """,
+      [
+        model_turn.run_ref,
+        event.event_ref,
+        event.sequence,
+        attrs.status,
+        body,
+        timestamp,
+        row.event_sequence
+      ],
+      :run_projection_state_conflict,
+      opts
+    )
+  end
+
+  defp canonical_event_row!(run_ref, opts) do
+    case SQL.query!(
+           repo(opts),
+           """
+           SELECT run_id, latest_event_ref, event_sequence, projection
+           FROM agent_run_projections
+           WHERE run_ref = $1
+           FOR UPDATE
+           """,
+           [run_ref]
+         ).rows do
+      [[run_id, latest_event_ref, event_sequence, projection]] ->
+        %{
+          run_id: run_id,
+          latest_event_ref: latest_event_ref,
+          event_sequence: event_sequence,
+          projection: projection
+        }
+
+      [] ->
+        repo(opts).rollback(:run_projection_not_found)
+    end
+  end
+
   defp model_turn_projection(model_turn) do
     model_turn
     |> Map.drop([:run_id, :updated_at])
@@ -849,6 +1034,414 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
       sequence: sequence
     )
   end
+
+  defp persist_turn_submission(command, opts) do
+    row = turn_run_row!(command, opts)
+
+    case existing_turn_acceptance(command, opts) do
+      {:ok, acceptance} ->
+        acceptance
+
+      :missing ->
+        validate_new_turn!(command, row, opts)
+
+        case insert_turn_command(command, row, opts) do
+          :inserted ->
+            facts = turn_submission_facts(command, row, opts)
+            insert_follow_up_turn!(command, row, facts, opts)
+            insert_follow_up_event!(row, facts, opts)
+            update_turn_cursor!(command, row, facts, opts)
+            update_turn_projection!(command, row, facts, opts)
+            insert_turn_signal_outbox!(command, row, facts, opts)
+            complete_turn_command!(command, facts, opts)
+            facts.acceptance
+
+          :duplicate ->
+            case existing_turn_acceptance(command, opts) do
+              {:ok, acceptance} -> acceptance
+              :missing -> repo(opts).rollback(:idempotency_record_missing)
+            end
+        end
+    end
+  end
+
+  defp turn_run_row!(command, opts) do
+    case SQL.query!(
+           repo(opts),
+           """
+           SELECT projection.run_id, projection.tenant_id, projection.subject_ref,
+                  projection.latest_turn_ref, projection.latest_event_ref,
+                  projection.event_sequence, projection.run_revision,
+                  projection.status, projection.control_state, projection.projection,
+                  handoff.workflow_ref
+           FROM agent_run_projections AS projection
+           JOIN agent_workflow_outbox AS handoff ON handoff.run_id = projection.run_id
+           WHERE projection.run_ref = $1
+           ORDER BY handoff.inserted_at
+           LIMIT 1
+           FOR UPDATE OF projection
+           """,
+           [command.run_ref]
+         ).rows do
+      [
+        [
+          run_id,
+          tenant_ref,
+          subject_ref,
+          latest_turn_ref,
+          latest_event_ref,
+          event_sequence,
+          run_revision,
+          status,
+          control_state,
+          projection,
+          workflow_ref
+        ]
+      ] ->
+        row = %{
+          run_id: run_id,
+          tenant_ref: tenant_ref,
+          subject_ref: subject_ref,
+          latest_turn_ref: latest_turn_ref,
+          latest_event_ref: latest_event_ref,
+          event_sequence: event_sequence,
+          run_revision: run_revision,
+          status: status,
+          control_state: control_state,
+          projection: projection,
+          workflow_ref: workflow_ref
+        }
+
+        ensure_turn_tenant!(command, row, opts)
+
+      [] ->
+        repo(opts).rollback(:run_not_found)
+    end
+  end
+
+  defp ensure_turn_tenant!(command, row, opts) do
+    if row.tenant_ref == command.tenant_ref do
+      row
+    else
+      repo(opts).rollback(:unauthorized_turn_submission)
+    end
+  end
+
+  defp validate_new_turn!(command, row, opts) do
+    cond do
+      row.status in ~w(completed failed cancelled) or
+          row.control_state in ~w(completed failed cancelled cancel_requested) ->
+        repo(opts).rollback(:run_terminal)
+
+      is_binary(command.cursor_ref) and command.cursor_ref != row.latest_event_ref ->
+        repo(opts).rollback(:stale_turn_cursor)
+
+      true ->
+        row
+    end
+  end
+
+  defp insert_turn_command(command, row, opts) do
+    case SQL.query!(
+           repo(opts),
+           """
+           INSERT INTO agent_turn_commands
+             (command_ref, run_id, run_ref, tenant_id, idempotency_key, request_hash,
+              turn_kind, state, acceptance, row_version, inserted_at, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',$8,1,$9,$9)
+           ON CONFLICT (run_ref, idempotency_key) DO NOTHING
+           RETURNING command_ref
+           """,
+           [
+             command.command_ref,
+             row.run_id,
+             command.run_ref,
+             command.tenant_ref,
+             command.idempotency_key,
+             command.request_hash,
+             Atom.to_string(command.kind),
+             %{},
+             now(opts)
+           ]
+         ).rows do
+      [[_command_ref]] -> :inserted
+      [] -> :duplicate
+    end
+  end
+
+  defp existing_turn_acceptance(command, opts) do
+    case SQL.query!(
+           repo(opts),
+           """
+           SELECT request_hash, acceptance
+           FROM agent_turn_commands
+           WHERE run_ref = $1 AND idempotency_key = $2
+           FOR UPDATE
+           """,
+           [command.run_ref, command.idempotency_key]
+         ).rows do
+      [[stored_hash, acceptance]] when stored_hash == command.request_hash ->
+        case TurnAcceptance.new(acceptance) do
+          {:ok, value} -> {:ok, %{value | idempotent_replay?: true}}
+          {:error, reason} -> repo(opts).rollback({:corrupt_turn_acceptance, reason})
+        end
+
+      [[_stored_hash, _acceptance]] ->
+        repo(opts).rollback(:idempotency_conflict)
+
+      [] ->
+        :missing
+    end
+  end
+
+  defp turn_submission_facts(command, row, opts) do
+    token = digest_token({command.run_ref, command.idempotency_key})
+    event_sequence = row.event_sequence + 1
+    run_revision = row.run_revision + 1
+    turn_sequence = next_turn_sequence!(row.run_id, opts)
+    event_ref = "event://mezzanine/#{token}/turn-accepted"
+    signal_outbox_ref = "outbox://mezzanine/turn/#{token}"
+    signal_id = "signal://mezzanine/turn/#{token}"
+    timestamp = now(opts)
+
+    event =
+      Event.new!(
+        event_ref: event_ref,
+        run_ref: command.run_ref,
+        tenant_ref: command.tenant_ref,
+        event_type: "turn_accepted",
+        event_version: 1,
+        sequence: event_sequence,
+        command_ref: command.command_ref,
+        causation_ref: row.latest_event_ref,
+        correlation_ref: command.correlation_ref,
+        payload_ref: command.payload_ref,
+        payload_digest: command.payload_digest,
+        recorded_at: timestamp,
+        row_version: 1
+      )
+
+    acceptance =
+      TurnAcceptance.new!(
+        command_ref: command.command_ref,
+        run_ref: command.run_ref,
+        turn_ref: command.turn_ref,
+        event_ref: event_ref,
+        signal_outbox_ref: signal_outbox_ref,
+        cursor: %{
+          run_ref: command.run_ref,
+          last_event_ref: event_ref,
+          sequence: event_sequence
+        },
+        run_revision: run_revision,
+        state: "accepted",
+        idempotent_replay?: false
+      )
+
+    %{
+      acceptance: acceptance,
+      event: event,
+      turn_sequence: turn_sequence,
+      signal_outbox_ref: signal_outbox_ref,
+      signal_id: signal_id,
+      signal_name: turn_signal_name(command.kind),
+      signal_version: turn_signal_version(command.kind),
+      now: timestamp
+    }
+  end
+
+  defp next_turn_sequence!(run_id, opts) do
+    case SQL.query!(
+           repo(opts),
+           "SELECT COALESCE(MAX(sequence), 0) + 1 FROM agent_turns WHERE run_id = $1",
+           [run_id]
+         ).rows do
+      [[sequence]] when is_integer(sequence) and sequence > 1 -> sequence
+      _other -> repo(opts).rollback(:turn_sequence_unavailable)
+    end
+  end
+
+  defp insert_follow_up_turn!(command, row, facts, opts) do
+    SQL.query!(
+      repo(opts),
+      """
+      INSERT INTO agent_turns
+        (turn_ref, run_id, tenant_id, subject_ref, input_artifact_ref, payload_digest,
+         idempotency_key, sequence, status, provider_attempt_ref, row_version,
+         inserted_at, updated_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'accepted',NULL,1,$9,$9)
+      """,
+      [
+        command.turn_ref,
+        row.run_id,
+        command.tenant_ref,
+        row.subject_ref,
+        command.payload_ref,
+        command.payload_digest,
+        command.idempotency_key,
+        facts.turn_sequence,
+        facts.now
+      ]
+    )
+  end
+
+  defp insert_follow_up_event!(row, facts, opts) do
+    event = facts.event
+
+    SQL.query!(
+      repo(opts),
+      """
+      INSERT INTO agent_run_events
+        (event_ref, run_id, run_ref, tenant_id, event_type, event_version, sequence,
+         command_ref, causation_ref, correlation_ref, payload_ref, payload_digest,
+         recorded_at, row_version)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+      """,
+      [
+        event.event_ref,
+        row.run_id,
+        event.run_ref,
+        event.tenant_ref,
+        event.event_type,
+        event.event_version,
+        event.sequence,
+        event.command_ref,
+        event.causation_ref,
+        event.correlation_ref,
+        event.payload_ref,
+        event.payload_digest,
+        event.recorded_at,
+        event.row_version
+      ]
+    )
+  end
+
+  defp update_turn_cursor!(command, row, facts, opts) do
+    require_single_update!(
+      """
+      UPDATE agent_run_cursors
+      SET last_event_ref = $2, sequence = $3, row_version = row_version + 1,
+          updated_at = $4
+      WHERE run_ref = $1 AND last_event_ref = $5 AND sequence = $6
+      RETURNING run_ref
+      """,
+      [
+        command.run_ref,
+        facts.event.event_ref,
+        facts.event.sequence,
+        facts.now,
+        row.latest_event_ref,
+        row.event_sequence
+      ],
+      :run_cursor_conflict,
+      opts
+    )
+  end
+
+  defp update_turn_projection!(command, row, facts, opts) do
+    submission = %{
+      "command_ref" => command.command_ref,
+      "turn_ref" => command.turn_ref,
+      "event_ref" => facts.event.event_ref,
+      "kind" => Atom.to_string(command.kind),
+      "payload_ref" => command.payload_ref,
+      "signal_outbox_ref" => facts.signal_outbox_ref
+    }
+
+    projection = Map.put(row.projection, "turn_submission", submission)
+
+    require_single_update!(
+      """
+      UPDATE agent_run_projections
+      SET latest_turn_ref = $2, latest_event_ref = $3, event_sequence = $4,
+          run_revision = $5, projection = $6, updated_at = $7
+      WHERE run_ref = $1 AND event_sequence = $8 AND run_revision = $9
+      RETURNING run_ref
+      """,
+      [
+        command.run_ref,
+        command.turn_ref,
+        facts.event.event_ref,
+        facts.event.sequence,
+        facts.acceptance.run_revision,
+        projection,
+        facts.now,
+        row.event_sequence,
+        row.run_revision
+      ],
+      :run_projection_state_conflict,
+      opts
+    )
+  end
+
+  defp insert_turn_signal_outbox!(command, row, facts, opts) do
+    signal_payload = %{
+      "workflow_id" => row.workflow_ref,
+      "signal_id" => facts.signal_id,
+      "signal_name" => facts.signal_name,
+      "signal_version" => facts.signal_version,
+      "signal_payload_ref" => command.payload_ref,
+      "signal_payload_hash" => command.payload_digest,
+      "idempotency_key" => command.idempotency_key,
+      "tenant_ref" => command.tenant_ref,
+      "resource_ref" => command.run_ref,
+      "authority_packet_ref" => command.authority_ref,
+      "permission_decision_ref" => command.pending_ref,
+      "trace_id" => command.trace_ref,
+      "correlation_id" => command.correlation_ref,
+      "release_manifest_ref" => "release://nshkr/mezzanine-agent-intake-v1"
+    }
+
+    SQL.query!(
+      repo(opts),
+      """
+      INSERT INTO agent_control_signal_outbox
+        (outbox_ref, run_ref, tenant_id, command_ref, workflow_ref, signal_id,
+         signal_name, signal_version, signal_payload, payload_digest, authority_ref,
+         idempotency_key, state, attempt, available_at, dispatch_fence, row_version,
+         inserted_at, updated_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'queued',0,$13,0,1,$13,$13)
+      """,
+      [
+        facts.signal_outbox_ref,
+        command.run_ref,
+        command.tenant_ref,
+        command.command_ref,
+        row.workflow_ref,
+        facts.signal_id,
+        facts.signal_name,
+        facts.signal_version,
+        signal_payload,
+        command.payload_digest,
+        command.authority_ref,
+        command.idempotency_key,
+        facts.now
+      ]
+    )
+  end
+
+  defp complete_turn_command!(command, facts, opts) do
+    require_single_update!(
+      """
+      UPDATE agent_turn_commands
+      SET state = 'accepted', acceptance = $2, row_version = row_version + 1,
+          updated_at = $3
+      WHERE command_ref = $1 AND state = 'pending'
+      RETURNING command_ref
+      """,
+      [command.command_ref, TurnAcceptance.dump(facts.acceptance), facts.now],
+      :turn_command_state_conflict,
+      opts
+    )
+  end
+
+  defp turn_signal_name(:user_input), do: "input"
+  defp turn_signal_name(:approval), do: "approve"
+  defp turn_signal_name(:denial), do: "deny"
+  defp turn_signal_name(:replan_hint), do: "replan"
+  defp turn_signal_name(:rework_hint), do: "rework"
+
+  defp turn_signal_version(kind), do: "agent-#{turn_signal_name(kind)}.v1"
 
   defp persist_acceptance(command, opts) do
     case insert_command(command, opts) do

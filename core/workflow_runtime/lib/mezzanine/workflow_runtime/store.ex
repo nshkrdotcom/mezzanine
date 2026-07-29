@@ -9,6 +9,10 @@ defmodule Mezzanine.WorkflowRuntime.Store do
               {:ok, Mezzanine.Runs.Acceptance.t()} | {:error, term()}
   @callback fetch_acceptance(String.t(), keyword()) ::
               {:ok, Mezzanine.Runs.Acceptance.t()} | {:error, term()}
+  @callback submit_turn(Mezzanine.Runs.TurnCommand.t(), keyword()) ::
+              {:ok, Mezzanine.Runs.TurnAcceptance.t()} | {:error, term()}
+  @callback fetch_turn_acceptance(String.t(), keyword()) ::
+              {:ok, Mezzanine.Runs.TurnAcceptance.t()} | {:error, term()}
   @callback fetch_projection(String.t(), keyword()) :: {:ok, map()} | {:error, term()}
   @callback list_events(String.t(), Mezzanine.Runs.EventCursor.t() | nil, keyword()) ::
               {:ok, [Mezzanine.Runs.Event.t()]} | {:error, term()}
@@ -44,6 +48,11 @@ defmodule Mezzanine.WorkflowRuntime.Store do
   def preflight(opts \\ []), do: adapter().preflight(opts)
   def accept_run(command, opts \\ []), do: adapter().accept_run(command, opts)
   def fetch_acceptance(command_ref, opts \\ []), do: adapter().fetch_acceptance(command_ref, opts)
+  def submit_turn(command, opts \\ []), do: adapter().submit_turn(command, opts)
+
+  def fetch_turn_acceptance(command_ref, opts \\ []),
+    do: adapter().fetch_turn_acceptance(command_ref, opts)
+
   def fetch_projection(run_ref, opts \\ []), do: adapter().fetch_projection(run_ref, opts)
 
   def list_events(run_ref, cursor \\ nil, opts \\ []),

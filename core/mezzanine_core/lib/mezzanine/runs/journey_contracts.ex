@@ -207,7 +207,15 @@ defmodule Mezzanine.Runs.Event do
 
   alias Mezzanine.Runs.ContractSupport, as: S
 
-  @event_types ~w(run_accepted turn_accepted workflow_start_requested workflow_started)
+  @event_types ~w(
+    run_accepted
+    turn_accepted
+    provider_event_committed
+    turn_completed
+    run_control_updated
+    workflow_start_requested
+    workflow_started
+  )
   @fields [
     :event_ref,
     :run_ref,
