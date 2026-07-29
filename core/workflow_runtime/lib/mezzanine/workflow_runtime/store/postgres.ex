@@ -129,7 +129,7 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
   @impl true
   def fetch_projection(run_ref, opts) when is_binary(run_ref) do
     sql = """
-    SELECT run_ref, tenant_id, subject_ref, latest_turn_ref, latest_event_ref,
+    SELECT run_ref, tenant_id, subject_ref, work_object_id, latest_turn_ref, latest_event_ref,
            status, event_sequence, run_revision, projection, updated_at,
            control_state, control_generation, control_attempt_sequence,
            control_sequence, control_row_version, current_attempt_ref,
@@ -145,6 +145,37 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
       {:ok, %{rows: [row]}} -> {:ok, projection(row)}
       {:ok, %{rows: []}} -> {:error, :not_found}
       {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @impl true
+  def list_projections(tenant_ref, opts) when is_binary(tenant_ref) do
+    limit = Keyword.get(opts, :limit, 500)
+
+    if is_integer(limit) and limit > 0 and limit <= 500 do
+      case SQL.query(
+             repo(opts),
+             """
+             SELECT run_ref, tenant_id, subject_ref, work_object_id, latest_turn_ref,
+                    latest_event_ref, status, event_sequence, run_revision, projection,
+                    updated_at, control_state, control_generation, control_attempt_sequence,
+                    control_sequence, control_row_version, current_attempt_ref,
+                    generation_ref, external_operation_ref, deadline_at, fence_epoch,
+                    reconciliation_attempts, reconcile_owner, reconcile_lease_expires_at,
+                    next_reconcile_at, terminal_receipt_ref, last_control_error,
+                    control_updated_at
+             FROM agent_run_projections
+             WHERE tenant_id = $1
+             ORDER BY updated_at DESC, run_ref ASC
+             LIMIT $2
+             """,
+             [tenant_ref, limit]
+           ) do
+        {:ok, %{rows: rows}} -> {:ok, Enum.map(rows, &projection/1)}
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      {:error, :invalid_projection_limit}
     end
   end
 
@@ -1823,6 +1854,7 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
          run_ref,
          tenant_ref,
          subject_ref,
+         work_object_id,
          turn_ref,
          event_ref,
          status,
@@ -1852,6 +1884,7 @@ defmodule Mezzanine.WorkflowRuntime.Store.Postgres do
       run_ref: run_ref,
       tenant_ref: tenant_ref,
       subject_ref: subject_ref,
+      work_object_id: Ecto.UUID.load!(work_object_id),
       latest_turn_ref: turn_ref,
       latest_event_ref: event_ref,
       status: status,

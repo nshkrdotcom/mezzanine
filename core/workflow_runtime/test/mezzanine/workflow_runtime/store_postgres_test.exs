@@ -109,6 +109,18 @@ defmodule Mezzanine.WorkflowRuntime.StorePostgresTest do
     assert DateTime.compare(projection.control.deadline_at, command.deadline_at) == :eq
     assert %DateTime{} = projection.updated_at
 
+    assert {:ok, [listed_projection]} =
+             Postgres.list_projections(command.tenant_ref, repo: Repo)
+
+    assert listed_projection.run_ref == command.run_ref
+    assert listed_projection.subject_ref == command.subject_ref
+    assert is_binary(listed_projection.work_object_id)
+
+    assert {:ok, []} = Postgres.list_projections("tenant-without-runs", repo: Repo)
+
+    assert {:error, :invalid_projection_limit} =
+             Postgres.list_projections(command.tenant_ref, repo: Repo, limit: 0)
+
     assert {:ok, [turn]} = Postgres.list_turns(command.run_ref, repo: Repo)
     assert turn.turn_ref == command.first_turn.turn_ref
     assert turn.run_ref == command.run_ref
