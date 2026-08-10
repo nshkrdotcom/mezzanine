@@ -24,6 +24,12 @@ end
 %{
   deps: %{
     ai_trace_replay_contracts: dep.("AITrace", "core/replay_contracts", "~> 0.1.0"),
+    blitz: %{
+      hex: "~> 0.3.0",
+      default_order: [:hex],
+      publish_order: [:hex]
+    },
+    chassis_mezzanine_bridge: dep.("chassis", "governance/chassis_mezzanine_bridge", "~> 0.1.0"),
     citadel_authority_contract: dep.("citadel", "core/authority_contract", "~> 0.1.0"),
     citadel_contract_core: dep.("citadel", "core/contract_core", "~> 0.1.0"),
     citadel_context_authority_contract:
@@ -36,7 +42,7 @@ end
         branch: "main",
         subdir: "core/execution_plane"
       },
-      hex: "~> 0.1.0",
+      hex: "~> 0.2.0",
       default_order: [:path, :github, :hex],
       publish_order: [:hex]
     },
@@ -72,6 +78,11 @@ end
     outer_brain_prompting: dep.("outer_brain", "core/outer_brain_prompting", "~> 0.1.0"),
     outer_brain_token_meter: dep.("outer_brain", "core/token_meter", "~> 0.1.0"),
     temporalex: root_dep.("temporalex", "~> 0.1.0"),
-    trinity_framework: root_dep.("trinity_framework", "~> 0.1.0")
+    trinity_framework: root_dep.("trinity_framework", "~> 0.1.0"),
+    weld: %{
+      hex: "~> 0.8.2",
+      default_order: [:hex],
+      publish_order: [:hex]
+    }
   }
 }
