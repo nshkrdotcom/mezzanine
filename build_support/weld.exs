@@ -1,15 +1,9 @@
-unless Code.ensure_loaded?(DependencySources) do
-  Code.require_file("dependency_sources.exs", __DIR__)
-end
-
 Code.require_file("workspace_contract.exs", __DIR__)
 
 defmodule Mezzanine.Build.WeldContract do
   @moduledoc false
 
   alias Mezzanine.Build.WorkspaceContract
-
-  @repo_root Path.expand("..", __DIR__)
 
   @manifest_dependencies [
     :citadel_authority_contract,
@@ -32,6 +26,100 @@ defmodule Mezzanine.Build.WeldContract do
     :jido_integration_v2,
     :temporalex
   ]
+
+  @dependency_coordinates %{
+    citadel_authority_contract: [
+      github: "nshkrdotcom/citadel",
+      branch: "main",
+      subdir: "core/authority_contract"
+    ],
+    citadel_contract_core: [
+      github: "nshkrdotcom/citadel",
+      branch: "main",
+      subdir: "core/contract_core"
+    ],
+    citadel_governance: [
+      github: "nshkrdotcom/citadel",
+      branch: "main",
+      subdir: "core/citadel_governance"
+    ],
+    citadel_context_authority_contract: [
+      github: "nshkrdotcom/citadel",
+      branch: "main",
+      subdir: "core/context_authority_contract"
+    ],
+    execution_plane: [
+      github: "nshkrdotcom/execution_plane",
+      branch: "main",
+      subdir: "core/execution_plane"
+    ],
+    execution_plane_process: [
+      github: "nshkrdotcom/execution_plane",
+      branch: "main",
+      subdir: "runtimes/execution_plane_process"
+    ],
+    outer_brain_context_abi: [
+      github: "nshkrdotcom/outer_brain",
+      branch: "main",
+      subdir: "core/context_abi"
+    ],
+    outer_brain_context_budget: [
+      github: "nshkrdotcom/outer_brain",
+      branch: "main",
+      subdir: "core/context_budget"
+    ],
+    outer_brain_memory_contracts: [
+      github: "nshkrdotcom/outer_brain",
+      branch: "main",
+      subdir: "core/memory_contracts"
+    ],
+    outer_brain_prompting: [
+      github: "nshkrdotcom/outer_brain",
+      branch: "main",
+      subdir: "core/outer_brain_prompting"
+    ],
+    outer_brain_token_meter: [
+      github: "nshkrdotcom/outer_brain",
+      branch: "main",
+      subdir: "core/token_meter"
+    ],
+    ai_trace_replay_contracts: [
+      github: "nshkrdotcom/AITrace",
+      branch: "main",
+      subdir: "core/replay_contracts"
+    ],
+    ground_plane_contracts: [
+      github: "nshkrdotcom/ground_plane",
+      branch: "main",
+      subdir: "core/ground_plane_contracts"
+    ],
+    ground_plane_persistence_policy: [
+      github: "nshkrdotcom/ground_plane",
+      branch: "main",
+      subdir: "core/persistence_policy"
+    ],
+    jido_hive_coordination_patterns: [
+      github: "nshkrdotcom/jido_hive",
+      branch: "main",
+      subdir: "core/coordination_patterns"
+    ],
+    jido_hive_inter_agent_messaging: [
+      github: "nshkrdotcom/jido_hive",
+      branch: "main",
+      subdir: "core/inter_agent_messaging"
+    ],
+    jido_integration_provider_classification: [
+      github: "agentjido/jido_integration",
+      branch: "main",
+      subdir: "core/provider_classification"
+    ],
+    jido_integration_v2: [
+      github: "nshkrdotcom/jido_integration",
+      branch: "main",
+      subdir: "core/platform"
+    ],
+    temporalex: [github: "nshkrdotcom/temporalex", branch: "main"]
+  }
 
   @manifest_dependency_opts %{
     citadel_authority_contract: [override: true],
@@ -171,32 +259,10 @@ defmodule Mezzanine.Build.WeldContract do
   end
 
   defp manifest_dependency(app) do
-    config = Map.fetch!(dependency_configs(), app)
-    github = Map.fetch!(config, :github)
+    coordinates = Map.fetch!(@dependency_coordinates, app)
     extra_opts = Map.get(@manifest_dependency_opts, app, [])
 
-    [opts: Keyword.merge(github_opts(github), extra_opts)]
-  end
-
-  defp dependency_configs do
-    {config, _binding} =
-      @repo_root
-      |> Path.join("build_support/dependency_sources.config.exs")
-      |> Code.eval_file()
-
-    Map.new(config[:deps], fn {app, dep_config} -> {app, Map.new(dep_config)} end)
-  end
-
-  defp github_opts(github) do
-    github = Map.new(github)
-    repo = Map.fetch!(github, :repo)
-
-    opts =
-      github
-      |> Map.take([:branch, :ref, :tag, :subdir])
-      |> Enum.sort_by(fn {key, _value} -> key end)
-
-    Keyword.merge([github: repo], opts)
+    [opts: Keyword.merge(coordinates, extra_opts)]
   end
 end
 

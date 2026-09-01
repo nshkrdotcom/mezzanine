@@ -1,11 +1,7 @@
-unless Code.ensure_loaded?(DependencySources) do
-  Code.require_file("../../build_support/dependency_sources.exs", __DIR__)
-end
+if bootstrap = System.get_env("MIX_WORKSPACE_OPS_BOOTSTRAP"), do: Code.require_file(bootstrap)
 
 defmodule Mezzanine.AIExecutionEngine.MixProject do
   use Mix.Project
-
-  @repo_root Path.expand("../..", __DIR__)
 
   def project do
     [
@@ -33,15 +29,19 @@ defmodule Mezzanine.AIExecutionEngine.MixProject do
   defp deps do
     [
       {:mezzanine_context_packet_engine, path: "../context_packet_engine"},
-      DependencySources.dep(:outer_brain_context_abi, @repo_root),
-      DependencySources.dep(:outer_brain_prompting, @repo_root),
-      DependencySources.dep(:jido_integration_provider_classification, @repo_root,
-        override: true
-      ),
-      DependencySources.dep(:ground_plane_contracts, @repo_root),
+      workspace_dep({:outer_brain_context_abi, "~> 0.1.0"}),
+      workspace_dep({:outer_brain_prompting, "~> 0.1.0"}),
+      workspace_dep({:jido_integration_provider_classification, "~> 0.1.0", override: true}),
+      workspace_dep({:ground_plane_contracts, "~> 0.1.0"}),
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: :dev, runtime: false},
       {:ex_doc, "~> 0.40.1", only: :dev, runtime: false}
     ]
+  end
+
+  defp workspace_dep(committed) do
+    if function_exported?(MixWorkspaceOpsBootstrap, :dep, 2),
+      do: apply(MixWorkspaceOpsBootstrap, :dep, [committed, __DIR__]),
+      else: committed
   end
 end

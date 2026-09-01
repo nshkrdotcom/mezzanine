@@ -1,11 +1,8 @@
-unless Code.ensure_loaded?(DependencySources) do
-  Code.require_file("../../build_support/dependency_sources.exs", __DIR__)
-end
+if bootstrap = System.get_env("MIX_WORKSPACE_OPS_BOOTSTRAP"), do: Code.require_file(bootstrap)
 
 defmodule MezzanineGovernedEffects.MixProject do
   use Mix.Project
 
-  @repo_root Path.expand("../..", __DIR__)
   def project do
     [
       app: :mezzanine_governed_effects,
@@ -44,10 +41,16 @@ defmodule MezzanineGovernedEffects.MixProject do
 
   defp deps do
     [
-      DependencySources.dep(:ground_plane_contracts, @repo_root, override: true),
+      workspace_dep({:ground_plane_contracts, "~> 0.1.0", override: true}),
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.40.1", only: :dev, runtime: false}
     ]
+  end
+
+  defp workspace_dep(committed) do
+    if function_exported?(MixWorkspaceOpsBootstrap, :dep, 2),
+      do: apply(MixWorkspaceOpsBootstrap, :dep, [committed, __DIR__]),
+      else: committed
   end
 end

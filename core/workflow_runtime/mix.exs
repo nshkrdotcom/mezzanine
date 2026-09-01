@@ -1,13 +1,9 @@
-unless Code.ensure_loaded?(DependencySources) do
-  Code.require_file("../../build_support/dependency_sources.exs", __DIR__)
-end
+if bootstrap = System.get_env("MIX_WORKSPACE_OPS_BOOTSTRAP"), do: Code.require_file(bootstrap)
 
 defmodule MezzanineWorkflowRuntime.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/nshkrdotcom/mezzanine"
-  @repo_root Path.expand("../..", __DIR__)
-
   def project do
     [
       app: :mezzanine_workflow_runtime,
@@ -56,8 +52,8 @@ defmodule MezzanineWorkflowRuntime.MixProject do
       {:mezzanine_runtime_profile, path: "../runtime_profile"},
       {:mezzanine_citadel_bridge, path: "../../bridges/citadel_bridge"},
       {:mezzanine_workspace_engine, path: "../workspace_engine"},
-      DependencySources.dep(:ground_plane_persistence_policy, @repo_root, override: true),
-      DependencySources.dep(:temporalex, @repo_root),
+      workspace_dep({:ground_plane_persistence_policy, "~> 0.1.0", override: true}),
+      workspace_dep({:temporalex, "~> 0.1.0"}),
       {:ecto_sql, "~> 3.13"},
       {:oban, "~> 2.17"},
       {:opentelemetry, "~> 1.5"},
@@ -68,5 +64,11 @@ defmodule MezzanineWorkflowRuntime.MixProject do
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.40.1", only: :dev, runtime: false}
     ]
+  end
+
+  defp workspace_dep(committed) do
+    if function_exported?(MixWorkspaceOpsBootstrap, :dep, 2),
+      do: apply(MixWorkspaceOpsBootstrap, :dep, [committed, __DIR__]),
+      else: committed
   end
 end

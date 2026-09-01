@@ -4,7 +4,6 @@
 /doc/
 /dist/
 /tmp/
-/.dependency_sources.local.exs
 **/_build/
 **/cover/
 **/deps/

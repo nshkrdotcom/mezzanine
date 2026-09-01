@@ -6,11 +6,9 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecisionTest do
   alias Mezzanine.WorkflowRuntime.TemporalRegistry
 
   @mezzanine_root Path.expand("../../../../..", __DIR__)
-  @temporalex_root "/home/home/p/g/n/temporalex"
 
-  test "declares direct temporalex runtime ownership and dependency-source wiring" do
+  test "declares direct temporalex runtime ownership and portable carrier wiring" do
     assert DurableOrchestrationDecision.integration_mode() == :direct_temporalex_beam_workers
-    assert DurableOrchestrationDecision.temporalex_root() == @temporalex_root
 
     assert %{
              endpoint: "127.0.0.1:7233",
@@ -20,13 +18,21 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecisionTest do
              rust_core_posture: "Temporal Rust Core via temporalex Rustler NIF"
            } = DurableOrchestrationDecision.runtime_refs()
 
-    assert %{dependency: {:temporalex, :dependency_sources}, manifest_app: :temporalex} =
+    assert %{
+             dependency: {:temporalex, :workspace_dep},
+             from_dir: ".",
+             manifest_app: :temporalex
+           } =
              Enum.find(
                DurableOrchestrationDecision.temporalex_dependency_paths(),
                &(&1.mix_exs == "mix.exs")
              )
 
-    assert %{dependency: {:temporalex, :dependency_sources}, manifest_app: :temporalex} =
+    assert %{
+             dependency: {:temporalex, :workspace_dep},
+             from_dir: "core/workflow_runtime",
+             manifest_app: :temporalex
+           } =
              Enum.find(
                DurableOrchestrationDecision.temporalex_dependency_paths(),
                &(&1.mix_exs == "core/workflow_runtime/mix.exs")
@@ -34,25 +40,13 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecisionTest do
 
     assert String.contains?(
              File.read!(Path.join(@mezzanine_root, "mix.exs")),
-             "DependencySources.dep(:temporalex, @repo_root)"
+             "workspace_dep({:temporalex,"
            )
 
     assert String.contains?(
              File.read!(Path.join(@mezzanine_root, "core/workflow_runtime/mix.exs")),
-             "DependencySources.dep(:temporalex, @repo_root)"
+             "workspace_dep({:temporalex,"
            )
-
-    {dependency_sources, _binding} =
-      Code.eval_file(Path.join(@mezzanine_root, "build_support/dependency_sources.config.exs"))
-
-    assert %{
-             path: temporalex_path,
-             github: %{repo: "nshkrdotcom/temporalex", branch: "main"},
-             default_order: [:path, :github, :hex],
-             publish_order: [:hex]
-           } = dependency_sources[:deps][:temporalex]
-
-    assert Path.basename(temporalex_path) == "temporalex"
   end
 
   test "registers final workflow and activity modules through temporalex" do

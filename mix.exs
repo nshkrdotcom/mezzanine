@@ -1,6 +1,4 @@
-unless Code.ensure_loaded?(DependencySources) do
-  Code.require_file("build_support/dependency_sources.exs", __DIR__)
-end
+if bootstrap = System.get_env("MIX_WORKSPACE_OPS_BOOTSTRAP"), do: Code.require_file(bootstrap)
 
 Code.require_file("build_support/workspace_contract.exs", __DIR__)
 Code.require_file("build_support/internal_modularity_contract.exs", __DIR__)
@@ -10,7 +8,6 @@ defmodule Mezzanine.Workspace.MixProject do
 
   alias Mezzanine.Build.WorkspaceContract
 
-  @repo_root __DIR__
   @version "0.1.0"
   @source_url "https://github.com/nshkrdotcom/mezzanine"
 
@@ -54,10 +51,10 @@ defmodule Mezzanine.Workspace.MixProject do
 
   defp deps do
     [
-      DependencySources.dep(:blitz, __DIR__, runtime: false),
+      workspace_dep({:blitz, "~> 0.3.0", runtime: false}),
       {:mezzanine_chassis_bridge, path: "bridges/mezzanine_chassis_bridge"},
-      DependencySources.dep(:weld, __DIR__, only: [:dev, :test], runtime: false),
-      DependencySources.dep(:temporalex, @repo_root),
+      workspace_dep({:weld, "~> 0.8.2", only: [:dev, :test], runtime: false}),
+      workspace_dep({:temporalex, "~> 0.1.0"}),
       {:opentelemetry, "~> 1.5"},
       {:opentelemetry_api, "~> 1.4"},
       {:opentelemetry_exporter, "~> 1.8"},
@@ -208,5 +205,11 @@ defmodule Mezzanine.Workspace.MixProject do
         Project: ["CHANGELOG.md", "LICENSE"]
       ]
     ]
+  end
+
+  defp workspace_dep(committed) do
+    if function_exported?(MixWorkspaceOpsBootstrap, :dep, 2),
+      do: apply(MixWorkspaceOpsBootstrap, :dep, [committed, __DIR__]),
+      else: committed
   end
 end

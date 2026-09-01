@@ -1,11 +1,7 @@
-unless Code.ensure_loaded?(DependencySources) do
-  Code.require_file("../../build_support/dependency_sources.exs", __DIR__)
-end
+if bootstrap = System.get_env("MIX_WORKSPACE_OPS_BOOTSTRAP"), do: Code.require_file(bootstrap)
 
 defmodule MezzanineIntegrationBridge.MixProject do
   use Mix.Project
-
-  @repo_root Path.expand("../..", __DIR__)
 
   def project do
     [
@@ -54,15 +50,21 @@ defmodule MezzanineIntegrationBridge.MixProject do
       {:mezzanine_evidence_engine, path: "../../core/evidence_engine"},
       {:mezzanine_source_engine, path: "../../core/source_engine"},
       {:mezzanine_workspace_engine, path: "../../core/workspace_engine"},
-      DependencySources.dep(:jido_integration_v2, @repo_root),
-      DependencySources.dep(:jido_integration_v2_codex_cli, @repo_root),
-      DependencySources.dep(:jido_integration_v2_github, @repo_root),
-      DependencySources.dep(:jido_integration_v2_linear, @repo_root),
-      DependencySources.dep(:jido_integration_v2_runtime_router, @repo_root),
-      DependencySources.dep(:jido_integration_secrets_provider, @repo_root),
+      workspace_dep({:jido_integration_v2, "~> 0.1.0"}),
+      workspace_dep({:jido_integration_v2_codex_cli, "~> 0.1.0"}),
+      workspace_dep({:jido_integration_v2_github, "~> 0.1.0"}),
+      workspace_dep({:jido_integration_v2_linear, "~> 0.1.0"}),
+      workspace_dep({:jido_integration_v2_runtime_router, "~> 0.1.0"}),
+      workspace_dep({:jido_integration_secrets_provider, "~> 0.1.0"}),
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.40.1", only: :dev, runtime: false}
     ]
+  end
+
+  defp workspace_dep(committed) do
+    if function_exported?(MixWorkspaceOpsBootstrap, :dep, 2),
+      do: apply(MixWorkspaceOpsBootstrap, :dep, [committed, __DIR__]),
+      else: committed
   end
 end

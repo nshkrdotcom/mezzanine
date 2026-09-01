@@ -222,16 +222,6 @@ defmodule Mezzanine.WorkspaceTest do
     assert Keyword.fetch!(execution_plane_opts, :branch) == "main"
     assert Keyword.fetch!(execution_plane_opts, :subdir) == "core/execution_plane"
     assert Keyword.fetch!(execution_plane_opts, :override) == true
-
-    citadel_bridge_mix =
-      repo_root()
-      |> Path.join("bridges/citadel_bridge/mix.exs")
-      |> File.read!()
-
-    assert String.contains?(
-             citadel_bridge_mix,
-             "DependencySources.dep(:execution_plane, @repo_root, override: true)"
-           )
   end
 
   defp assert_refutes_file_patterns(root, patterns, needle) do
@@ -265,6 +255,4 @@ defmodule Mezzanine.WorkspaceTest do
       [absolute]
     end
   end
-
-  defp repo_root, do: Path.expand("../..", __DIR__)
 end

@@ -10,7 +10,6 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
   """
 
   @integration_mode :direct_temporalex_beam_workers
-  @temporalex_root "/home/home/p/g/n/temporalex"
   @temporal_endpoint "127.0.0.1:7233"
   @temporal_namespace "default"
   @runtime_adapter Mezzanine.WorkflowRuntime.TemporalexAdapter
@@ -454,10 +453,6 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
   @spec integration_mode() :: atom()
   def integration_mode, do: @integration_mode
 
-  @doc "Local Temporalex source root recorded by the M25 decision."
-  @spec temporalex_root() :: String.t()
-  def temporalex_root, do: @temporalex_root
-
   @doc "Temporal runtime endpoint and namespace for local dev proof posture."
   @spec runtime_refs() :: map()
   def runtime_refs do
@@ -466,7 +461,6 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
       namespace: @temporal_namespace,
       adapter: @runtime_adapter,
       supervisor: @temporal_supervisor,
-      source_root: @temporalex_root,
       rust_core_posture: "Temporal Rust Core via temporalex Rustler NIF",
       nif_posture: "Mezzanine runtime-only dependency; public DTOs never expose NIF resources"
     }
@@ -495,20 +489,20 @@ defmodule Mezzanine.WorkflowRuntime.DurableOrchestrationDecision do
     }
   end
 
-  @doc "Consuming mix.exs files that load Temporalex through dependency sources."
+  @doc "Consuming mix.exs files that expose Temporalex through the MWO carrier seam."
   @spec temporalex_dependency_paths() :: [map()]
   def temporalex_dependency_paths do
     [
       %{
         mix_exs: "mix.exs",
-        from_dir: "/home/home/p/g/n/mezzanine",
-        dependency: {:temporalex, :dependency_sources},
+        from_dir: ".",
+        dependency: {:temporalex, :workspace_dep},
         manifest_app: :temporalex
       },
       %{
         mix_exs: "core/workflow_runtime/mix.exs",
-        from_dir: "/home/home/p/g/n/mezzanine/core/workflow_runtime",
-        dependency: {:temporalex, :dependency_sources},
+        from_dir: "core/workflow_runtime",
+        dependency: {:temporalex, :workspace_dep},
         manifest_app: :temporalex
       }
     ]

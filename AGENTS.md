@@ -51,11 +51,11 @@ Do not invent raw `temporal server start-dev` commands for normal work. Do not r
 
 ## Dependency Sources
 
-- Dependency source selection is handled by `build_support/dependency_sources.exs` and `build_support/dependency_sources.config.exs`.
-- Local dependency overrides use `.dependency_sources.local.exs`.
-- Dependency source selection must not use environment variables.
-- Same-repo workspace package paths may stay in their local `mix.exs` files; cross-repo dependencies that need fallback behavior belong in the dependency-source manifest.
-- Weld checks helper drift, dependency-source manifests, clone/publish checks, and publish order for this repo; keep the committed dependency on the released Hex Weld line.
+- Every `mix.exs` contains its ordinary standalone dependency tuple.
+- Same-repository packages use relative `path:` tuples; normal external packages use Hex requirements.
+- For cross-repository packages only, Mix Workspace Ops may substitute source coordinates through the tuple-first `workspace_dep/1` seam.
+- Do not add repository-local source resolvers, machine-specific paths, or ambient source-selection configuration.
+- Weld remains an ordinary released Hex dependency used for packaging checks.
 
 ## Runtime Env
 
