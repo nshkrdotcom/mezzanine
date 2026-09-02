@@ -51,9 +51,9 @@ defmodule Mezzanine.Workspace.MixProject do
 
   defp deps do
     [
-      workspace_dep({:blitz, "~> 0.3.0", runtime: false}),
+      {:blitz, "~> 0.3.0", runtime: false},
       {:mezzanine_chassis_bridge, path: "bridges/mezzanine_chassis_bridge"},
-      workspace_dep({:weld, "~> 0.8.2", only: [:dev, :test], runtime: false}),
+      {:weld, "~> 0.8.2", only: [:dev, :test], runtime: false},
       workspace_dep({:temporalex, "~> 0.1.0"}),
       {:opentelemetry, "~> 1.5"},
       {:opentelemetry_api, "~> 1.4"},
